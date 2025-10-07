@@ -181,6 +181,9 @@ pub enum ParseError {
     /// This error is protocol specific.
     #[error("Invalid data")]
     InvalidData,
+    /// The provided reply length is not valid
+    #[error("Invalid reply length")]
+    InvalidReplyLength,
 }
 
 #[derive(Debug, thiserror::Error)]

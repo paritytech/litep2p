@@ -37,12 +37,13 @@ use hickory_resolver::TokioResolver;
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use socket2::{Domain, Socket, Type};
 use str0m::{
-    change::DtlsCert,
     channel::{ChannelConfig, ChannelId},
+    config::{CryptoProvider, DtlsCert, DtlsCertOptions},
     ice::IceCreds,
     net::{DatagramRecv, Protocol as Str0mProtocol, Receive},
-    Candidate, Input, Rtc,
+    Candidate, DtlsCertConfig, Input, Rtc,
 };
+
 use tokio::{
     io::ReadBuf,
     net::UdpSocket,
@@ -228,7 +229,7 @@ impl WebRtcTransport {
     ) -> (Rtc, ChannelId) {
         let mut rtc = Rtc::builder()
             .set_ice_lite(true)
-            .set_dtls_cert(self.dtls_cert.clone())
+            .set_dtls_cert_config(DtlsCertConfig::PregeneratedCert(self.dtls_cert.clone()))
             .set_fingerprint_verification(false)
             .build();
         rtc.add_local_candidate(Candidate::host(destination, Str0mProtocol::Udp).unwrap());
@@ -463,7 +464,7 @@ impl TransportBuilder for WebRtcTransport {
 
         let socket = UdpSocket::from_std(socket.into())?;
         let listen_address = socket.local_addr()?;
-        let dtls_cert = DtlsCert::new_openssl();
+        let dtls_cert = DtlsCert::new(CryptoProvider::OpenSsl, DtlsCertOptions::default());
 
         let listen_multi_addresses = {
             let fingerprint = dtls_cert.fingerprint().bytes;

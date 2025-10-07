@@ -202,8 +202,10 @@ impl GetSocketAddr for TcpAddress {
 }
 
 /// WebSocket helper to convert between `Multiaddr` and `SocketAddr`.
+#[cfg(feature = "websocket")]
 pub struct WebSocketAddress;
 
+#[cfg(feature = "websocket")]
 impl GetSocketAddr for WebSocketAddress {
     fn multiaddr_to_socket_address(
         address: &Multiaddr,
@@ -339,6 +341,7 @@ enum SocketListenerType {
     /// Listener for TCP.
     Tcp,
     /// Listener for WebSocket.
+    #[cfg(feature = "websocket")]
     WebSocket,
 }
 
@@ -406,6 +409,7 @@ fn multiaddr_to_socket_address(
 
     match ty {
         SocketListenerType::Tcp => (),
+        #[cfg(feature = "websocket")]
         SocketListenerType::WebSocket => {
             // verify that `/ws`/`/wss` is part of the multi address
             match iter.next() {
@@ -518,6 +522,7 @@ mod tests {
         .is_err());
     }
 
+    #[cfg(feature = "websocket")]
     #[test]
     fn parse_multiaddresses_websocket() {
         assert!(multiaddr_to_socket_address(
@@ -618,6 +623,7 @@ mod tests {
         .await;
     }
 
+    #[cfg(feature = "websocket")]
     #[tokio::test]
     async fn no_listeners_websocket() {
         let (mut listener, _, _) = SocketListener::new::<WebSocketAddress>(Vec::new(), true, false);
@@ -646,6 +652,7 @@ mod tests {
         assert!(res1.unwrap().is_ok() && res2.is_ok());
     }
 
+    #[cfg(feature = "websocket")]
     #[tokio::test]
     async fn one_listener_websocket() {
         let address: Multiaddr = "/ip6/::1/tcp/0/ws".parse().unwrap();
@@ -689,6 +696,7 @@ mod tests {
         assert!(res1.is_ok() && res2.is_ok());
     }
 
+    #[cfg(feature = "websocket")]
     #[tokio::test]
     async fn two_listeners_websocket() {
         let address1: Multiaddr = "/ip6/::1/tcp/0/ws".parse().unwrap();

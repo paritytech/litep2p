@@ -42,7 +42,6 @@ pub(crate) struct DummyTransport {
 
 impl DummyTransport {
     /// Create new [`DummyTransport`].
-    #[cfg(test)]
     pub(crate) fn new() -> Self {
         Self {
             events: VecDeque::new(),
@@ -50,7 +49,6 @@ impl DummyTransport {
     }
 
     /// Inject event into `DummyTransport`.
-    #[cfg(test)]
     pub(crate) fn inject_event(&mut self, event: TransportEvent) {
         self.events.push_back(event);
     }
