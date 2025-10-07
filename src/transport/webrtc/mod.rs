@@ -135,6 +135,10 @@ pub(crate) struct WebRtcTransport {
     /// Datagram buffer size.
     datagram_buffer_size: usize,
 
+    /// Max Webrtc message size
+
+    max_message_size: usize,
+
     /// Connected peers.
     open: HashMap<SocketAddr, ConnectionContext>,
 
@@ -412,6 +416,7 @@ impl WebRtcTransport {
             self.context.keypair.clone(),
             source,
             self.listen_address,
+            self.max_message_size,
         );
         self.opening.insert(source, connection);
 
@@ -486,6 +491,7 @@ impl TransportBuilder for WebRtcTransport {
                 timeouts: HashMap::new(),
                 pending_events: VecDeque::new(),
                 datagram_buffer_size: config.datagram_buffer_size,
+                max_message_size: config.max_message_size
             },
             listen_multi_addresses,
         ))
@@ -573,6 +579,7 @@ impl Transport for WebRtcTransport {
             protocol_set,
             endpoint,
             rx,
+            self.max_message_size,
         );
         self.open.insert(
             source,

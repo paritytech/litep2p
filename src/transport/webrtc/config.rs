@@ -32,6 +32,7 @@ pub struct Config {
     ///
     /// How many datagrams can the buffer between `WebRtcTransport` and a connection handler hold.
     pub datagram_buffer_size: usize,
+    pub max_message_size: usize,
 }
 
 impl Default for Config {
@@ -41,6 +42,7 @@ impl Default for Config {
                 .parse()
                 .expect("valid multiaddress")],
             datagram_buffer_size: 2048,
+            max_message_size: 512 * 1024,
         }
     }
 }
