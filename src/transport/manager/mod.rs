@@ -214,6 +214,9 @@ pub struct TransportManager {
     /// All names (main and fallback(s)) of the installed protocols.
     protocol_names: HashSet<ProtocolName>,
 
+    /// Protocols that need to be informed about dial failures with addresses.
+    address_reporting_protocols: HashSet<ProtocolName>,
+
     /// Listen addresses.
     listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
 
@@ -294,6 +297,7 @@ impl TransportManager {
                 protocols: HashMap::new(),
                 transports: TransportContext::new(),
                 protocol_names: HashSet::new(),
+                address_reporting_protocols: HashSet::new(),
                 transport_manager_handle: handle.clone(),
                 pending_connections: HashMap::new(),
                 next_substream_id: Arc::new(AtomicUsize::new(0usize)),
@@ -332,6 +336,7 @@ impl TransportManager {
         fallback_names: Vec<ProtocolName>,
         codec: ProtocolCodec,
         keep_alive_timeout: Duration,
+        needs_dial_failure_addresses: bool,
     ) -> TransportService {
         assert!(!self.protocol_names.contains(&protocol));
 
@@ -339,6 +344,12 @@ impl TransportManager {
             if self.protocol_names.contains(fallback) {
                 panic!("duplicate fallback protocol given: {fallback:?}");
             }
+        }
+
+        if needs_dial_failure_addresses {
+            self.address_reporting_protocols.insert(protocol.clone());
+            self.address_reporting_protocols
+                .extend(fallback_names.clone());
         }
 
         let (service, sender) = TransportService::new(
@@ -1116,10 +1127,8 @@ impl TransportManager {
                                                     ?protocol,
                                                     "dial failure, notify protocol",
                                                 );
-                                                match context.tx.try_send(InnerTransportEvent::DialFailure {
-                                                    peer,
-                                                    addresses: vec![address.clone()],
-                                                }) {
+
+                                                match context.tx.try_send(make_dial_failure_event(&self.address_reporting_protocols, protocol, peer, vec![address.clone()])) {
                                                     Ok(()) => {}
                                                     Err(_) => {
                                                         tracing::trace!(
@@ -1132,10 +1141,7 @@ impl TransportManager {
                                                         );
                                                         let _ = context
                                                             .tx
-                                                            .send(InnerTransportEvent::DialFailure {
-                                                                peer,
-                                                                addresses: vec![address.clone()],
-                                                            })
+                                                            .send(make_dial_failure_event(&self.address_reporting_protocols, protocol, peer, vec![address.clone()]))
                                                             .await;
                                                     }
                                                 }
@@ -1268,10 +1274,7 @@ impl TransportManager {
                                     for (protocol, context) in &self.protocols {
                                         let _ = match context
                                             .tx
-                                            .try_send(InnerTransportEvent::DialFailure {
-                                                peer,
-                                                addresses: addresses.clone(),
-                                            }) {
+                                            .try_send(make_dial_failure_event(&self.address_reporting_protocols, protocol, peer, addresses.clone())) {
                                             Ok(_) => Ok(()),
                                             Err(_) => {
                                                 tracing::trace!(
@@ -1284,10 +1287,7 @@ impl TransportManager {
 
                                                 context
                                                     .tx
-                                                    .send(InnerTransportEvent::DialFailure {
-                                                        peer,
-                                                        addresses: addresses.clone(),
-                                                    })
+                                                    .send(make_dial_failure_event(&self.address_reporting_protocols, protocol, peer, addresses.clone()))
                                                     .await
                                             }
                                         };
@@ -1341,6 +1341,21 @@ impl TransportManager {
             }
         }
     }
+}
+
+fn make_dial_failure_event(
+    address_reporting_protocols: &HashSet<ProtocolName>,
+    protocol: &ProtocolName,
+    peer: PeerId,
+    addresses: Vec<Multiaddr>,
+) -> InnerTransportEvent {
+    let addresses = if address_reporting_protocols.contains(protocol) {
+       addresses
+    } else {
+        Vec::new()
+    };
+
+    InnerTransportEvent::DialFailure { peer, addresses }
 }
 
 #[cfg(test)]
