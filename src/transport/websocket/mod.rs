@@ -246,6 +246,7 @@ impl WebSocketTransport {
         socket.set_nonblocking(true)?;
         socket.set_nodelay(nodelay)?;
 
+        #[cfg(not(feature = "x-shadow"))]
         match dial_addresses.local_dial_address(&remote_address.ip()) {
             Ok(Some(dial_address)) => {
                 socket.set_reuse_address(true)?;
