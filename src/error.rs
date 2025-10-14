@@ -78,8 +78,6 @@ pub enum Error {
     Timeout,
     #[error("Invalid state transition")]
     InvalidState,
-    #[error("DNS address resolution failed")]
-    DnsAddressResolutionFailed,
     #[error("Transport error: `{0}`")]
     TransportError(String),
     #[cfg(feature = "quic")]
