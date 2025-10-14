@@ -540,14 +540,9 @@ impl TransportManager {
         // We double checked above that the remote peer is not the local peer.
         let dial_addresses = context
             .addresses
-            .addresses_iter()
-            .filter_map(|addr| {
-                if self.ip_dialing_mode.allows_address(addr) {
-                    Some(addr.clone())
-                } else {
-                    None
-                }
-            })
+            .addresses(usize::MAX)
+            .into_iter()
+            .filter(|addr| self.ip_dialing_mode.allows_address(addr))
             .take(limit)
             .collect::<Vec<_>>();
 

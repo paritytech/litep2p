@@ -259,13 +259,6 @@ impl AddressStore {
         records.sort_by(|lhs, rhs| rhs.score.cmp(&lhs.score));
         records.into_iter().take(limit).map(|record| record.address).collect()
     }
-
-    /// Similar to [`Self::addresses`], but returns an iterator over the addresses.
-    pub fn addresses_iter(&self) -> impl Iterator<Item = &Multiaddr> {
-        let mut records = self.addresses.values().collect::<Vec<_>>();
-        records.sort_by(|lhs, rhs| rhs.score.cmp(&lhs.score));
-        records.into_iter().map(|record| &record.address)
-    }
 }
 
 #[cfg(test)]
