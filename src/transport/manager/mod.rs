@@ -48,7 +48,9 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
     collections::{HashMap, HashSet},
+    net::IpAddr,
     pin::Pin,
+    str::FromStr,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -214,8 +216,13 @@ impl IpDialingMode {
         let ip = match address.iter().next() {
             Some(Protocol::Ip4(ip)) => ip_network::IpNetwork::from(ip),
             Some(Protocol::Ip6(ip)) => ip_network::IpNetwork::from(ip),
-            Some(Protocol::Dns(_)) | Some(Protocol::Dns4(_)) | Some(Protocol::Dns6(_)) =>
-                return true,
+            Some(Protocol::Dns(host)) | Some(Protocol::Dns4(host)) | Some(Protocol::Dns6(host)) =>
+                if let Ok(ip) = IpAddr::from_str(&host) {
+                    ip_network::IpNetwork::from(ip)
+                } else {
+                    // Allow DNS resolutions for DNS names.
+                    return true;
+                },
             _ => return false,
         };
 
