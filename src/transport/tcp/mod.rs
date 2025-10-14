@@ -42,6 +42,7 @@ use futures::{
     stream::{AbortHandle, FuturesUnordered, Stream, StreamExt},
     TryFutureExt,
 };
+use hickory_resolver::TokioResolver;
 use multiaddr::Multiaddr;
 use socket2::{Domain, Socket, Type};
 use tokio::net::TcpStream;
@@ -50,6 +51,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -129,6 +131,9 @@ pub(crate) struct TcpTransport {
     /// Connections which have been opened and negotiated but are being validated by the
     /// `TransportManager`.
     pending_open: HashMap<ConnectionId, NegotiatedConnection>,
+
+    /// DNS resolver.
+    resolver: Arc<TokioResolver>,
 }
 
 impl TcpTransport {
@@ -176,11 +181,14 @@ impl TcpTransport {
         dial_addresses: DialAddresses,
         connection_open_timeout: Duration,
         nodelay: bool,
+        resolver: Arc<TokioResolver>,
     ) -> Result<(Multiaddr, TcpStream), DialError> {
         let (socket_address, _) = TcpAddress::multiaddr_to_socket_address(&address)?;
 
         let remote_address =
-            match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip()).await {
+            match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip(resolver))
+                .await
+            {
                 Err(_) => {
                     tracing::debug!(
                         target: LOG_TARGET,
@@ -271,6 +279,7 @@ impl TransportBuilder for TcpTransport {
     fn new(
         context: TransportHandle,
         mut config: Self::Config,
+        resolver: Arc<TokioResolver>,
     ) -> crate::Result<(Self, Vec<Multiaddr>)> {
         tracing::debug!(
             target: LOG_TARGET,
@@ -298,6 +307,7 @@ impl TransportBuilder for TcpTransport {
                 pending_connections: FuturesStream::new(),
                 pending_raw_connections: FuturesStream::new(),
                 cancel_futures: HashMap::new(),
+                resolver,
             },
             listen_addresses,
         ))
@@ -317,13 +327,19 @@ impl Transport for TcpTransport {
         let dial_addresses = self.dial_addresses.clone();
         let keypair = self.context.keypair.clone();
         let nodelay = self.config.nodelay;
+        let resolver = self.resolver.clone();
 
         self.pending_dials.insert(connection_id, address.clone());
         self.pending_connections.push(Box::pin(async move {
-            let (_, stream) =
-                TcpTransport::dial_peer(address, dial_addresses, connection_open_timeout, nodelay)
-                    .await
-                    .map_err(|error| (connection_id, error))?;
+            let (_, stream) = TcpTransport::dial_peer(
+                address,
+                dial_addresses,
+                connection_open_timeout,
+                nodelay,
+                resolver,
+            )
+            .await
+            .map_err(|error| (connection_id, error))?;
 
             TcpConnection::open_connection(
                 connection_id,
@@ -426,6 +442,7 @@ impl Transport for TcpTransport {
                 let dial_addresses = self.dial_addresses.clone();
                 let connection_open_timeout = self.config.connection_open_timeout;
                 let nodelay = self.config.nodelay;
+                let resolver = self.resolver.clone();
 
                 async move {
                     TcpTransport::dial_peer(
@@ -433,6 +450,7 @@ impl Transport for TcpTransport {
                         dial_addresses,
                         connection_open_timeout,
                         nodelay,
+                        resolver,
                     )
                     .await
                     .map_err(|error| (address, error))
@@ -727,9 +745,10 @@ mod tests {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         };
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
 
         let (mut transport1, listen_addresses) =
-            TcpTransport::new(handle1, transport_config1).unwrap();
+            TcpTransport::new(handle1, transport_config1, resolver.clone()).unwrap();
         let listen_address = listen_addresses[0].clone();
 
         let keypair2 = Keypair::generate();
@@ -758,7 +777,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (mut transport2, _) = TcpTransport::new(handle2, transport_config2).unwrap();
+        let (mut transport2, _) = TcpTransport::new(handle2, transport_config2, resolver).unwrap();
         transport2.dial(ConnectionId::new(), listen_address).unwrap();
 
         let (tx, mut from_transport2) = channel(64);
@@ -820,9 +839,10 @@ mod tests {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         };
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
 
         let (mut transport1, listen_addresses) =
-            TcpTransport::new(handle1, transport_config1).unwrap();
+            TcpTransport::new(handle1, transport_config1, resolver.clone()).unwrap();
         let listen_address = listen_addresses[0].clone();
 
         let keypair2 = Keypair::generate();
@@ -851,7 +871,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (mut transport2, _) = TcpTransport::new(handle2, transport_config2).unwrap();
+        let (mut transport2, _) = TcpTransport::new(handle2, transport_config2, resolver).unwrap();
         transport2.dial(ConnectionId::new(), listen_address).unwrap();
 
         let (tx, mut from_transport2) = channel(64);
@@ -904,7 +924,9 @@ mod tests {
                 },
             )]),
         };
-        let (mut transport1, _) = TcpTransport::new(handle1, Default::default()).unwrap();
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
+        let (mut transport1, _) =
+            TcpTransport::new(handle1, Default::default(), resolver.clone()).unwrap();
 
         tokio::spawn(async move {
             while let Some(event) = transport1.next().await {
@@ -941,7 +963,7 @@ mod tests {
             )]),
         };
 
-        let (mut transport2, _) = TcpTransport::new(handle2, Default::default()).unwrap();
+        let (mut transport2, _) = TcpTransport::new(handle2, Default::default(), resolver).unwrap();
 
         let peer1: PeerId = PeerId::from_public_key(&keypair1.public().into());
         let peer2: PeerId = PeerId::from_public_key(&keypair2.public().into());
@@ -983,6 +1005,7 @@ mod tests {
             true,
         );
         let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
         manager.register_transport(
             SupportedTransport::Tcp,
             Box::new(crate::transport::dummy::DummyTransport::new()),
@@ -993,6 +1016,7 @@ mod tests {
                 listen_addresses: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
                 ..Default::default()
             },
+            resolver,
         )
         .unwrap();
 

@@ -2,7 +2,7 @@
 name = "litep2p"
 description = "Peer-to-peer networking library"
 license = "MIT"
-version = "0.9.5"
+version = "0.10.0"
 edition = "2021"
 
 # cargo-machete does not detect serde_millis usage, so we ignore the warning
@@ -53,7 +53,7 @@ yamux = "0.13.5"
 ip_network = "0.4.1"
 
 # Websocket related dependencies.
-tokio-tungstenite = { version = "0.26.2", features = ["rustls-tls-native-roots", "url"], optional = true }
+tokio-tungstenite = { version = "0.27.0", features = ["rustls-tls-native-roots", "url"], optional = true }
 # End of websocket related dependencies.
 
 # Quic related dependencies. Quic is an experimental feature flag. The dependencies must be updated.
@@ -65,7 +65,7 @@ rcgen = { version = "0.10.0", optional = true }
 # End of Quic related dependencies.
 
 # WebRTC related dependencies. WebRTC is an experimental feature flag. The dependencies must be updated.
-str0m = { version = "0.6.2", optional = true }
+str0m = { version = "0.9.0", optional = true }
 # End of WebRTC related dependencies.
 
 # Fuzzing related dependencies.
@@ -89,7 +89,7 @@ libp2p = { version = "0.51.4", features = [
 ]}
 quickcheck = "1.0.3"
 serde_json = "1.0.140"
-tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 futures_ringbuf = "0.4.0"
 hex-literal = "1.0.0"
 
@@ -104,6 +104,7 @@ fuzz = ["serde/derive", "serde/rc", "bytes/serde", "dep:serde_millis", "cid/serd
 # They are not yet suitable for production use-cases and should be used with caution.
 quic = ["dep:webpki", "dep:quinn", "dep:rustls", "dep:ring", "dep:rcgen"]
 webrtc = ["dep:str0m"]
+rsa = ["dep:ring"]
 
 [profile.release]
 debug = true

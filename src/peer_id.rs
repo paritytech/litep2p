@@ -59,15 +59,18 @@ impl fmt::Display for PeerId {
 impl PeerId {
     /// Builds a `PeerId` from a public key.
     pub fn from_public_key(key: &PublicKey) -> PeerId {
-        let key_enc = key.to_protobuf_encoding();
+        Self::from_public_key_protobuf(&key.to_protobuf_encoding())
+    }
 
+    /// Builds a `PeerId` from a public key in protobuf encoding.
+    pub fn from_public_key_protobuf(key_enc: &[u8]) -> PeerId {
         let hash_algorithm = if key_enc.len() <= MAX_INLINE_KEY_LENGTH {
             Code::Identity
         } else {
             Code::Sha2_256
         };
 
-        let multihash = hash_algorithm.digest(&key_enc);
+        let multihash = hash_algorithm.digest(key_enc);
 
         PeerId { multihash }
     }

@@ -136,7 +136,7 @@ impl Eq for AddressRecord {}
 
 impl PartialOrd for AddressRecord {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.score.cmp(&other.score))
+        Some(self.cmp(other))
     }
 }
 

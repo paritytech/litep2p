@@ -127,6 +127,9 @@ pub struct ConfigBuilder {
 
     /// True if litep2p should attempt to dial local addresses.
     use_private_ip: bool,
+
+    /// Use system's DNS config.
+    use_system_dns_config: bool,
 }
 
 impl Default for ConfigBuilder {
@@ -161,6 +164,7 @@ impl ConfigBuilder {
             connection_limits: ConnectionLimitsConfig::default(),
             keep_alive_timeout: KEEP_ALIVE_TIMEOUT,
             use_private_ip: true,
+            use_system_dns_config: false,
         }
     }
 
@@ -299,6 +303,12 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set DNS resolver according to system configuration instead of default (Google).
+    pub fn with_system_resolver(mut self) -> Self {
+        self.use_system_dns_config = true;
+        self
+    }
+
     /// Build [`Litep2pConfig`].
     pub fn build(mut self) -> Litep2pConfig {
         let keypair = match self.keypair {
@@ -329,6 +339,7 @@ impl ConfigBuilder {
             connection_limits: self.connection_limits,
             keep_alive_timeout: self.keep_alive_timeout,
             use_private_ip: self.use_private_ip,
+            use_system_dns_config: self.use_system_dns_config,
         }
     }
 }
@@ -394,4 +405,7 @@ pub struct Litep2pConfig {
 
     /// True if litep2p should attempt to dial local addresses.
     pub(crate) use_private_ip: bool,
+
+    /// Use system's DNS config.
+    pub(crate) use_system_dns_config: bool,
 }
