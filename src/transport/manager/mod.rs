@@ -73,6 +73,12 @@ pub(crate) mod handle;
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::transport-manager";
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum DialFailureAddresses {
+    Required,
+    NotRequired,
+}
+
 /// The connection established result.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum ConnectionEstablishedResult {
@@ -106,6 +112,8 @@ pub struct ProtocolContext {
 
     /// Fallback names for the protocol.
     pub fallback_names: Vec<ProtocolName>,
+
+    pub dial_failure_mode: DialFailureAddresses,
 }
 
 impl ProtocolContext {
@@ -114,11 +122,20 @@ impl ProtocolContext {
         codec: ProtocolCodec,
         tx: Sender<InnerTransportEvent>,
         fallback_names: Vec<ProtocolName>,
+        dial_failure_mode: DialFailureAddresses,
     ) -> Self {
         Self {
             tx,
             codec,
             fallback_names,
+            dial_failure_mode,
+        }
+    }
+
+    fn dial_failure_addresses(&self, addresses: &[Multiaddr]) -> Vec<Multiaddr> {
+        match self.dial_failure_mode {
+            DialFailureAddresses::Required => addresses.to_vec(),
+            DialFailureAddresses::NotRequired => Vec::new(),
         }
     }
 }
@@ -214,9 +231,6 @@ pub struct TransportManager {
     /// All names (main and fallback(s)) of the installed protocols.
     protocol_names: HashSet<ProtocolName>,
 
-    /// Protocols that need to be informed about dial failures with addresses.
-    address_reporting_protocols: HashSet<ProtocolName>,
-
     /// Listen addresses.
     listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
 
@@ -297,7 +311,6 @@ impl TransportManager {
                 protocols: HashMap::new(),
                 transports: TransportContext::new(),
                 protocol_names: HashSet::new(),
-                address_reporting_protocols: HashSet::new(),
                 transport_manager_handle: handle.clone(),
                 pending_connections: HashMap::new(),
                 next_substream_id: Arc::new(AtomicUsize::new(0usize)),
@@ -336,7 +349,7 @@ impl TransportManager {
         fallback_names: Vec<ProtocolName>,
         codec: ProtocolCodec,
         keep_alive_timeout: Duration,
-        needs_dial_failure_addresses: bool,
+        dial_failure_mode: DialFailureAddresses,
     ) -> TransportService {
         assert!(!self.protocol_names.contains(&protocol));
 
@@ -344,12 +357,6 @@ impl TransportManager {
             if self.protocol_names.contains(fallback) {
                 panic!("duplicate fallback protocol given: {fallback:?}");
             }
-        }
-
-        if needs_dial_failure_addresses {
-            self.address_reporting_protocols.insert(protocol.clone());
-            self.address_reporting_protocols
-                .extend(fallback_names.clone());
         }
 
         let (service, sender) = TransportService::new(
@@ -363,7 +370,7 @@ impl TransportManager {
 
         self.protocols.insert(
             protocol.clone(),
-            ProtocolContext::new(codec, sender, fallback_names.clone()),
+            ProtocolContext::new(codec, sender, fallback_names.clone(), dial_failure_mode),
         );
         self.protocol_names.insert(protocol);
         self.protocol_names.extend(fallback_names);
@@ -1128,7 +1135,9 @@ impl TransportManager {
                                                     "dial failure, notify protocol",
                                                 );
 
-                                                match context.tx.try_send(make_dial_failure_event(&self.address_reporting_protocols, protocol, peer, vec![address.clone()])) {
+                                                let adresses = context.dial_failure_addresses(&[address.clone()]);
+
+                                                match context.tx.try_send(make_dial_failure_event(peer, adresses.clone())) {
                                                     Ok(()) => {}
                                                     Err(_) => {
                                                         tracing::trace!(
@@ -1141,7 +1150,7 @@ impl TransportManager {
                                                         );
                                                         let _ = context
                                                             .tx
-                                                            .send(make_dial_failure_event(&self.address_reporting_protocols, protocol, peer, vec![address.clone()]))
+                                                            .send(make_dial_failure_event(peer, adresses.clone()))
                                                             .await;
                                                     }
                                                 }
@@ -1272,9 +1281,10 @@ impl TransportManager {
                                         .collect::<Vec<_>>();
 
                                     for (protocol, context) in &self.protocols {
+                                        let addresses = context.dial_failure_addresses(&addresses);
                                         let _ = match context
                                             .tx
-                                            .try_send(make_dial_failure_event(&self.address_reporting_protocols, protocol, peer, addresses.clone())) {
+                                            .try_send(make_dial_failure_event(peer, addresses.clone())) {
                                             Ok(_) => Ok(()),
                                             Err(_) => {
                                                 tracing::trace!(
@@ -1287,7 +1297,7 @@ impl TransportManager {
 
                                                 context
                                                     .tx
-                                                    .send(make_dial_failure_event(&self.address_reporting_protocols, protocol, peer, addresses.clone()))
+                                                    .send(make_dial_failure_event(peer, addresses.clone()))
                                                     .await
                                             }
                                         };
@@ -1343,18 +1353,7 @@ impl TransportManager {
     }
 }
 
-fn make_dial_failure_event(
-    address_reporting_protocols: &HashSet<ProtocolName>,
-    protocol: &ProtocolName,
-    peer: PeerId,
-    addresses: Vec<Multiaddr>,
-) -> InnerTransportEvent {
-    let addresses = if address_reporting_protocols.contains(protocol) {
-       addresses
-    } else {
-        Vec::new()
-    };
-
+fn make_dial_failure_event(peer: PeerId, addresses: Vec<Multiaddr>) -> InnerTransportEvent {
     InnerTransportEvent::DialFailure { peer, addresses }
 }
 
