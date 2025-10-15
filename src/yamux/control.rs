@@ -84,11 +84,17 @@ where
                     match connection.poll_next_inbound(cx) {
                         Poll::Ready(maybe_stream) => {
                             // Transport layers will close the connection on the first
-                            // substream error. The connection `poll_next_inbound` should
-                            // not be called again after returning an error.
+                            // substream error. The `connection.poll_next_inbound` should
+                            // not be called again after returning an error. Instead, we
+                            // must close the connection gracefully.
                             match maybe_stream.as_ref() {
                                 Some(Err(error)) => {
                                     tracing::debug!(target: LOG_TARGET, ?error, "Inbound stream error, closing connection");
+
+                                    self.state = State::Closing {
+                                        reply: None,
+                                        inner: Closing::ClosingConnection { connection },
+                                    };
                                 }
                                 other => {
                                     tracing::debug!(target: LOG_TARGET, ?other, "Inbound stream reset state to idle");
