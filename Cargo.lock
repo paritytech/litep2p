@@ -1931,7 +1931,7 @@ dependencies = [
  "webpki",
  "x25519-dalek 2.0.1",
  "x509-parser 0.17.0",
- "yamux 0.13.5",
+ "yamux 0.13.7",
  "yasna",
  "zeroize",
 ]
@@ -4721,9 +4721,9 @@ dependencies = [
 
 [[package]]
 name = "yamux"
-version = "0.13.5"
+version = "0.13.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3da1acad1c2dc53f0dde419115a38bd8221d8c3e47ae9aeceaf453266d29307e"
+checksum = "6927cfe0edfae4b26a369df6bad49cd0ef088c0ec48f4045b2084bcaedc10246"
 dependencies = [
  "futures",
  "log",
