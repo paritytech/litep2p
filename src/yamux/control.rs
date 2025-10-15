@@ -211,7 +211,7 @@ where
                         return Poll::Pending;
                     }
                 },
-                State::Poisoned => unreachable!(),
+                State::Poisoned => return Poll::Pending,
             }
         }
     }
