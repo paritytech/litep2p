@@ -73,9 +73,16 @@ pub(crate) mod handle;
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::transport-manager";
 
+/// Determines if a protocol requires the list of failed addresses upon a dial failure.
+///
+/// This is used during protocol registration with the `TransportManager` to specify
+/// whether `InnerTransportEvent::DialFailure` events sent to this protocol should
+/// include the specific multiaddresses that failed.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum DialFailureAddresses {
+    /// The protocol needs the list of failed addresses.
     Required,
+    /// The protocol does not need the list of failed addresses.
     NotRequired,
 }
 
@@ -113,6 +120,7 @@ pub struct ProtocolContext {
     /// Fallback names for the protocol.
     pub fallback_names: Vec<ProtocolName>,
 
+    /// Specifies if the protocol requires dial failure addresses.
     pub dial_failure_mode: DialFailureAddresses,
 }
 
@@ -1135,9 +1143,9 @@ impl TransportManager {
                                                     "dial failure, notify protocol",
                                                 );
 
-                                                let adresses = context.dial_failure_addresses(&[address.clone()]);
+                                                let addresses = context.dial_failure_addresses(&[address.clone()]);
 
-                                                match context.tx.try_send(make_dial_failure_event(peer, adresses.clone())) {
+                                                match context.tx.try_send(InnerTransportEvent::DialFailure { peer, addresses: addresses.clone() }) {
                                                     Ok(()) => {}
                                                     Err(_) => {
                                                         tracing::trace!(
@@ -1150,7 +1158,7 @@ impl TransportManager {
                                                         );
                                                         let _ = context
                                                             .tx
-                                                            .send(make_dial_failure_event(peer, adresses.clone()))
+                                                            .send(InnerTransportEvent::DialFailure { peer, addresses })
                                                             .await;
                                                     }
                                                 }
@@ -1284,7 +1292,7 @@ impl TransportManager {
                                         let addresses = context.dial_failure_addresses(&addresses);
                                         let _ = match context
                                             .tx
-                                            .try_send(make_dial_failure_event(peer, addresses.clone())) {
+                                            .try_send(InnerTransportEvent::DialFailure { peer, addresses: addresses.clone() }) {
                                             Ok(_) => Ok(()),
                                             Err(_) => {
                                                 tracing::trace!(
@@ -1297,7 +1305,7 @@ impl TransportManager {
 
                                                 context
                                                     .tx
-                                                    .send(make_dial_failure_event(peer, addresses.clone()))
+                                                    .send(InnerTransportEvent::DialFailure { peer, addresses })
                                                     .await
                                             }
                                         };
@@ -1351,10 +1359,6 @@ impl TransportManager {
             }
         }
     }
-}
-
-fn make_dial_failure_event(peer: PeerId, addresses: Vec<Multiaddr>) -> InnerTransportEvent {
-    InnerTransportEvent::DialFailure { peer, addresses }
 }
 
 #[cfg(test)]
