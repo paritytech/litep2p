@@ -93,7 +93,7 @@ where
 
                                     self.state = State::Closing {
                                         reply: None,
-                                        inner: Closing::ClosingConnection { connection },
+                                        inner: Closing::DrainingControlCommands { connection },
                                     };
                                 }
                                 other => {
