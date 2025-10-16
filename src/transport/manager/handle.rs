@@ -28,7 +28,7 @@ use crate::{
         address::AddressRecord,
         peer_state::StateDialResult,
         types::{PeerContext, SupportedTransport},
-        ProtocolContext, TransportManagerEvent, LOG_TARGET,
+        IpDialingMode, ProtocolContext, TransportManagerEvent, LOG_TARGET,
     },
     types::{protocol::ProtocolName, ConnectionId},
     BandwidthSink, PeerId,
@@ -87,6 +87,9 @@ pub struct TransportManagerHandle {
 
     /// Public addresses.
     public_addresses: PublicAddresses,
+
+    /// IP dialing mode.
+    ip_dialing_mode: IpDialingMode,
 }
 
 impl TransportManagerHandle {
@@ -98,7 +101,20 @@ impl TransportManagerHandle {
         supported_transport: HashSet<SupportedTransport>,
         listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
         public_addresses: PublicAddresses,
+        use_private_ip: bool,
     ) -> Self {
+        let ip_dialing_mode = if use_private_ip {
+            IpDialingMode::All
+        } else {
+            IpDialingMode::GlobalOnly
+        };
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?ip_dialing_mode,
+            "Transport manager handle created",
+        );
+
         Self {
             peers,
             cmd_tx,
@@ -106,6 +122,7 @@ impl TransportManagerHandle {
             supported_transport,
             listen_addresses,
             public_addresses,
+            ip_dialing_mode,
         }
     }
 
@@ -248,7 +265,11 @@ impl TransportManagerHandle {
 
         {
             let peers = self.peers.read();
-            let Some(PeerContext { state, addresses }) = peers.get(peer) else {
+            let Some(PeerContext {
+                state,
+                addresses: address_store,
+            }) = peers.get(peer)
+            else {
                 return Err(ImmediateDialError::NoAddressAvailable);
             };
 
@@ -260,7 +281,18 @@ impl TransportManagerHandle {
             };
 
             // Check if we have enough addresses to dial.
-            if addresses.is_empty() {
+            if address_store.is_empty() {
+                return Err(ImmediateDialError::NoAddressAvailable);
+            }
+
+            // Check if we can dial at least one address from the store in the current operating
+            // mode. If the mode is `IpDialingMode::All`, this will always return
+            // `true` on the first address.
+            let has_dialable_address = address_store
+                .addresses
+                .iter()
+                .any(|(address, _record)| self.ip_dialing_mode.allows_address(address));
+            if !has_dialable_address {
                 return Err(ImmediateDialError::NoAddressAvailable);
             }
         }
@@ -279,6 +311,15 @@ impl TransportManagerHandle {
     pub fn dial_address(&self, address: Multiaddr) -> Result<(), ImmediateDialError> {
         if !address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_))) {
             return Err(ImmediateDialError::PeerIdMissing);
+        }
+
+        if !self.ip_dialing_mode.allows_address(&address) {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?address,
+                "Dialing address is not global, skipping",
+            );
+            return Err(ImmediateDialError::NoAddressAvailable);
         }
 
         self.cmd_tx
@@ -368,6 +409,7 @@ mod tests {
                 supported_transport: HashSet::new(),
                 listen_addresses: Default::default(),
                 public_addresses: PublicAddresses::new(local_peer_id),
+                ip_dialing_mode: IpDialingMode::default(),
             },
             cmd_rx,
         )
@@ -760,6 +802,7 @@ mod tests {
             supported_transport: HashSet::new(),
             listen_addresses,
             public_addresses: PublicAddresses::new(local_peer_id),
+            ip_dialing_mode: IpDialingMode::default(),
         };
 
         // local addresses
