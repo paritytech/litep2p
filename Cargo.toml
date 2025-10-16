@@ -105,6 +105,9 @@ quic = ["dep:webpki", "dep:quinn", "dep:rustls", "dep:ring", "dep:rcgen"]
 webrtc = ["dep:str0m"]
 rsa = ["dep:ring"]
 
+# Shadow simulation compatibility
+x-shadow = []
+
 [profile.release]
 debug = true
 
