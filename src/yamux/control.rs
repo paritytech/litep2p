@@ -19,6 +19,8 @@ use std::{
     task::{Context, Poll},
 };
 
+const LOG_TARGET: &str = "litep2p::yamux::control";
+
 /// A Yamux [`Connection`] controller.
 ///
 /// This presents an alternative API for using a yamux [`Connection`].
@@ -81,7 +83,25 @@ where
                 State::Idle(mut connection) => {
                     match connection.poll_next_inbound(cx) {
                         Poll::Ready(maybe_stream) => {
-                            self.state = State::Idle(connection);
+                            // Transport layers will close the connection on the first
+                            // substream error. The `connection.poll_next_inbound` should
+                            // not be called again after returning an error. Instead, we
+                            // must close the connection gracefully.
+                            match maybe_stream.as_ref() {
+                                Some(Err(error)) => {
+                                    tracing::debug!(target: LOG_TARGET, ?error, "Inbound stream error, closing connection");
+
+                                    self.state = State::Closing {
+                                        reply: None,
+                                        inner: Closing::DrainingControlCommands { connection },
+                                    };
+                                }
+                                other => {
+                                    tracing::debug!(target: LOG_TARGET, ?other, "Inbound stream reset state to idle");
+                                    self.state = State::Idle(connection)
+                                }
+                            }
+
                             return Poll::Ready(maybe_stream);
                         }
                         Poll::Pending => {}
@@ -191,7 +211,7 @@ where
                         return Poll::Pending;
                     }
                 },
-                State::Poisoned => unreachable!(),
+                State::Poisoned => return Poll::Pending,
             }
         }
     }
