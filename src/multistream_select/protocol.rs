@@ -220,6 +220,10 @@ impl Message {
 
             // Skip ahead to the next protocol.
             remaining = &tail[len..];
+            if remaining.len() == 0 {
+                // During negotiation the remote may not append a trailing newline.
+                break;
+            }
         }
 
         Ok(Message::Protocols(protocols))
@@ -230,7 +234,7 @@ impl Message {
 ///
 /// # Note
 ///
-/// This is implementation is not compliant with the multistream-select protocol spec.
+/// This implementation may not be compliant with the multistream-select protocol spec.
 /// The only purpose of this was to get the `multistream-select` protocol working with smoldot.
 pub fn webrtc_encode_multistream_message(
     messages: impl IntoIterator<Item = Message>,
@@ -248,9 +252,6 @@ pub fn webrtc_encode_multistream_message(
         let mut proto_bytes = UnsignedVarint::encode(proto_bytes)?;
         header.append(&mut proto_bytes);
     }
-
-    // For the `Message::Protocols` to be interpreted correctly, it must be followed by a newline.
-    header.push(b'\n');
 
     Ok(BytesMut::from(&header[..]))
 }
@@ -540,6 +541,23 @@ mod tests {
         assert_eq!(
             Message::decode(bytes).unwrap_err(),
             ProtocolError::InvalidMessage
+        );
+    }
+
+    #[test]
+    fn test_decode_multiple_protocols_no_trailing_newline() {
+        let raw: [u8; 38] = [
+            19, 47, 109, 117, 108, 116, 105, 115, 116, 114, 101, 97, 109, 47, 49, 46, 48, 46, 48, 10,
+            17, 47, 105, 112, 102, 115, 47, 112, 105, 110, 103, 47, 49, 46, 48, 46, 48, 10,
+        ];
+        let bytes = Bytes::copy_from_slice(&raw);
+        
+        assert_eq!(
+            Message::decode(bytes).unwrap(),
+            Message::Protocols(vec![
+                Protocol::try_from(Bytes::from_static(b"/multistream/1.0.0")).unwrap(),
+                Protocol::try_from(Bytes::from_static(b"/ipfs/ping/1.0.0")).unwrap(),
+            ])
         );
     }
 }
