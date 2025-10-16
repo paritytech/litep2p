@@ -37,7 +37,7 @@ smallvec = "1.15.0"
 snow = { version = "0.9.3", features = ["ring-resolver"], default-features = false }
 socket2 = { version = "0.5.9", features = ["all"] }
 thiserror = "2.0.12"
-tokio-stream = "0.1.12"
+tokio-stream = "0.1.17"
 tokio-util = { version = "0.7.15", features = ["compat", "io", "codec"] }
 tokio = { version = "1.45.0", features = ["rt", "net", "io-util", "time", "macros", "sync", "parking_lot"] }
 tracing = { version = "0.1.40", features = ["log"] }
