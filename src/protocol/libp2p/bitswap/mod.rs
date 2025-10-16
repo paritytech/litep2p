@@ -130,7 +130,7 @@ impl Bitswap {
     fn on_inbound_substream(&mut self, peer: PeerId, substream: Substream) {
         tracing::debug!(target: LOG_TARGET, ?peer, "handle inbound substream");
 
-        if let Some(_) = self.inbound.insert(peer, substream) {
+        if self.inbound.insert(peer, substream).is_some() {
             // Only one inbound substream per peer is allowed in order to constrain resources.
             tracing::debug!(
                 target: LOG_TARGET,
