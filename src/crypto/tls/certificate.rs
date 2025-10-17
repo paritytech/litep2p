@@ -201,7 +201,7 @@ fn make_libp2p_extension(
     certificate_pubkey: &impl rcgen::PublicKeyData,
 ) -> Result<rcgen::CustomExtension, rcgen::Error> {
     // The peer signs the concatenation of the string `libp2p-tls-handshake:`
-    // and the public key that it used to generate the certificate carrying
+    // and the public key (in SPKI DER format) that it used to generate the certificate carrying
     // the libp2p Public Key Extension, using its private host key.
     let signature = {
         let mut msg = vec![];
