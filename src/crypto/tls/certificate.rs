@@ -206,7 +206,7 @@ fn make_libp2p_extension(
     let signature = {
         let mut msg = vec![];
         msg.extend(P2P_SIGNING_PREFIX);
-        msg.extend(certificate_pubkey.der_bytes());
+        msg.extend(certificate_pubkey.subject_public_key_info());
 
         identity_keypair.sign(&msg)
     };
