@@ -1,6 +1,7 @@
 [package]
 name = "litep2p"
 description = "Peer-to-peer networking library"
+repository = "https://github.com/paritytech/litep2p"
 license = "MIT"
 version = "0.11.0"
 edition = "2021"
