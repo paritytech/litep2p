@@ -220,7 +220,7 @@ impl Message {
 
             // Skip ahead to the next protocol.
             remaining = &tail[len..];
-            if remaining.is_empty(){
+            if remaining.is_empty() {
                 // During negotiation the remote may not append a trailing newline.
                 break;
             }
