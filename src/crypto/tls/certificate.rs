@@ -57,22 +57,20 @@ pub fn generate(
     // Endpoints MAY generate a new key and certificate
     // for every connection attempt, or they MAY reuse the same key
     // and certificate for multiple connections.
-    let certificate_keypair = rcgen::KeyPair::generate(P2P_SIGNATURE_ALGORITHM)?;
+    let certificate_keypair = rcgen::KeyPair::generate_for(P2P_SIGNATURE_ALGORITHM)?;
     let rustls_key = rustls::PrivateKey(certificate_keypair.serialize_der());
 
     let certificate = {
-        let mut params = rcgen::CertificateParams::new(vec![]);
+        let mut params = rcgen::CertificateParams::new(vec![])?;
         params.distinguished_name = rcgen::DistinguishedName::new();
         params.custom_extensions.push(make_libp2p_extension(
             identity_keypair,
             &certificate_keypair,
         )?);
-        params.alg = P2P_SIGNATURE_ALGORITHM;
-        params.key_pair = Some(certificate_keypair);
-        rcgen::Certificate::from_params(params)?
+        params.self_signed(&certificate_keypair)?
     };
 
-    let rustls_certificate = rustls::Certificate(certificate.serialize_der()?);
+    let rustls_certificate = rustls::Certificate(certificate.der().to_vec());
 
     Ok((rustls_certificate, rustls_key))
 }
@@ -113,7 +111,7 @@ pub struct P2pExtension {
 
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
-pub struct GenError(#[from] rcgen::RcgenError);
+pub struct GenError(#[from] rcgen::Error);
 
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
@@ -200,15 +198,15 @@ fn parse_unverified<'a>(der_input: &'a [u8]) -> Result<P2pCertificate<'a>, webpk
 
 fn make_libp2p_extension(
     identity_keypair: &Keypair,
-    certificate_keypair: &rcgen::KeyPair,
-) -> Result<rcgen::CustomExtension, rcgen::RcgenError> {
+    certificate_pubkey: &impl rcgen::PublicKeyData,
+) -> Result<rcgen::CustomExtension, rcgen::Error> {
     // The peer signs the concatenation of the string `libp2p-tls-handshake:`
-    // and the public key that it used to generate the certificate carrying
+    // and the public key (in SPKI DER format) that it used to generate the certificate carrying
     // the libp2p Public Key Extension, using its private host key.
     let signature = {
         let mut msg = vec![];
         msg.extend(P2P_SIGNING_PREFIX);
-        msg.extend(certificate_keypair.public_key_der());
+        msg.extend(certificate_pubkey.subject_public_key_info());
 
         identity_keypair.sign(&msg)
     };
