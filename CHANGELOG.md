@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.11.0] - 2025-10-16
+## [0.11.0] - 2025-10-20
 
 This release adds support for RSA remote network identity keys gated behind `rsa` feature. It also fixes mDNS initialization in the environment with no multicast addresses available and Bitswap compatibility with kubo IPFS client >= v0.37.0.
 
@@ -22,6 +22,7 @@ This release adds support for RSA remote network identity keys gated behind `rsa
 
 ### Changed
 
+- Upgrade rcgen 0.10.0 -> 0.14.5 ([#450](https://github.com/paritytech/litep2p/pull/450))
 - chore: update str0m dependency, update code based on breaking changes ([#422](https://github.com/paritytech/litep2p/pull/422))
 
 ## [0.10.0] - 2025-07-22
