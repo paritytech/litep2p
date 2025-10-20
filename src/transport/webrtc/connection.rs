@@ -631,6 +631,8 @@ impl WebRtcConnection {
             protocol: protocol.to_string(),
         });
 
+        self.rtc.channel(channel_id).unwrap().set_buffered_amount_low_threshold(1024);
+
         tracing::trace!(
             target: LOG_TARGET,
             peer = ?self.peer,
@@ -742,6 +744,20 @@ impl WebRtcConnection {
 
                         continue;
                     }
+                    Event::ChannelBufferedAmountLow(channel_id) => {
+                        if let Some(ChannelState::Closing) = self.channels.get(&channel_id) {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                peer = ?self.peer,
+                                ?channel_id,
+                                "buffer drained, closing channel",
+                            );
+                            self.rtc.direct_api().close_data_channel(channel_id);
+                            self.handles.remove(&channel_id);
+                        }
+
+                        continue;
+                    }
                     event => {
                         tracing::debug!(
                             target: LOG_TARGET,
@@ -794,10 +810,7 @@ impl WebRtcConnection {
                             ?channel_id,
                             "channel closed",
                         );
-
-                        self.rtc.direct_api().close_data_channel(channel_id);
                         self.channels.insert(channel_id, ChannelState::Closing);
-                        self.handles.remove(&channel_id);
                     }
                     Some((channel_id, Some(SubstreamEvent::Message(data)))) => {
                         if let Err(error) = self.on_outbound_data(channel_id, data) {
