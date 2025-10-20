@@ -360,6 +360,26 @@ impl TransportManager {
         service
     }
 
+    /// Unregister a protocol in response of the user dropping the protocol handle.
+    fn unregister_protocol(&mut self, protocol: ProtocolName) {
+        let Some(context) = self.protocols.remove(&protocol) else {
+            tracing::error!(target: LOG_TARGET, ?protocol, "Cannot unregister protocol, not registered");
+            return;
+        };
+
+        for fallback in &context.fallback_names {
+            if !self.protocol_names.remove(fallback) {
+                tracing::error!(target: LOG_TARGET, ?fallback, ?protocol, "Cannot unregister fallback protocol, not registered");
+            }
+        }
+
+        tracing::info!(
+            target: LOG_TARGET,
+            ?protocol,
+            "Protocol fully unregistered"
+        );
+    }
+
     /// Acquire `TransportHandle`.
     pub fn transport_handle(&self, executor: Arc<dyn Executor>) -> TransportHandle {
         TransportHandle {
@@ -1042,6 +1062,9 @@ impl TransportManager {
                                 tracing::debug!(target: LOG_TARGET, ?error, "failed to dial peer")
                             }
                         }
+                        InnerTransportManagerCommand::UnregisterProtocol { protocol } => {
+                            self.unregister_protocol(protocol);
+                        }
                     }
                 },
 
@@ -1256,7 +1279,7 @@ impl TransportManager {
                                                     ?peer,
                                                     %protocol,
                                                     ?connection_id,
-                                                    "call to protocol would, block try sending in a blocking way",
+                                                    "call to protocol would block try sending in a blocking way",
                                                 );
 
                                                 context
@@ -1354,16 +1377,19 @@ mod tests {
         (dial_address, connection_id)
     }
 
+    #[cfg(feature = "websocket")]
     struct MockTransport {
         rx: tokio::sync::mpsc::Receiver<TransportEvent>,
     }
 
+    #[cfg(feature = "websocket")]
     impl MockTransport {
         fn new(rx: tokio::sync::mpsc::Receiver<TransportEvent>) -> Self {
             Self { rx }
         }
     }
 
+    #[cfg(feature = "websocket")]
     impl Transport for MockTransport {
         fn dial(&mut self, _connection_id: ConnectionId, _address: Multiaddr) -> crate::Result<()> {
             Ok(())
@@ -1399,6 +1425,8 @@ mod tests {
 
         fn cancel(&mut self, _connection_id: ConnectionId) {}
     }
+
+    #[cfg(feature = "websocket")]
     impl Stream for MockTransport {
         type Item = TransportEvent;
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

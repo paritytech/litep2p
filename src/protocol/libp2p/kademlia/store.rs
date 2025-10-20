@@ -22,7 +22,11 @@
 
 use crate::{
     protocol::libp2p::kademlia::{
-        config::{DEFAULT_PROVIDER_REFRESH_INTERVAL, DEFAULT_PROVIDER_TTL},
+        config::{
+            DEFAULT_MAX_PROVIDERS_PER_KEY, DEFAULT_MAX_PROVIDER_ADDRESSES,
+            DEFAULT_MAX_PROVIDER_KEYS, DEFAULT_MAX_RECORDS, DEFAULT_MAX_RECORD_SIZE_BYTES,
+            DEFAULT_PROVIDER_REFRESH_INTERVAL, DEFAULT_PROVIDER_TTL,
+        },
         record::{ContentProvider, Key, ProviderRecord, Record},
         types::Key as KademliaKey,
     },
@@ -352,6 +356,7 @@ impl MemoryStore {
     }
 }
 
+#[derive(Debug)]
 pub struct MemoryStoreConfig {
     /// Maximum number of records to store.
     pub max_records: usize,
@@ -379,11 +384,11 @@ pub struct MemoryStoreConfig {
 impl Default for MemoryStoreConfig {
     fn default() -> Self {
         Self {
-            max_records: 1024,
-            max_record_size_bytes: 65 * 1024,
-            max_provider_keys: 1024,
-            max_provider_addresses: 30,
-            max_providers_per_key: 20,
+            max_records: DEFAULT_MAX_RECORDS,
+            max_record_size_bytes: DEFAULT_MAX_RECORD_SIZE_BYTES,
+            max_provider_keys: DEFAULT_MAX_PROVIDER_KEYS,
+            max_provider_addresses: DEFAULT_MAX_PROVIDER_ADDRESSES,
+            max_providers_per_key: DEFAULT_MAX_PROVIDERS_PER_KEY,
             provider_refresh_interval: DEFAULT_PROVIDER_REFRESH_INTERVAL,
             provider_ttl: DEFAULT_PROVIDER_TTL,
         }

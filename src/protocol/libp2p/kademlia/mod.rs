@@ -29,7 +29,7 @@ use crate::{
             message::KademliaMessage,
             query::{QueryAction, QueryEngine},
             routing_table::RoutingTable,
-            store::{MemoryStore, MemoryStoreAction, MemoryStoreConfig},
+            store::{MemoryStore, MemoryStoreAction},
             types::{ConnectionType, KademliaPeer, Key},
         },
         Direction, TransportEvent, TransportService,
@@ -185,14 +185,7 @@ impl Kademlia {
             service.add_known_address(&peer, addresses.into_iter());
         }
 
-        let store = MemoryStore::with_config(
-            local_peer_id,
-            MemoryStoreConfig {
-                provider_refresh_interval: config.provider_refresh_interval,
-                provider_ttl: config.provider_ttl,
-                ..Default::default()
-            },
-        );
+        let store = MemoryStore::with_config(local_peer_id, config.memory_store_config);
 
         Self {
             service,
@@ -1311,8 +1304,7 @@ mod tests {
             update_mode: RoutingTableUpdateMode::Automatic,
             validation_mode: IncomingRecordValidationMode::Automatic,
             record_ttl: Duration::from_secs(36 * 60 * 60),
-            provider_ttl: Duration::from_secs(48 * 60 * 60),
-            provider_refresh_interval: Duration::from_secs(22 * 60 * 60),
+            memory_store_config: Default::default(),
             event_tx,
             cmd_rx,
             next_query_id,

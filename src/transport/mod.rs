@@ -23,9 +23,10 @@
 use crate::{error::DialError, transport::manager::TransportHandle, types::ConnectionId, PeerId};
 
 use futures::Stream;
+use hickory_resolver::TokioResolver;
 use multiaddr::Multiaddr;
 
-use std::{fmt::Debug, time::Duration};
+use std::{fmt::Debug, sync::Arc, time::Duration};
 
 pub(crate) mod common;
 #[cfg(feature = "quic")]
@@ -36,7 +37,9 @@ pub mod webrtc;
 #[cfg(feature = "websocket")]
 pub mod websocket;
 
+#[cfg(test)]
 pub(crate) mod dummy;
+
 pub(crate) mod manager;
 
 pub use manager::limits::{ConnectionLimitsConfig, ConnectionLimitsError};
@@ -177,7 +180,11 @@ pub(crate) trait TransportBuilder {
     type Transport: Transport;
 
     /// Create new [`Transport`] object.
-    fn new(context: TransportHandle, config: Self::Config) -> crate::Result<(Self, Vec<Multiaddr>)>
+    fn new(
+        context: TransportHandle,
+        config: Self::Config,
+        resolver: Arc<TokioResolver>,
+    ) -> crate::Result<(Self, Vec<Multiaddr>)>
     where
         Self: Sized;
 }

@@ -24,6 +24,9 @@
 use crate::{error::ParseError, peer_id::*};
 
 pub mod ed25519;
+#[cfg(feature = "rsa")]
+pub mod rsa;
+
 pub(crate) mod noise;
 #[cfg(feature = "quic")]
 pub(crate) mod tls;
@@ -39,18 +42,6 @@ pub enum PublicKey {
 }
 
 impl PublicKey {
-    /// Verify a signature for a message using this public key, i.e. check
-    /// that the signature has been produced by the corresponding
-    /// private key (authenticity), and that the message has not been
-    /// tampered with (integrity).
-    #[must_use]
-    pub fn verify(&self, msg: &[u8], sig: &[u8]) -> bool {
-        use PublicKey::*;
-        match self {
-            Ed25519(pk) => pk.verify(msg, sig),
-        }
-    }
-
     /// Encode the public key into a protobuf structure for storage or
     /// exchange with other nodes.
     pub fn to_protobuf_encoding(&self) -> Vec<u8> {
@@ -61,16 +52,6 @@ impl PublicKey {
         let mut buf = Vec::with_capacity(public_key.encoded_len());
         public_key.encode(&mut buf).expect("Vec<u8> provides capacity as needed");
         buf
-    }
-
-    /// Decode a public key from a protobuf structure, e.g. read from storage
-    /// or received from another node.
-    pub fn from_protobuf_encoding(bytes: &[u8]) -> Result<PublicKey, ParseError> {
-        use prost::Message;
-
-        let pubkey = keys_proto::PublicKey::decode(bytes)?;
-
-        pubkey.try_into()
     }
 
     /// Convert the `PublicKey` into the corresponding `PeerId`.
@@ -108,5 +89,59 @@ impl TryFrom<keys_proto::PublicKey> for PublicKey {
 impl From<ed25519::PublicKey> for PublicKey {
     fn from(public_key: ed25519::PublicKey) -> Self {
         PublicKey::Ed25519(public_key)
+    }
+}
+
+/// The public key of a remote node's identity keypair. Supports RSA keys additionally to ed25519.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RemotePublicKey {
+    /// A public Ed25519 key.
+    Ed25519(ed25519::PublicKey),
+    /// A public RSA key.
+    #[cfg(feature = "rsa")]
+    Rsa(rsa::PublicKey),
+}
+
+impl RemotePublicKey {
+    /// Verify a signature for a message using this public key, i.e. check
+    /// that the signature has been produced by the corresponding
+    /// private key (authenticity), and that the message has not been
+    /// tampered with (integrity).
+    #[must_use]
+    pub fn verify(&self, msg: &[u8], sig: &[u8]) -> bool {
+        use RemotePublicKey::*;
+        match self {
+            Ed25519(pk) => pk.verify(msg, sig),
+            #[cfg(feature = "rsa")]
+            Rsa(pk) => pk.verify(msg, sig),
+        }
+    }
+
+    /// Decode a public key from a protobuf structure, e.g. read from storage
+    /// or received from another node.
+    pub fn from_protobuf_encoding(bytes: &[u8]) -> Result<RemotePublicKey, ParseError> {
+        use prost::Message;
+
+        let pubkey = keys_proto::PublicKey::decode(bytes)?;
+
+        pubkey.try_into()
+    }
+}
+
+impl TryFrom<keys_proto::PublicKey> for RemotePublicKey {
+    type Error = ParseError;
+
+    fn try_from(pubkey: keys_proto::PublicKey) -> Result<Self, Self::Error> {
+        let key_type = keys_proto::KeyType::try_from(pubkey.r#type)
+            .map_err(|_| ParseError::UnknownKeyType(pubkey.r#type))?;
+
+        match key_type {
+            keys_proto::KeyType::Ed25519 =>
+                ed25519::PublicKey::try_from_bytes(&pubkey.data).map(RemotePublicKey::Ed25519),
+            #[cfg(feature = "rsa")]
+            keys_proto::KeyType::Rsa =>
+                rsa::PublicKey::try_decode_x509(&pubkey.data).map(RemotePublicKey::Rsa),
+            _ => Err(ParseError::UnknownKeyType(key_type as i32)),
+        }
     }
 }
