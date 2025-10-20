@@ -702,15 +702,13 @@ mod tests {
         codec::ProtocolCodec,
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
-        transport::manager::{
-            limits::ConnectionLimitsConfig, ProtocolContext, SupportedTransport, TransportManager,
-        },
+        transport::manager::{ProtocolContext, SupportedTransport, TransportManager},
         types::protocol::ProtocolName,
         BandwidthSink, PeerId,
     };
     use multiaddr::Protocol;
     use multihash::Multihash;
-    use std::{collections::HashSet, sync::Arc};
+    use std::sync::Arc;
     use tokio::sync::mpsc::channel;
 
     #[tokio::test]
@@ -996,13 +994,7 @@ mod tests {
 
     #[tokio::test]
     async fn dial_error_reported_for_outbound_connections() {
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let (mut manager, _handle) = TransportManager::new().build();
         let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
         manager.register_transport(

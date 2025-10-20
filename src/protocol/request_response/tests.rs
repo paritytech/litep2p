@@ -19,7 +19,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::ed25519::Keypair,
     mock::substream::{DummySubstream, MockSubstream},
     protocol::{
         request_response::{
@@ -29,18 +28,15 @@ use crate::{
         InnerTransportEvent, SubstreamError, TransportService,
     },
     substream::Substream,
-    transport::{
-        manager::{limits::ConnectionLimitsConfig, TransportManager},
-        KEEP_ALIVE_TIMEOUT,
-    },
+    transport::{manager::TransportManager, KEEP_ALIVE_TIMEOUT},
     types::{RequestId, SubstreamId},
-    BandwidthSink, Error, PeerId, ProtocolName,
+    Error, PeerId, ProtocolName,
 };
 
 use futures::StreamExt;
 use tokio::sync::mpsc::Sender;
 
-use std::{collections::HashSet, task::Poll};
+use std::task::Poll;
 
 // create new protocol for testing
 fn protocol() -> (
@@ -49,13 +45,7 @@ fn protocol() -> (
     TransportManager,
     Sender<InnerTransportEvent>,
 ) {
-    let (manager, handle) = TransportManager::new(
-        Keypair::generate(),
-        HashSet::new(),
-        BandwidthSink::new(),
-        8usize,
-        ConnectionLimitsConfig::default(),
-    );
+    let (manager, handle) = TransportManager::new().build();
 
     let peer = PeerId::random();
     let (transport_service, tx) = TransportService::new(
