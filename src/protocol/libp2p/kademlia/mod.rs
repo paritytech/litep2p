@@ -1253,7 +1253,10 @@ mod tests {
     use super::*;
     use crate::{
         codec::ProtocolCodec,
-        transport::{manager::TransportManager, KEEP_ALIVE_TIMEOUT},
+        transport::{
+            manager::{TransportManager, TransportManagerBuilder},
+            KEEP_ALIVE_TIMEOUT,
+        },
         types::protocol::ProtocolName,
         ConnectionId,
     };
@@ -1269,7 +1272,7 @@ mod tests {
     }
 
     fn make_kademlia() -> (Kademlia, Context, TransportManager) {
-        let (manager, handle) = TransportManager::new().build();
+        let (manager, handle) = TransportManagerBuilder::new().build();
 
         let peer = PeerId::random();
         let (transport_service, _tx) = TransportService::new(

@@ -26,7 +26,10 @@ use crate::{
         },
         InnerTransportEvent, ProtocolCommand, TransportService,
     },
-    transport::{manager::TransportManager, KEEP_ALIVE_TIMEOUT},
+    transport::{
+        manager::{TransportManager, TransportManagerBuilder},
+        KEEP_ALIVE_TIMEOUT,
+    },
     types::protocol::ProtocolName,
     PeerId,
 };
@@ -45,7 +48,7 @@ fn make_notification_protocol() -> (
     TransportManager,
     Sender<InnerTransportEvent>,
 ) {
-    let (manager, handle) = TransportManager::new().build();
+    let (manager, handle) = TransportManagerBuilder::new().build();
 
     let peer = PeerId::random();
     let (transport_service, tx) = TransportService::new(

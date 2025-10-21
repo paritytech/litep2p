@@ -40,7 +40,7 @@ use crate::{
         request_response::RequestResponseProtocol,
     },
     transport::{
-        manager::{SupportedTransport, TransportManager},
+        manager::{SupportedTransport, TransportManager, TransportManagerBuilder},
         tcp::TcpTransport,
         TransportBuilder, TransportEvent,
     },
@@ -170,7 +170,7 @@ impl Litep2p {
         );
 
         let supported_transports = Self::supported_transports(&litep2p_config);
-        let (mut transport_manager, transport_handle) = TransportManager::new()
+        let (mut transport_manager, transport_handle) = TransportManagerBuilder::new()
             .keypair(litep2p_config.keypair.clone())
             .supported_transports(supported_transports)
             .bandwidth_sink(bandwidth_sink.clone())

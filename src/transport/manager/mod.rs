@@ -263,6 +263,17 @@ pub struct TransportManagerBuilder {
 }
 
 impl TransportManagerBuilder {
+    /// Create new [`crate::transport::manager::TransportManagerBuilder`].
+    pub fn new() -> Self {
+        Self {
+            keypair: None,
+            supported_transports: None,
+            bandwidth_sink: None,
+            max_parallel_dials: None,
+            connection_limits_config: None,
+        }
+    }
+
     pub fn keypair(&mut self, keypair: Keypair) -> &mut Self {
         self.keypair = Some(keypair);
         self
@@ -340,19 +351,7 @@ impl TransportManagerBuilder {
     }
 }
 
-#[allow(clippy::new_ret_no_self)]
 impl TransportManager {
-    /// Create new [`crate::transport::manager::TransportManager`].
-    pub fn new() -> TransportManagerBuilder {
-        TransportManagerBuilder {
-            keypair: None,
-            supported_transports: None,
-            bandwidth_sink: None,
-            max_parallel_dials: None,
-            connection_limits_config: None,
-        }
-    }
-
     /// Get iterator to installed protocols.
     pub fn protocols(&self) -> impl Iterator<Item = &ProtocolName> {
         self.protocols.keys()
@@ -1580,7 +1579,7 @@ mod tests {
     #[should_panic]
     #[cfg(debug_assertions)]
     fn duplicate_protocol() {
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1600,7 +1599,7 @@ mod tests {
     #[should_panic]
     #[cfg(debug_assertions)]
     fn fallback_protocol_as_duplicate_main_protocol() {
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1623,7 +1622,7 @@ mod tests {
     #[should_panic]
     #[cfg(debug_assertions)]
     fn duplicate_fallback_protocol() {
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1649,7 +1648,7 @@ mod tests {
     #[should_panic]
     #[cfg(debug_assertions)]
     fn duplicate_transport() {
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
 
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -1659,14 +1658,14 @@ mod tests {
     async fn tried_to_self_using_peer_id() {
         let keypair = Keypair::generate();
         let local_peer_id = PeerId::from_public_key(&keypair.public().into());
-        let (mut manager, _handle) = TransportManager::new().keypair(keypair).build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().keypair(keypair).build();
 
         assert!(manager.dial(local_peer_id).await.is_err());
     }
 
     #[tokio::test]
     async fn try_to_dial_over_disabled_transport() {
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -1690,7 +1689,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
@@ -1746,7 +1745,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -1771,7 +1770,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -1810,7 +1809,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -1823,7 +1822,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -1851,7 +1850,7 @@ mod tests {
         transports.insert(SupportedTransport::Quic);
 
         let (mut _manager, handle) =
-            TransportManager::new().supported_transports(transports).build();
+            TransportManagerBuilder::new().supported_transports(transports).build();
 
         // ipv6
         let address = Multiaddr::empty()
@@ -1907,7 +1906,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -1968,7 +1967,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -2049,7 +2048,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -2128,7 +2127,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
@@ -2231,7 +2230,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
@@ -2321,7 +2320,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
@@ -2424,7 +2423,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
@@ -2522,7 +2521,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
@@ -2660,7 +2659,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
 
         manager.on_dial_failure(ConnectionId::random()).unwrap();
     }
@@ -2673,7 +2672,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         manager.on_connection_closed(PeerId::random(), ConnectionId::random()).unwrap();
     }
 
@@ -2685,7 +2684,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         manager
             .on_connection_opened(
                 SupportedTransport::Tcp,
@@ -2703,7 +2702,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         let connection_id = ConnectionId::random();
         let peer = PeerId::random();
 
@@ -2721,7 +2720,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         let connection_id = ConnectionId::random();
         let peer = PeerId::random();
 
@@ -2742,7 +2741,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
 
         manager
             .on_open_failure(SupportedTransport::Tcp, ConnectionId::random())
@@ -2757,7 +2756,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         let connection_id = ConnectionId::random();
         let peer = PeerId::random();
 
@@ -2771,14 +2770,14 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
 
         assert!(manager.next().await.is_none());
     }
 
     #[tokio::test]
     async fn dial_already_connected_peer() {
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
 
         let peer = {
             let peer = PeerId::random();
@@ -2820,7 +2819,7 @@ mod tests {
 
     #[tokio::test]
     async fn peer_already_being_dialed() {
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
 
         let peer = {
             let peer = PeerId::random();
@@ -2877,7 +2876,7 @@ mod tests {
 
     #[tokio::test]
     async fn pending_connection_for_disconnected_peer() {
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
 
         let peer = {
             let peer = PeerId::random();
@@ -2914,7 +2913,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
 
         // transport doesn't start with ip/dns
         {
@@ -2974,7 +2973,7 @@ mod tests {
 
     #[tokio::test]
     async fn dial_address_peer_id_missing() {
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
 
         async fn call_manager(manager: &mut TransportManager, address: Multiaddr) {
             match manager.dial_address(address).await {
@@ -3022,7 +3021,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
@@ -3102,7 +3101,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
@@ -3184,7 +3183,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new()
+        let (mut manager, _handle) = TransportManagerBuilder::new()
             .connection_limits_config(
                 ConnectionLimitsConfig::default()
                     .max_incoming_connections(Some(3))
@@ -3258,7 +3257,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new()
+        let (mut manager, _handle) = TransportManagerBuilder::new()
             .connection_limits_config(
                 ConnectionLimitsConfig::default()
                     .max_incoming_connections(Some(3))
@@ -3345,7 +3344,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         // Random peer ID.
@@ -3392,7 +3391,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         // Random peer ID.
@@ -3538,7 +3537,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
@@ -3618,7 +3617,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new().build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().build();
         let peer = PeerId::random();
         let connection_id = ConnectionId::from(0);
 

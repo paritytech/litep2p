@@ -28,7 +28,10 @@ use crate::{
         InnerTransportEvent, SubstreamError, TransportService,
     },
     substream::Substream,
-    transport::{manager::TransportManager, KEEP_ALIVE_TIMEOUT},
+    transport::{
+        manager::{TransportManager, TransportManagerBuilder},
+        KEEP_ALIVE_TIMEOUT,
+    },
     types::{RequestId, SubstreamId},
     Error, PeerId, ProtocolName,
 };
@@ -45,7 +48,7 @@ fn protocol() -> (
     TransportManager,
     Sender<InnerTransportEvent>,
 ) {
-    let (manager, handle) = TransportManager::new().build();
+    let (manager, handle) = TransportManagerBuilder::new().build();
 
     let peer = PeerId::random();
     let (transport_service, tx) = TransportService::new(
