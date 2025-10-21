@@ -274,11 +274,13 @@ impl TransportManagerBuilder {
         }
     }
 
+    /// Set the keypair
     pub fn keypair(&mut self, keypair: Keypair) -> &mut Self {
         self.keypair = Some(keypair);
         self
     }
 
+    /// Set the supported transports
     pub fn supported_transports(
         &mut self,
         supported_transports: HashSet<SupportedTransport>,
@@ -287,16 +289,19 @@ impl TransportManagerBuilder {
         self
     }
 
+    /// Set the bandwidth sink
     pub fn bandwidth_sink(&mut self, bandwidth_sink: BandwidthSink) -> &mut Self {
         self.bandwidth_sink = Some(bandwidth_sink);
         self
     }
 
+    /// Set the maximum parallel dials per peer
     pub fn max_parallel_dials(&mut self, max_parrallel_dials: usize) -> &mut Self {
         self.max_parallel_dials = Some(max_parrallel_dials);
         self
     }
 
+    /// Set connection limits configuration.
     pub fn connection_limits_config(
         &mut self,
         connection_limits_config: limits::ConnectionLimitsConfig,
@@ -305,6 +310,7 @@ impl TransportManagerBuilder {
         self
     }
 
+    /// Build [`TransportManager`].
     pub fn build(&mut self) -> (TransportManager, TransportManagerHandle) {
         let keypair = self.keypair.clone().unwrap_or(Keypair::generate());
         let local_peer_id = PeerId::from_public_key(&keypair.public().into());
