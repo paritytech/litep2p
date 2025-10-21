@@ -29,7 +29,8 @@ use crate::{
         notification, request_response, UserProtocol,
     },
     transport::{
-        manager::limits::ConnectionLimitsConfig, tcp::config::Config as TcpConfig,
+        manager::{limits::ConnectionLimitsConfig, IpDialingMode},
+        tcp::config::Config as TcpConfig,
         KEEP_ALIVE_TIMEOUT, MAX_PARALLEL_DIALS,
     },
     types::protocol::ProtocolName,
@@ -125,8 +126,8 @@ pub struct ConfigBuilder {
     /// Close the connection if no substreams are open within this time frame.
     keep_alive_timeout: Duration,
 
-    /// True if litep2p should attempt to dial local addresses.
-    use_private_ip: bool,
+    /// IP dialing mode.
+    ip_dialing_mode: IpDialingMode,
 
     /// Use system's DNS config.
     use_system_dns_config: bool,
@@ -163,7 +164,7 @@ impl ConfigBuilder {
             known_addresses: Vec::new(),
             connection_limits: ConnectionLimitsConfig::default(),
             keep_alive_timeout: KEEP_ALIVE_TIMEOUT,
-            use_private_ip: true,
+            ip_dialing_mode: IpDialingMode::GlobalOnly,
             use_system_dns_config: false,
         }
     }
@@ -286,7 +287,7 @@ impl ConfigBuilder {
         self
     }
 
-    /// Allow or forbid connecting to private IPv4/IPv6 addresses.
+    /// Set the ip dialing mode.
     ///
     /// When the private IP is enabled, litep2p will attempt to dial local addresses.
     /// This is useful for testing or when you want to preserve local connections.
@@ -298,8 +299,8 @@ impl ConfigBuilder {
     ///
     /// Address allocation for private networks is specified by
     /// [RFC1918](https://tools.ietf.org/html/rfc1918)).
-    pub fn with_private_ip(mut self, enable: bool) -> Self {
-        self.use_private_ip = enable;
+    pub fn with_ip_dialing_mode(mut self, mode: IpDialingMode) -> Self {
+        self.ip_dialing_mode = mode;
         self
     }
 
@@ -338,7 +339,7 @@ impl ConfigBuilder {
             known_addresses: self.known_addresses,
             connection_limits: self.connection_limits,
             keep_alive_timeout: self.keep_alive_timeout,
-            use_private_ip: self.use_private_ip,
+            ip_dialing_mode: self.ip_dialing_mode,
             use_system_dns_config: self.use_system_dns_config,
         }
     }
@@ -403,8 +404,8 @@ pub struct Litep2pConfig {
     /// Close the connection if no substreams are open within this time frame.
     pub(crate) keep_alive_timeout: Duration,
 
-    /// True if litep2p should attempt to dial local addresses.
-    pub(crate) use_private_ip: bool,
+    /// IP dialing mode.
+    pub(crate) ip_dialing_mode: IpDialingMode,
 
     /// Use system's DNS config.
     pub(crate) use_system_dns_config: bool,

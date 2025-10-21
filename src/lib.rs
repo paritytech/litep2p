@@ -176,7 +176,7 @@ impl Litep2p {
             bandwidth_sink.clone(),
             litep2p_config.max_parallel_dials,
             litep2p_config.connection_limits,
-            litep2p_config.use_private_ip,
+            litep2p_config.ip_dialing_mode,
         );
 
         // add known addresses to `TransportManager`, if any exist

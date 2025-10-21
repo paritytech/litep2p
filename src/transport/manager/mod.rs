@@ -197,9 +197,11 @@ impl Stream for TransportContext {
 }
 
 /// The IP dialing mode determines how the transport manager handles dialing
-/// IP addresses. It can either dial only global addresses or all addresses, including private IPs.
+/// IP addresses.
+///
+/// It can either dial only global addresses or all addresses, including private IPs.
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
-pub(crate) enum IpDialingMode {
+pub enum IpDialingMode {
     /// Dial only global addresses.
     GlobalOnly,
 
@@ -311,7 +313,7 @@ impl TransportManager {
         bandwidth_sink: BandwidthSink,
         max_parallel_dials: usize,
         connection_limits_config: limits::ConnectionLimitsConfig,
-        use_private_ip: bool,
+        ip_dialing_mode: IpDialingMode,
     ) -> (Self, TransportManagerHandle) {
         let local_peer_id = PeerId::from_public_key(&keypair.public().into());
         let peers = Arc::new(RwLock::new(HashMap::new()));
@@ -326,14 +328,8 @@ impl TransportManager {
             supported_transports,
             listen_addresses.clone(),
             public_addresses.clone(),
-            use_private_ip,
+            ip_dialing_mode,
         );
-
-        let ip_dialing_mode = if use_private_ip {
-            IpDialingMode::All
-        } else {
-            IpDialingMode::GlobalOnly
-        };
 
         tracing::debug!(
            target: LOG_TARGET,

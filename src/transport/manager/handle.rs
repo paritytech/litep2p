@@ -101,14 +101,8 @@ impl TransportManagerHandle {
         supported_transport: HashSet<SupportedTransport>,
         listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
         public_addresses: PublicAddresses,
-        use_private_ip: bool,
+        ip_dialing_mode: IpDialingMode,
     ) -> Self {
-        let ip_dialing_mode = if use_private_ip {
-            IpDialingMode::All
-        } else {
-            IpDialingMode::GlobalOnly
-        };
-
         tracing::debug!(
             target: LOG_TARGET,
             ?ip_dialing_mode,
