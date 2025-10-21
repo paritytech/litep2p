@@ -11,7 +11,7 @@ edition = "2021"
 ignored = ["serde_millis"]
 
 [build-dependencies]
-prost-build = "0.13"
+prost-build = "0.14"
 
 [dependencies]
 async-trait = "0.1.88"
