@@ -174,9 +174,9 @@ impl Stream for TransportContext {
         }
 
         let len = self.transports.len();
-        self.index = (self.index + 1) % len;
-        for index in 0..len {
-            let current = (self.index + index) % len;
+        for _ in 0..len {
+            let current = self.index;
+            self.index = (current + 1) % len;
             let (key, stream) = self.transports.get_index_mut(current).expect("transport to exist");
             match stream.poll_next_unpin(cx) {
                 Poll::Pending => {}
@@ -1436,6 +1436,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "websocket")]
+    #[cfg(feature = "quic")]
     async fn transport_events() {
         let mut transports = TransportContext::new();
 
@@ -1447,15 +1448,19 @@ mod tests {
         let transport = MockTransport::new(rx);
         transports.register_transport(SupportedTransport::WebSocket, Box::new(transport));
 
+        let (tx_quic, rx) = tokio::sync::mpsc::channel(8);
+        let transport = MockTransport::new(rx);
+        transports.register_transport(SupportedTransport::Quic, Box::new(transport));
+
         assert_eq!(transports.index, 0);
-        assert_eq!(transports.transports.len(), 2);
+        assert_eq!(transports.transports.len(), 3);
         // No items.
         futures::future::poll_fn(|cx| match transports.poll_next_unpin(cx) {
             std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
             std::task::Poll::Pending => std::task::Poll::Ready(()),
         })
         .await;
-        assert_eq!(transports.index, 1);
+        assert_eq!(transports.index, 0);
 
         // Websocket events.
         tx_ws
@@ -1473,7 +1478,7 @@ mod tests {
             event.1,
             TransportEvent::PendingInboundConnection { .. }
         ));
-        assert_eq!(transports.index, 0);
+        assert_eq!(transports.index, 2);
 
         // TCP events.
         tx_tcp
@@ -1493,19 +1498,43 @@ mod tests {
         ));
         assert_eq!(transports.index, 1);
 
-        // Both transports produce events.
-        tx_ws
+        // QUIC events
+        tx_quic
             .send(TransportEvent::PendingInboundConnection {
                 connection_id: ConnectionId::from(3),
             })
             .await
-            .expect("chanel to be open");
-        tx_tcp
+            .expect("channel to be open");
+
+        let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
+            .await
+            .expect("expected event");
+        assert_eq!(event.0, SupportedTransport::Quic);
+        assert!(std::matches!(
+            event.1,
+            TransportEvent::PendingInboundConnection { .. }
+        ));
+        assert_eq!(transports.index, 0);
+
+        // All three transports produce events.
+        tx_ws
             .send(TransportEvent::PendingInboundConnection {
                 connection_id: ConnectionId::from(4),
             })
             .await
-            .expect("chanel to be open");
+            .expect("channel to be open");
+        tx_tcp
+            .send(TransportEvent::PendingInboundConnection {
+                connection_id: ConnectionId::from(5),
+            })
+            .await
+            .expect("channel to be open");
+        tx_quic
+            .send(TransportEvent::PendingInboundConnection {
+                connection_id: ConnectionId::from(6),
+            })
+            .await
+            .expect("channel to be open");
 
         let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
             .await
@@ -1515,7 +1544,7 @@ mod tests {
             event.1,
             TransportEvent::PendingInboundConnection { .. }
         ));
-        assert_eq!(transports.index, 0);
+        assert_eq!(transports.index, 1);
 
         let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
             .await
@@ -1525,7 +1554,17 @@ mod tests {
             event.1,
             TransportEvent::PendingInboundConnection { .. }
         ));
-        assert_eq!(transports.index, 1);
+        assert_eq!(transports.index, 2);
+
+        let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
+            .await
+            .expect("expected event");
+        assert_eq!(event.0, SupportedTransport::Quic);
+        assert!(std::matches!(
+            event.1,
+            TransportEvent::PendingInboundConnection { .. }
+        ));
+        assert_eq!(transports.index, 0);
     }
 
     #[test]
