@@ -348,6 +348,7 @@ impl TransportManager {
             self.next_substream_id.clone(),
             self.transport_manager_handle.clone(),
             keep_alive_timeout,
+            true
         );
 
         self.protocols.insert(
