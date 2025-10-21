@@ -48,7 +48,9 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
     collections::{HashMap, HashSet},
+    net::IpAddr,
     pin::Pin,
+    str::FromStr,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -194,6 +196,60 @@ impl Stream for TransportContext {
     }
 }
 
+/// The IP dialing mode determines how the transport manager handles dialing
+/// IP addresses.
+///
+/// It can either dial only global addresses or all addresses, including private IPs.
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
+pub enum IpDialingMode {
+    /// Dial only global addresses.
+    GlobalOnly,
+
+    /// Dial all addresses, including private IPs.
+    ///
+    /// This setup is not recommended for production use-cases.
+    #[default]
+    All,
+}
+
+impl IpDialingMode {
+    /// Check if the IP address in the given `Multiaddr` is global.
+    pub fn is_address_global(address: &Multiaddr) -> bool {
+        let ip = match address.iter().next() {
+            Some(Protocol::Ip4(ip)) => ip_network::IpNetwork::from(ip),
+            Some(Protocol::Ip6(ip)) => ip_network::IpNetwork::from(ip),
+            Some(Protocol::Dns(host)) | Some(Protocol::Dns4(host)) | Some(Protocol::Dns6(host)) =>
+                if let Ok(ip) = IpAddr::from_str(&host) {
+                    ip_network::IpNetwork::from(ip)
+                } else {
+                    // Allow DNS resolutions for DNS names.
+                    return true;
+                },
+            _ => return false,
+        };
+
+        ip.is_global()
+    }
+
+    /// Check if the IP dialing mode allows dialing the given address.
+    pub fn allows_address(&self, address: &Multiaddr) -> bool {
+        match self {
+            Self::GlobalOnly => Self::is_address_global(address),
+            // All IP addresses are allowed.
+            Self::All => true,
+        }
+    }
+
+    /// Check if the IP dialing mode allows dialing the given IP address.
+    pub fn allows_ip(&self, ip: IpAddr) -> bool {
+        match self {
+            Self::GlobalOnly => ip_network::IpNetwork::from(ip).is_global(),
+            // All IP addresses are allowed.
+            Self::All => true,
+        }
+    }
+}
+
 /// Litep2p connection manager.
 pub struct TransportManager {
     /// Local peer ID.
@@ -252,6 +308,9 @@ pub struct TransportManager {
 
     /// Opening connections errors.
     opening_errors: HashMap<ConnectionId, Vec<(Multiaddr, DialError)>>,
+
+    /// IP dialing mode.
+    ip_dialing_mode: IpDialingMode,
 }
 
 impl TransportManager {
@@ -263,6 +322,7 @@ impl TransportManager {
         bandwidth_sink: BandwidthSink,
         max_parallel_dials: usize,
         connection_limits_config: limits::ConnectionLimitsConfig,
+        ip_dialing_mode: IpDialingMode,
     ) -> (Self, TransportManagerHandle) {
         let local_peer_id = PeerId::from_public_key(&keypair.public().into());
         let peers = Arc::new(RwLock::new(HashMap::new()));
@@ -277,6 +337,12 @@ impl TransportManager {
             supported_transports,
             listen_addresses.clone(),
             public_addresses.clone(),
+        );
+
+        tracing::debug!(
+           target: LOG_TARGET,
+           ?ip_dialing_mode,
+           "Transport manager created",
         );
 
         (
@@ -300,6 +366,7 @@ impl TransportManager {
                 next_connection_id: Arc::new(AtomicUsize::new(0usize)),
                 connection_limits: limits::ConnectionLimits::new(connection_limits_config),
                 opening_errors: HashMap::new(),
+                ip_dialing_mode,
             },
             handle,
         )
@@ -390,6 +457,7 @@ impl TransportManager {
             bandwidth_sink: self.bandwidth_sink.clone(),
             next_substream_id: self.next_substream_id.clone(),
             next_connection_id: self.next_connection_id.clone(),
+            ip_dialing_mode: self.ip_dialing_mode,
         }
     }
 
@@ -482,7 +550,14 @@ impl TransportManager {
 
         // The addresses are sorted by score and contain the remote peer ID.
         // We double checked above that the remote peer is not the local peer.
-        let dial_addresses = context.addresses.addresses(limit);
+        let dial_addresses = context
+            .addresses
+            .addresses(usize::MAX)
+            .into_iter()
+            .filter(|addr| self.ip_dialing_mode.allows_address(addr))
+            .take(limit)
+            .collect::<Vec<_>>();
+
         if dial_addresses.is_empty() {
             return Err(Error::NoAddressAvailable(peer));
         }
@@ -541,6 +616,11 @@ impl TransportManager {
 
         if self.listen_addresses.read().contains(address_record.as_ref()) {
             return Err(Error::TriedToDialSelf);
+        }
+
+        if !self.ip_dialing_mode.allows_address(address_record.address()) {
+            tracing::debug!(target: LOG_TARGET, address = ?address_record.address(), "dial address is not global, skipping");
+            return Err(Error::AddressError(AddressError::AddressNotAvailable));
         }
 
         tracing::debug!(target: LOG_TARGET, address = ?address_record.address(), "dial address");
@@ -1347,6 +1427,7 @@ impl TransportManager {
 mod tests {
     use crate::transport::manager::{address::AddressStore, peer_state::SecondaryOrDialing};
     use limits::ConnectionLimitsConfig;
+    use IpDialingMode;
 
     use multihash::Multihash;
 
@@ -1539,6 +1620,7 @@ mod tests {
             sink,
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
 
         manager.register_protocol(
@@ -1566,6 +1648,7 @@ mod tests {
             sink,
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
 
         manager.register_protocol(
@@ -1596,6 +1679,7 @@ mod tests {
             sink,
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
 
         manager.register_protocol(
@@ -1629,6 +1713,7 @@ mod tests {
             sink,
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
 
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -1646,6 +1731,7 @@ mod tests {
             sink,
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
 
         assert!(manager.dial(local_peer_id).await.is_err());
@@ -1659,6 +1745,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -1689,6 +1776,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -1751,6 +1839,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -1782,6 +1871,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -1827,6 +1917,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -1846,6 +1937,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -1879,6 +1971,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
 
         // ipv6
@@ -1941,6 +2034,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -2008,6 +2102,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -2095,6 +2190,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -2180,6 +2276,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -2289,6 +2386,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -2385,6 +2483,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -2494,6 +2593,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -2598,6 +2698,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -2742,6 +2843,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
 
         manager.on_dial_failure(ConnectionId::random()).unwrap();
@@ -2761,6 +2863,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         manager.on_connection_closed(PeerId::random(), ConnectionId::random()).unwrap();
     }
@@ -2779,6 +2882,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         manager
             .on_connection_opened(
@@ -2803,6 +2907,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let connection_id = ConnectionId::random();
         let peer = PeerId::random();
@@ -2827,6 +2932,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let connection_id = ConnectionId::random();
         let peer = PeerId::random();
@@ -2854,6 +2960,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
 
         manager
@@ -2875,6 +2982,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let connection_id = ConnectionId::random();
         let peer = PeerId::random();
@@ -2895,6 +3003,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
 
         assert!(manager.next().await.is_none());
@@ -2908,6 +3017,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
 
         let peer = {
@@ -2956,6 +3066,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
 
         let peer = {
@@ -3019,6 +3130,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
 
         let peer = {
@@ -3062,6 +3174,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
 
         // transport doesn't start with ip/dns
@@ -3128,6 +3241,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
 
         async fn call_manager(manager: &mut TransportManager, address: Multiaddr) {
@@ -3182,6 +3296,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -3268,6 +3383,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -3358,6 +3474,7 @@ mod tests {
             ConnectionLimitsConfig::default()
                 .max_incoming_connections(Some(3))
                 .max_outgoing_connections(Some(2)),
+            IpDialingMode::All,
         );
         // The connection limit is agnostic of the underlying transports.
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -3434,6 +3551,7 @@ mod tests {
             ConnectionLimitsConfig::default()
                 .max_incoming_connections(Some(3))
                 .max_outgoing_connections(Some(2)),
+            IpDialingMode::All,
         );
         // The connection limit is agnostic of the underlying transports.
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -3521,6 +3639,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -3574,6 +3693,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -3726,6 +3846,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
@@ -3812,6 +3933,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let peer = PeerId::random();
         let connection_id = ConnectionId::from(0);

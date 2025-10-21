@@ -28,7 +28,7 @@ use crate::{
         address::AddressRecord,
         peer_state::StateDialResult,
         types::{PeerContext, SupportedTransport},
-        ProtocolContext, TransportManagerEvent, LOG_TARGET,
+        IpDialingMode, ProtocolContext, TransportManagerEvent, LOG_TARGET,
     },
     types::{protocol::ProtocolName, ConnectionId},
     BandwidthSink, PeerId,
@@ -99,6 +99,11 @@ impl TransportManagerHandle {
         listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
         public_addresses: PublicAddresses,
     ) -> Self {
+        tracing::debug!(
+            target: LOG_TARGET,
+            "Transport manager handle created",
+        );
+
         Self {
             peers,
             cmd_tx,
@@ -248,7 +253,11 @@ impl TransportManagerHandle {
 
         {
             let peers = self.peers.read();
-            let Some(PeerContext { state, addresses }) = peers.get(peer) else {
+            let Some(PeerContext {
+                state,
+                addresses: address_store,
+            }) = peers.get(peer)
+            else {
                 return Err(ImmediateDialError::NoAddressAvailable);
             };
 
@@ -260,7 +269,7 @@ impl TransportManagerHandle {
             };
 
             // Check if we have enough addresses to dial.
-            if addresses.is_empty() {
+            if address_store.is_empty() {
                 return Err(ImmediateDialError::NoAddressAvailable);
             }
         }
@@ -321,6 +330,7 @@ pub struct TransportHandle {
     pub next_substream_id: Arc<AtomicUsize>,
     pub bandwidth_sink: BandwidthSink,
     pub executor: Arc<dyn Executor>,
+    pub ip_dialing_mode: IpDialingMode,
 }
 
 impl TransportHandle {

@@ -602,7 +602,7 @@ impl WebSocketConnection {
 
 #[cfg(test)]
 mod tests {
-    use crate::transport::websocket::WebSocketTransport;
+    use crate::transport::{manager::IpDialingMode, websocket::WebSocketTransport};
 
     use super::*;
     use futures::AsyncWriteExt;
@@ -642,6 +642,7 @@ mod tests {
             Duration::from_secs(10),
             false,
             Arc::new(TokioResolver::builder_tokio().unwrap().build()),
+            IpDialingMode::All,
         )
         .await
         .unwrap();
@@ -758,6 +759,7 @@ mod tests {
             Duration::from_secs(10),
             false,
             Arc::new(TokioResolver::builder_tokio().unwrap().build()),
+            IpDialingMode::All,
         )
         .await
         .unwrap();
@@ -1030,6 +1032,7 @@ mod tests {
             Duration::from_secs(10),
             false,
             Arc::new(TokioResolver::builder_tokio().unwrap().build()),
+            IpDialingMode::All,
         )
         .await
         .unwrap();
@@ -1198,6 +1201,7 @@ mod tests {
             Duration::from_secs(10),
             false,
             Arc::new(TokioResolver::builder_tokio().unwrap().build()),
+            IpDialingMode::All,
         )
         .await
         .unwrap();
@@ -1352,6 +1356,7 @@ mod tests {
             Duration::from_secs(10),
             false,
             Arc::new(TokioResolver::builder_tokio().unwrap().build()),
+            IpDialingMode::All,
         )
         .await
         .unwrap();
