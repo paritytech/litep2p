@@ -1468,7 +1468,7 @@ mod tests {
                 connection_id: ConnectionId::from(1),
             })
             .await
-            .expect("chanel to be open");
+            .expect("channel to be open");
 
         let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
             .await
@@ -1486,7 +1486,7 @@ mod tests {
                 connection_id: ConnectionId::from(2),
             })
             .await
-            .expect("chanel to be open");
+            .expect("channel to be open");
 
         let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
             .await
