@@ -185,8 +185,10 @@ impl TcpTransport {
         connection_open_timeout: Duration,
         nodelay: bool,
         resolver: Arc<TokioResolver>,
+        ip_dialing_mode: IpDialingMode,
     ) -> Result<(Multiaddr, TcpStream), DialError> {
-        let (socket_address, _) = TcpAddress::multiaddr_to_socket_address(&address)?;
+        let (socket_address, _) =
+            TcpAddress::multiaddr_to_socket_address(&address, ip_dialing_mode)?;
 
         let remote_address =
             match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip(resolver))
@@ -325,7 +327,8 @@ impl Transport for TcpTransport {
     fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?connection_id, ?address, "open connection");
 
-        let (socket_address, peer) = TcpAddress::multiaddr_to_socket_address(&address)?;
+        let (socket_address, peer) =
+            TcpAddress::multiaddr_to_socket_address(&address, self.ip_dialing_mode)?;
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
@@ -335,6 +338,7 @@ impl Transport for TcpTransport {
         let keypair = self.context.keypair.clone();
         let nodelay = self.config.nodelay;
         let resolver = self.resolver.clone();
+        let ip_dialing_mode = self.ip_dialing_mode;
 
         self.pending_dials.insert(connection_id, address.clone());
         self.pending_connections.push(Box::pin(async move {
@@ -344,6 +348,7 @@ impl Transport for TcpTransport {
                 connection_open_timeout,
                 nodelay,
                 resolver,
+                ip_dialing_mode,
             )
             .await
             .map_err(|error| (connection_id, error))?;
@@ -450,6 +455,7 @@ impl Transport for TcpTransport {
                 let connection_open_timeout = self.config.connection_open_timeout;
                 let nodelay = self.config.nodelay;
                 let resolver = self.resolver.clone();
+                let ip_dialing_mode = self.ip_dialing_mode;
 
                 async move {
                     TcpTransport::dial_peer(
@@ -458,6 +464,7 @@ impl Transport for TcpTransport {
                         connection_open_timeout,
                         nodelay,
                         resolver,
+                        ip_dialing_mode,
                     )
                     .await
                     .map_err(|error| (address, error))
@@ -508,7 +515,9 @@ impl Transport for TcpTransport {
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
 
-        let (socket_address, peer) = TcpAddress::multiaddr_to_socket_address(&address)?;
+        // Address already validated during the dial process.
+        let (socket_address, peer) =
+            TcpAddress::multiaddr_to_socket_address(&address, IpDialingMode::All)?;
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;

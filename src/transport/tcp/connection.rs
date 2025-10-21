@@ -469,6 +469,7 @@ impl TcpConnection {
                 address,
                 port,
                 dns_type,
+                ..
             } => match dns_type {
                 DnsType::Dns => Multiaddr::empty()
                     .with(Protocol::Dns(Cow::Owned(address)))

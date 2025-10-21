@@ -22,6 +22,7 @@
 
 use crate::{
     error::{AddressError, DnsError},
+    transport::manager::IpDialingMode,
     PeerId,
 };
 
@@ -54,6 +55,7 @@ pub enum AddressType {
         address: String,
         port: u16,
         dns_type: DnsType,
+        ip_dialing_mode: IpDialingMode,
     },
 }
 
@@ -71,14 +73,15 @@ pub enum DnsType {
 impl AddressType {
     /// Resolve the address to a concrete IP.
     pub async fn lookup_ip(self, resolver: Arc<TokioResolver>) -> Result<SocketAddr, DnsError> {
-        let (url, port, dns_type) = match self {
+        let (url, port, dns_type, ip_dialing_mode) = match self {
             // We already have the IP address.
             AddressType::Socket(address) => return Ok(address),
             AddressType::Dns {
                 address,
                 port,
                 dns_type,
-            } => (address, port, dns_type),
+                ip_dialing_mode,
+            } => (address, port, dns_type, ip_dialing_mode),
         };
 
         let lookup = match resolver.lookup_ip(url.clone()).await {
@@ -95,10 +98,22 @@ impl AddressType {
             }
         };
 
-        let Some(ip) = lookup.iter().find(|ip| match dns_type {
-            DnsType::Dns => true,
-            DnsType::Dns4 => ip.is_ipv4(),
-            DnsType::Dns6 => ip.is_ipv6(),
+        let Some(ip) = lookup.iter().find(|ip| {
+            if !ip_dialing_mode.allows_ip(*ip) {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?ip,
+                    ?ip_dialing_mode,
+                    "IP address not allowed by IP dialing mode during DNS lookup",
+                );
+                return false;
+            }
+
+            match dns_type {
+                DnsType::Dns => true,
+                DnsType::Dns4 => ip.is_ipv4(),
+                DnsType::Dns6 => ip.is_ipv6(),
+            }
         }) else {
             tracing::debug!(
                 target: LOG_TARGET,
@@ -178,6 +193,7 @@ pub trait GetSocketAddr {
     /// The `PeerId` is optional and may not be present.
     fn multiaddr_to_socket_address(
         address: &Multiaddr,
+        ip_dialing_mode: IpDialingMode,
     ) -> Result<(AddressType, Option<PeerId>), AddressError>;
 
     /// Convert concrete `SocketAddr` to `Multiaddr`.
@@ -190,8 +206,9 @@ pub struct TcpAddress;
 impl GetSocketAddr for TcpAddress {
     fn multiaddr_to_socket_address(
         address: &Multiaddr,
+        ip_dialing_mode: IpDialingMode,
     ) -> Result<(AddressType, Option<PeerId>), AddressError> {
-        multiaddr_to_socket_address(address, SocketListenerType::Tcp)
+        multiaddr_to_socket_address(address, ip_dialing_mode, SocketListenerType::Tcp)
     }
 
     fn socket_address_to_multiaddr(address: &SocketAddr) -> Multiaddr {
@@ -209,8 +226,9 @@ pub struct WebSocketAddress;
 impl GetSocketAddr for WebSocketAddress {
     fn multiaddr_to_socket_address(
         address: &Multiaddr,
+        ip_dialing_mode: IpDialingMode,
     ) -> Result<(AddressType, Option<PeerId>), AddressError> {
-        multiaddr_to_socket_address(address, SocketListenerType::WebSocket)
+        multiaddr_to_socket_address(address, ip_dialing_mode, SocketListenerType::WebSocket)
     }
 
     fn socket_address_to_multiaddr(address: &SocketAddr) -> Multiaddr {
@@ -231,19 +249,21 @@ impl SocketListener {
         let (listeners, listen_addresses): (_, Vec<Vec<_>>) = addresses
             .into_iter()
             .filter_map(|address| {
-                let address = match T::multiaddr_to_socket_address(&address).ok()?.0 {
-                    AddressType::Dns { address, port, .. } => {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            ?address,
-                            ?port,
-                            "dns not supported as bind address"
-                        );
+                // Allows listening on the specified address.
+                let address =
+                    match T::multiaddr_to_socket_address(&address, IpDialingMode::All).ok()?.0 {
+                        AddressType::Dns { address, port, .. } => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?address,
+                                ?port,
+                                "dns not supported as bind address"
+                            );
 
-                        return None;
-                    }
-                    AddressType::Socket(address) => address,
-                };
+                            return None;
+                        }
+                        AddressType::Socket(address) => address,
+                    };
 
                 let socket = if address.is_ipv4() {
                     Socket::new(Domain::IPV4, Type::STREAM, Some(socket2::Protocol::TCP)).ok()?
@@ -348,9 +368,20 @@ enum SocketListenerType {
 /// Extract socket address and `PeerId`, if found, from `address`.
 fn multiaddr_to_socket_address(
     address: &Multiaddr,
+    ip_dialing_mode: IpDialingMode,
     ty: SocketListenerType,
 ) -> Result<(AddressType, Option<PeerId>), AddressError> {
     tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
+
+    if !ip_dialing_mode.allows_address(address) {
+        tracing::error!(
+            target: LOG_TARGET,
+            ?address,
+            ?ip_dialing_mode,
+            "address not allowed by IP dialing mode",
+        );
+        return Err(AddressError::AddressNotAvailable);
+    }
 
     let mut iter = address.iter();
     // Small helper to handle DNS types.
@@ -360,6 +391,7 @@ fn multiaddr_to_socket_address(
                 address,
                 port,
                 dns_type,
+                ip_dialing_mode,
             }),
             protocol => {
                 tracing::error!(

@@ -231,10 +231,19 @@ impl IpDialingMode {
         ip.is_global()
     }
 
-    /// Check if the IP dialing mode allows dialing private IPs.
+    /// Check if the IP dialing mode allows dialing the given address.
     pub fn allows_address(&self, address: &Multiaddr) -> bool {
         match self {
             Self::GlobalOnly => Self::is_address_global(address),
+            // All IP addresses are allowed.
+            Self::All => true,
+        }
+    }
+
+    /// Check if the IP dialing mode allows dialing the given IP address.
+    pub fn allows_ip(&self, ip: IpAddr) -> bool {
+        match self {
+            Self::GlobalOnly => ip_network::IpNetwork::from(ip).is_global(),
             // All IP addresses are allowed.
             Self::All => true,
         }
