@@ -337,7 +337,6 @@ impl TransportManager {
             supported_transports,
             listen_addresses.clone(),
             public_addresses.clone(),
-            ip_dialing_mode,
         );
 
         tracing::debug!(
