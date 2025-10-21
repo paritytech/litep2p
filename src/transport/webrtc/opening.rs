@@ -183,7 +183,7 @@ impl OpeningWebRtcConnection {
 
     /// Get local fingerprint as bytes.
     fn local_fingerprint(&mut self) -> Vec<u8> {
-        Self::fingerprint_to_bytes(&self.rtc.direct_api().local_dtls_fingerprint())
+        Self::fingerprint_to_bytes(self.rtc.direct_api().local_dtls_fingerprint())
     }
 
     /// Convert `Fingerprint` to bytes.
