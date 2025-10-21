@@ -26,7 +26,7 @@ use crate::{
     error::{DialError, Error},
     transport::{
         common::listener::{DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
-        manager::TransportHandle,
+        manager::{IpDialingMode, TransportHandle},
         tcp::{
             config::Config,
             connection::{NegotiatedConnection, TcpConnection},
@@ -134,6 +134,9 @@ pub(crate) struct TcpTransport {
 
     /// DNS resolver.
     resolver: Arc<TokioResolver>,
+
+    /// IP dialing mode.
+    ip_dialing_mode: IpDialingMode,
 }
 
 impl TcpTransport {
@@ -281,9 +284,12 @@ impl TransportBuilder for TcpTransport {
         mut config: Self::Config,
         resolver: Arc<TokioResolver>,
     ) -> crate::Result<(Self, Vec<Multiaddr>)> {
+        let ip_dialing_mode = context.ip_dialing_mode;
+
         tracing::debug!(
             target: LOG_TARGET,
             listen_addresses = ?config.listen_addresses,
+            ?ip_dialing_mode,
             "start tcp transport",
         );
 
@@ -308,6 +314,7 @@ impl TransportBuilder for TcpTransport {
                 pending_raw_connections: FuturesStream::new(),
                 cancel_futures: HashMap::new(),
                 resolver,
+                ip_dialing_mode,
             },
             listen_addresses,
         ))

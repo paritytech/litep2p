@@ -356,6 +356,7 @@ pub struct TransportHandle {
     pub next_substream_id: Arc<AtomicUsize>,
     pub bandwidth_sink: BandwidthSink,
     pub executor: Arc<dyn Executor>,
+    pub ip_dialing_mode: IpDialingMode,
 }
 
 impl TransportHandle {

@@ -449,6 +449,7 @@ impl TransportManager {
             bandwidth_sink: self.bandwidth_sink.clone(),
             next_substream_id: self.next_substream_id.clone(),
             next_connection_id: self.next_connection_id.clone(),
+            ip_dialing_mode: self.ip_dialing_mode,
         }
     }
 
