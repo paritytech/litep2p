@@ -1250,18 +1250,15 @@ impl Kademlia {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use super::*;
     use crate::{
         codec::ProtocolCodec,
-        crypto::ed25519::Keypair,
         transport::{
-            manager::{limits::ConnectionLimitsConfig, TransportManager},
+            manager::{TransportManager, TransportManagerBuilder},
             KEEP_ALIVE_TIMEOUT,
         },
         types::protocol::ProtocolName,
-        BandwidthSink, ConnectionId,
+        ConnectionId,
     };
     use multiaddr::Protocol;
     use multihash::Multihash;
@@ -1275,13 +1272,7 @@ mod tests {
     }
 
     fn make_kademlia() -> (Kademlia, Context, TransportManager) {
-        let (manager, handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let (manager, handle) = TransportManagerBuilder::new().build();
 
         let peer = PeerId::random();
         let (transport_service, _tx) = TransportService::new(

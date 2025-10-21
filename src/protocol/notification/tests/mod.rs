@@ -18,10 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::collections::HashSet;
-
 use crate::{
-    crypto::ed25519::Keypair,
     executor::DefaultExecutor,
     protocol::{
         notification::{
@@ -30,11 +27,11 @@ use crate::{
         InnerTransportEvent, ProtocolCommand, TransportService,
     },
     transport::{
-        manager::{limits::ConnectionLimitsConfig, TransportManager},
+        manager::{TransportManager, TransportManagerBuilder},
         KEEP_ALIVE_TIMEOUT,
     },
     types::protocol::ProtocolName,
-    BandwidthSink, PeerId,
+    PeerId,
 };
 
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -51,13 +48,7 @@ fn make_notification_protocol() -> (
     TransportManager,
     Sender<InnerTransportEvent>,
 ) {
-    let (manager, handle) = TransportManager::new(
-        Keypair::generate(),
-        HashSet::new(),
-        BandwidthSink::new(),
-        8usize,
-        ConnectionLimitsConfig::default(),
-    );
+    let (manager, handle) = TransportManagerBuilder::new().build();
 
     let peer = PeerId::random();
     let (transport_service, tx) = TransportService::new(
