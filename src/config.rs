@@ -164,7 +164,7 @@ impl ConfigBuilder {
             known_addresses: Vec::new(),
             connection_limits: ConnectionLimitsConfig::default(),
             keep_alive_timeout: KEEP_ALIVE_TIMEOUT,
-            ip_dialing_mode: IpDialingMode::GlobalOnly,
+            ip_dialing_mode: IpDialingMode::All,
             use_system_dns_config: false,
         }
     }

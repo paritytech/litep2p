@@ -750,7 +750,7 @@ impl TcpConnection {
 
 #[cfg(test)]
 mod tests {
-    use crate::transport::tcp::TcpTransport;
+    use crate::transport::{manager::IpDialingMode, tcp::TcpTransport};
 
     use super::*;
     use hickory_resolver::{name_server::TokioConnectionProvider, TokioResolver};
@@ -784,6 +784,7 @@ mod tests {
                 )
                 .build(),
             ),
+            IpDialingMode::All,
         )
         .await
         .unwrap();
@@ -886,6 +887,7 @@ mod tests {
                 )
                 .build(),
             ),
+            IpDialingMode::All,
         )
         .await
         .unwrap();
@@ -1035,6 +1037,7 @@ mod tests {
                 )
                 .build(),
             ),
+            IpDialingMode::All,
         )
         .await
         .unwrap();
@@ -1088,6 +1091,7 @@ mod tests {
                 )
                 .build(),
             ),
+            IpDialingMode::All,
         )
         .await
         .unwrap();
@@ -1268,6 +1272,7 @@ mod tests {
                 )
                 .build(),
             ),
+            IpDialingMode::All,
         )
         .await
         .unwrap();
@@ -1403,6 +1408,7 @@ mod tests {
                 )
                 .build(),
             ),
+            IpDialingMode::All,
         )
         .await
         .unwrap();

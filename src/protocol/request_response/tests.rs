@@ -30,7 +30,7 @@ use crate::{
     },
     substream::Substream,
     transport::{
-        manager::{limits::ConnectionLimitsConfig, TransportManager},
+        manager::{limits::ConnectionLimitsConfig, IpDialingMode, TransportManager},
         KEEP_ALIVE_TIMEOUT,
     },
     types::{RequestId, SubstreamId},
@@ -55,7 +55,7 @@ fn protocol() -> (
         BandwidthSink::new(),
         8usize,
         ConnectionLimitsConfig::default(),
-        true,
+        IpDialingMode::All,
     );
 
     let peer = PeerId::random();

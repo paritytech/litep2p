@@ -1257,7 +1257,7 @@ mod tests {
         codec::ProtocolCodec,
         crypto::ed25519::Keypair,
         transport::{
-            manager::{limits::ConnectionLimitsConfig, TransportManager},
+            manager::{limits::ConnectionLimitsConfig, IpDialingMode, TransportManager},
             KEEP_ALIVE_TIMEOUT,
         },
         types::protocol::ProtocolName,
@@ -1281,7 +1281,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
-            true,
+            IpDialingMode::All,
         );
 
         let peer = PeerId::random();

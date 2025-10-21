@@ -719,7 +719,8 @@ mod tests {
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
         transport::manager::{
-            limits::ConnectionLimitsConfig, ProtocolContext, SupportedTransport, TransportManager,
+            limits::ConnectionLimitsConfig, IpDialingMode, ProtocolContext, SupportedTransport,
+            TransportManager,
         },
         types::protocol::ProtocolName,
         BandwidthSink, PeerId,
@@ -778,7 +779,6 @@ mod tests {
             keypair: keypair2.clone(),
             tx: event_tx2,
             bandwidth_sink: bandwidth_sink.clone(),
-
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
@@ -787,6 +787,7 @@ mod tests {
                     fallback_names: Vec::new(),
                 },
             )]),
+            ip_dialing_mode: IpDialingMode::All,
         };
         let transport_config2 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -1018,7 +1019,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
-            true,
+            IpDialingMode::All,
         );
         let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());

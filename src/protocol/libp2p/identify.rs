@@ -474,6 +474,7 @@ mod tests {
                 ..Default::default()
             })
             .with_libp2p_identify(identify_config)
+            .with_ip_dialing_mode(crate::transport::manager::IpDialingMode::All)
             .build();
 
         (Litep2p::new(config).unwrap(), identify, peer)

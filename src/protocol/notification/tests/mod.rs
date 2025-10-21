@@ -30,7 +30,7 @@ use crate::{
         InnerTransportEvent, ProtocolCommand, TransportService,
     },
     transport::{
-        manager::{limits::ConnectionLimitsConfig, TransportManager},
+        manager::{limits::ConnectionLimitsConfig, IpDialingMode, TransportManager},
         KEEP_ALIVE_TIMEOUT,
     },
     types::protocol::ProtocolName,
@@ -57,7 +57,7 @@ fn make_notification_protocol() -> (
         BandwidthSink::new(),
         8usize,
         ConnectionLimitsConfig::default(),
-        true,
+        IpDialingMode::All,
     );
 
     let peer = PeerId::random();

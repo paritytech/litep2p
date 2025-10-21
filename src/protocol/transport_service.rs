@@ -638,7 +638,9 @@ mod tests {
     use crate::{
         protocol::{ProtocolCommand, TransportService},
         transport::{
-            manager::{handle::InnerTransportManagerCommand, TransportManagerHandle},
+            manager::{
+                handle::InnerTransportManagerCommand, IpDialingMode, TransportManagerHandle,
+            },
             KEEP_ALIVE_TIMEOUT,
         },
     };
@@ -662,7 +664,7 @@ mod tests {
             HashSet::new(),
             Default::default(),
             PublicAddresses::new(peer),
-            true,
+            IpDialingMode::All,
         );
 
         let (service, sender) = TransportService::new(

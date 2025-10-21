@@ -643,6 +643,7 @@ mod tests {
             .with_notification_protocol(config1)
             .with_notification_protocol(config2)
             .with_libp2p_ping(ping_config)
+            .with_ip_dialing_mode(crate::transport::manager::IpDialingMode::All)
             .build();
 
         let peer = PeerId::random();
