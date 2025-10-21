@@ -747,7 +747,6 @@ mod tests {
             keypair: keypair1.clone(),
             tx: event_tx1,
             bandwidth_sink: bandwidth_sink.clone(),
-
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
@@ -756,6 +755,7 @@ mod tests {
                     fallback_names: Vec::new(),
                 },
             )]),
+            ip_dialing_mode: IpDialingMode::All,
         };
         let transport_config1 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -841,7 +841,6 @@ mod tests {
             keypair: keypair1.clone(),
             tx: event_tx1,
             bandwidth_sink: bandwidth_sink.clone(),
-
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
@@ -850,6 +849,7 @@ mod tests {
                     fallback_names: Vec::new(),
                 },
             )]),
+            ip_dialing_mode: IpDialingMode::All,
         };
         let transport_config1 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -872,7 +872,6 @@ mod tests {
             keypair: keypair2.clone(),
             tx: event_tx2,
             bandwidth_sink: bandwidth_sink.clone(),
-
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
@@ -881,6 +880,7 @@ mod tests {
                     fallback_names: Vec::new(),
                 },
             )]),
+            ip_dialing_mode: IpDialingMode::All,
         };
         let transport_config2 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -930,7 +930,6 @@ mod tests {
             keypair: keypair1.clone(),
             tx: event_tx1,
             bandwidth_sink: bandwidth_sink.clone(),
-
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
@@ -939,6 +938,7 @@ mod tests {
                     fallback_names: Vec::new(),
                 },
             )]),
+            ip_dialing_mode: IpDialingMode::All,
         };
         let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
         let (mut transport1, _) =
@@ -968,7 +968,6 @@ mod tests {
             keypair: keypair2.clone(),
             tx: event_tx2,
             bandwidth_sink: bandwidth_sink.clone(),
-
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
@@ -977,6 +976,7 @@ mod tests {
                     fallback_names: Vec::new(),
                 },
             )]),
+            ip_dialing_mode: IpDialingMode::All,
         };
 
         let (mut transport2, _) = TcpTransport::new(handle2, Default::default(), resolver).unwrap();

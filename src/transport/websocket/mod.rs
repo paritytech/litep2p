@@ -25,7 +25,7 @@ use crate::{
     error::{AddressError, Error, NegotiationError},
     transport::{
         common::listener::{DialAddresses, GetSocketAddr, SocketListener, WebSocketAddress},
-        manager::TransportHandle,
+        manager::{IpDialingMode, TransportHandle},
         websocket::{
             config::Config,
             connection::{NegotiatedConnection, WebSocketConnection},
@@ -136,6 +136,9 @@ pub(crate) struct WebSocketTransport {
 
     /// DNS resolver.
     resolver: Arc<TokioResolver>,
+
+    /// IP dialing mode.
+    ip_dialing_mode: IpDialingMode,
 }
 
 impl WebSocketTransport {
@@ -229,10 +232,12 @@ impl WebSocketTransport {
         connection_open_timeout: Duration,
         nodelay: bool,
         resolver: Arc<TokioResolver>,
+        ip_dialing_mode: IpDialingMode,
     ) -> Result<(Multiaddr, WebSocketStream<MaybeTlsStream<TcpStream>>), DialError> {
         let (url, _) = Self::multiaddr_into_url(address.clone())?;
 
-        let (socket_address, _) = WebSocketAddress::multiaddr_to_socket_address(&address)?;
+        let (socket_address, _) =
+            WebSocketAddress::multiaddr_to_socket_address(&address, ip_dialing_mode)?;
         let remote_address =
             match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip(resolver))
                 .await
@@ -314,9 +319,12 @@ impl TransportBuilder for WebSocketTransport {
     where
         Self: Sized,
     {
+        let ip_dialing_mode = context.ip_dialing_mode;
+
         tracing::debug!(
             target: LOG_TARGET,
             listen_addresses = ?config.listen_addresses,
+            ?ip_dialing_mode,
             "start websocket transport",
         );
         let (listener, listen_addresses, dial_addresses) = SocketListener::new::<WebSocketAddress>(
@@ -339,6 +347,7 @@ impl TransportBuilder for WebSocketTransport {
                 pending_raw_connections: FuturesStream::new(),
                 cancel_futures: HashMap::new(),
                 resolver,
+                ip_dialing_mode,
             },
             listen_addresses,
         ))
@@ -357,6 +366,7 @@ impl Transport for WebSocketTransport {
         let dial_addresses = self.dial_addresses.clone();
         let nodelay = self.config.nodelay;
         let resolver = self.resolver.clone();
+        let ip_dialing_mode = self.ip_dialing_mode;
 
         self.pending_dials.insert(connection_id, address.clone());
 
@@ -369,6 +379,7 @@ impl Transport for WebSocketTransport {
                 connection_open_timeout,
                 nodelay,
                 resolver,
+                ip_dialing_mode,
             )
             .await
             .map_err(|error| (connection_id, error))?;
@@ -487,6 +498,7 @@ impl Transport for WebSocketTransport {
                 let dial_addresses = self.dial_addresses.clone();
                 let nodelay = self.config.nodelay;
                 let resolver = self.resolver.clone();
+                let ip_dialing_mode = self.ip_dialing_mode;
 
                 async move {
                     WebSocketTransport::dial_peer(
@@ -495,6 +507,7 @@ impl Transport for WebSocketTransport {
                         connection_open_timeout,
                         nodelay,
                         resolver,
+                        ip_dialing_mode,
                     )
                     .await
                     .map_err(|error| (address, error))
