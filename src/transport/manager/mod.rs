@@ -162,6 +162,18 @@ impl TransportContext {
     ) {
         assert!(self.transports.insert(name, transport).is_none());
     }
+
+    /// Iterate through all transports
+    pub fn iter_mut(
+        &mut self,
+    ) -> impl Iterator<
+        Item = (
+            &SupportedTransport,
+            &mut (dyn Transport<Item = TransportEvent> + 'static),
+        ),
+    > {
+        self.transports.iter_mut().map(|(a, b)| (a, &mut **b))
+    }
 }
 
 impl Stream for TransportContext {
@@ -545,64 +557,6 @@ impl TransportManager {
 
         tracing::debug!(target: LOG_TARGET, address = ?address_record.address(), "dial address");
 
-        let mut protocol_stack = address_record.as_ref().iter();
-        match protocol_stack
-            .next()
-            .ok_or_else(|| Error::TransportNotSupported(address_record.address().clone()))?
-        {
-            Protocol::Ip4(_) | Protocol::Ip6(_) => {}
-            Protocol::Dns(_) | Protocol::Dns4(_) | Protocol::Dns6(_) => {}
-            transport => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?transport,
-                    "invalid transport, expected `ip4`/`ip6`"
-                );
-                return Err(Error::TransportNotSupported(
-                    address_record.address().clone(),
-                ));
-            }
-        };
-
-        let supported_transport = match protocol_stack
-            .next()
-            .ok_or_else(|| Error::TransportNotSupported(address_record.address().clone()))?
-        {
-            Protocol::Tcp(_) => match protocol_stack.next() {
-                #[cfg(feature = "websocket")]
-                Some(Protocol::Ws(_)) | Some(Protocol::Wss(_)) => SupportedTransport::WebSocket,
-                Some(Protocol::P2p(_)) => SupportedTransport::Tcp,
-                _ =>
-                    return Err(Error::TransportNotSupported(
-                        address_record.address().clone(),
-                    )),
-            },
-            #[cfg(feature = "quic")]
-            Protocol::Udp(_) => match protocol_stack
-                .next()
-                .ok_or_else(|| Error::TransportNotSupported(address_record.address().clone()))?
-            {
-                Protocol::QuicV1 => SupportedTransport::Quic,
-                _ => {
-                    tracing::debug!(target: LOG_TARGET, address = ?address_record.address(), "expected `quic-v1`");
-                    return Err(Error::TransportNotSupported(
-                        address_record.address().clone(),
-                    ));
-                }
-            },
-            protocol => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?protocol,
-                    "invalid protocol"
-                );
-
-                return Err(Error::TransportNotSupported(
-                    address_record.address().clone(),
-                ));
-            }
-        };
-
         // when constructing `AddressRecord`, `PeerId` was verified to be part of the address
         let remote_peer_id =
             PeerId::try_from_multiaddr(address_record.address()).expect("`PeerId` to exist");
@@ -629,12 +583,27 @@ impl TransportManager {
             };
         }
 
-        self.transports
-            .get_mut(&supported_transport)
-            .ok_or(Error::TransportNotSupported(
+        let mut dailed = false;
+
+        for (_, transport) in self.transports.iter_mut() {
+            if let Err(err) = transport.dial(connection_id, address_record.address().clone()) {
+                if let Error::AddressError(AddressError::InvalidProtocol) = err {
+                    continue;
+                }
+
+                return Err(err);
+            }
+
+            dailed = true;
+            break;
+        }
+
+        if !dailed {
+            return Err(Error::TransportNotSupported(
                 address_record.address().clone(),
-            ))?
-            .dial(connection_id, address_record.address().clone())?;
+            ));
+        }
+
         self.pending_connections.insert(connection_id, remote_peer_id);
 
         Ok(())
@@ -1652,7 +1621,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn try_to_dial_over_disabled_transport() {
+    async fn try_to_dial_over_custom_transport() {
         let (mut manager, _handle) = TransportManager::new(
             Keypair::generate(),
             HashSet::new(),
@@ -1671,10 +1640,7 @@ mod tests {
                 Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
             ));
 
-        assert!(std::matches!(
-            manager.dial_address(address).await,
-            Err(Error::TransportNotSupported(_))
-        ));
+        assert!(std::matches!(manager.dial_address(address).await, Ok(())));
     }
 
     #[tokio::test]

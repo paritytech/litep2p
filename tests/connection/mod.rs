@@ -23,7 +23,10 @@ use litep2p::{
     crypto::ed25519::Keypair,
     error::{DialError, Error, NegotiationError},
     protocol::libp2p::ping::{Config as PingConfig, PingEvent},
-    transport::tcp::config::Config as TcpConfig,
+    transport::{
+        tcp::{config::Config as TcpConfig, TcpTransport},
+        TransportBuilder,
+    },
     Litep2p, Litep2pEvent, PeerId,
 };
 
@@ -86,6 +89,31 @@ async fn two_litep2ps_work_websocket() {
         }),
     )
     .await;
+}
+
+#[tokio::test]
+async fn two_litep2ps_work_custom() {
+    let transport1 = Transport::Custom(("tcp1", |handle, resolver| {
+        let config = TcpConfig {
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        };
+        let (transport, transport_listen_addresses) =
+            <TcpTransport as TransportBuilder>::new(handle, config, resolver)?;
+        Ok((Box::new(transport), transport_listen_addresses))
+    }));
+
+    let transport2 = Transport::Custom(("tcp2", |handle, resolver| {
+        let config = TcpConfig {
+            listen_addresses: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        };
+        let (transport, transport_listen_addresses) =
+            <TcpTransport as TransportBuilder>::new(handle, config, resolver)?;
+        Ok((Box::new(transport), transport_listen_addresses))
+    }));
+
+    two_litep2ps_work(transport1, transport2).await;
 }
 
 async fn two_litep2ps_work(transport1: Transport, transport2: Transport) {
@@ -469,34 +497,6 @@ async fn attempt_to_dial_using_unsupported_transport_tcp() {
         .with(Protocol::from(std::net::Ipv4Addr::new(127, 0, 0, 1)))
         .with(Protocol::Tcp(8888))
         .with(Protocol::Ws(std::borrow::Cow::Borrowed("/")))
-        .with(Protocol::P2p(
-            Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
-        ));
-
-    assert!(std::matches!(
-        litep2p.dial_address(address.clone()).await,
-        Err(Error::TransportNotSupported(_))
-    ));
-}
-
-#[cfg(feature = "quic")]
-#[tokio::test]
-async fn attempt_to_dial_using_unsupported_transport_quic() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
-
-    let (ping_config, _ping_event_stream) = PingConfig::default();
-    let config = ConfigBuilder::new()
-        .with_keypair(Keypair::generate())
-        .with_quic(Default::default())
-        .with_libp2p_ping(ping_config)
-        .build();
-
-    let mut litep2p = Litep2p::new(config).unwrap();
-    let address = Multiaddr::empty()
-        .with(Protocol::from(std::net::Ipv4Addr::new(127, 0, 0, 1)))
-        .with(Protocol::Tcp(8888))
         .with(Protocol::P2p(
             Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
         ));
@@ -1023,6 +1023,8 @@ async fn make_dummy_litep2p(
         Transport::Quic(config) => litep2p_config.with_quic(config),
         #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => litep2p_config.with_websocket(config),
+        Transport::Custom((name, transport)) =>
+            litep2p_config.with_custom_transport(name, transport),
     }
     .build();
 
