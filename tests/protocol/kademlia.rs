@@ -164,7 +164,7 @@ async fn records_are_stored_automatically() {
 
     // Publish the record.
     let record = Record::new(vec![1, 2, 3], vec![0x01]);
-    kad_handle1.put_record(record.clone()).await;
+    let query_id = kad_handle1.put_record(record.clone(), Quorum::All).await;
     let mut records = Vec::new();
 
     loop {
@@ -174,7 +174,19 @@ async fn records_are_stored_automatically() {
             }
             _ = litep2p1.next_event() => {}
             _ = litep2p2.next_event() => {}
-            _ = kad_handle1.next() => {}
+            event = kad_handle1.next() => {
+                match event {
+                    Some(KademliaEvent::PutRecordSuccess { query_id: got_query_id, key }) => {
+                        assert_eq!(got_query_id, query_id);
+                        assert_eq!(key, record.key);
+
+                        // Check if the record was stored.
+                        let _ = kad_handle2
+                            .get_record(RecordKey::from(vec![1, 2, 3]), Quorum::One).await;
+                    }
+                    _ => {}
+                }
+            }
             event = kad_handle2.next() => {
                 match event {
                     Some(KademliaEvent::IncomingRecord { record: got_record }) => {
@@ -182,10 +194,6 @@ async fn records_are_stored_automatically() {
                         assert_eq!(got_record.value, record.value);
                         assert_eq!(got_record.publisher.unwrap(), *litep2p1.local_peer_id());
                         assert!(got_record.expires.is_some());
-
-                        // Check if the record was stored.
-                        let _ = kad_handle2
-                            .get_record(RecordKey::from(vec![1, 2, 3]), Quorum::One).await;
                     }
                     Some(KademliaEvent::GetRecordPartialResult { query_id: _, record }) => {
                         records.push(record);
@@ -245,8 +253,10 @@ async fn records_are_stored_manually() {
 
     // Publish the record.
     let mut record = Record::new(vec![1, 2, 3], vec![0x01]);
-    kad_handle1.put_record(record.clone()).await;
+    let query_id = kad_handle1.put_record(record.clone(), Quorum::All).await;
     let mut records = Vec::new();
+    let mut put_record_success = false;
+    let mut get_record_success = false;
 
     loop {
         tokio::select! {
@@ -255,7 +265,23 @@ async fn records_are_stored_manually() {
             }
             _ = litep2p1.next_event() => {}
             _ = litep2p2.next_event() => {}
-            _ = kad_handle1.next() => {}
+            event = kad_handle1.next() => {
+                match event {
+                    Some(KademliaEvent::PutRecordSuccess { query_id: got_query_id, key }) => {
+                        assert_eq!(got_query_id, query_id);
+                        assert_eq!(key, record.key);
+
+                        // Due to manual validation, the record will be stored later, so we request
+                        // it in `kad_handle2` after receiving the incoming record
+                        put_record_success = true;
+
+                        if get_record_success {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
             event = kad_handle2.next() => {
                 match event {
                     Some(KademliaEvent::IncomingRecord { record: got_record }) => {
@@ -282,7 +308,12 @@ async fn records_are_stored_manually() {
                         assert_eq!(got_record.record.value, record.value);
                         assert_eq!(got_record.record.publisher.unwrap(), *litep2p1.local_peer_id());
                         assert!(got_record.record.expires.is_some());
-                        break
+
+                        get_record_success = true;
+
+                        if put_record_success {
+                            break;
+                        }
                     }
                     _ => {}
                 }
@@ -328,9 +359,12 @@ async fn not_validated_records_are_not_stored() {
 
     // Publish the record.
     let record = Record::new(vec![1, 2, 3], vec![0x01]);
-    kad_handle1.put_record(record.clone()).await;
+    let query_id = kad_handle1.put_record(record.clone(), Quorum::All).await;
     let mut records = Vec::new();
     let mut get_record_query_id = None;
+    let mut put_record_success = false;
+    let mut get_record_success = false;
+    let mut query_failed = false;
 
     loop {
         tokio::select! {
@@ -339,7 +373,21 @@ async fn not_validated_records_are_not_stored() {
             }
             event = litep2p1.next_event() => {}
             event = litep2p2.next_event() => {}
-            event = kad_handle1.next() => {}
+            event = kad_handle1.next() => {
+                match event {
+                    Some(KademliaEvent::PutRecordSuccess { query_id: got_query_id, key }) => {
+                        assert_eq!(got_query_id, query_id);
+                        assert_eq!(key, record.key);
+
+                        put_record_success = true;
+
+                        if get_record_success || query_failed {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
             event = kad_handle2.next() => {
                 match event {
                     Some(KademliaEvent::IncomingRecord { record: got_record }) => {
@@ -354,19 +402,30 @@ async fn not_validated_records_are_not_stored() {
                             .get_record(RecordKey::from(vec![1, 2, 3]), Quorum::One).await;
                         get_record_query_id = Some(query_id);
                     }
-                    Some(KademliaEvent::GetRecordPartialResult { query_id: _, record }) => {
+                    Some(KademliaEvent::GetRecordPartialResult { query_id, record }) => {
+                        assert_eq!(query_id, get_record_query_id.unwrap());
                         records.push(record);
                     }
                     Some(KademliaEvent::GetRecordSuccess { query_id: _ }) => {
                         assert_eq!(records.len(), 1);
                         let got_record = records.first().unwrap();
-                        // The record was not stored.
-                        assert_ne!(got_record.peer, *litep2p1.local_peer_id());
-                        break
+                        // The record was not stored at litep2p2.
+                        assert_eq!(got_record.peer, *litep2p1.local_peer_id());
+
+                        get_record_success = true;
+
+                        if put_record_success {
+                            break
+                        }
                     }
                     Some(KademliaEvent::QueryFailed { query_id }) => {
                         assert_eq!(query_id, get_record_query_id.unwrap());
-                        break
+
+                        query_failed = true;
+
+                        if put_record_success {
+                            break
+                        }
                     }
                     _ => {}
                 }
@@ -405,7 +464,7 @@ async fn get_record_retrieves_remote_records() {
 
     // Store the record on `litep2p1``.
     let original_record = Record::new(vec![1, 2, 3], vec![0x01]);
-    let query1 = kad_handle1.put_record(original_record.clone()).await;
+    let query1 = kad_handle1.put_record(original_record.clone(), Quorum::All).await;
 
     let mut records = Vec::new();
     let mut query2 = None;
@@ -501,11 +560,12 @@ async fn get_record_retrieves_local_and_remote_records() {
 
     // Store the record on `litep2p1``.
     let original_record = Record::new(vec![1, 2, 3], vec![0x01]);
-    let query1 = kad_handle1.put_record(original_record.clone()).await;
+    let query1 = kad_handle1.put_record(original_record.clone(), Quorum::All).await;
 
     let (mut peer1_stored, mut peer2_stored) = (false, false);
     let mut query3 = None;
     let mut records = Vec::new();
+    let mut put_record_success = false;
 
     loop {
         tokio::select! {
@@ -514,7 +574,19 @@ async fn get_record_retrieves_local_and_remote_records() {
             }
             event = litep2p1.next_event() => {}
             event = litep2p2.next_event() => {}
-            event = kad_handle1.next() => {}
+            event = kad_handle1.next() => {
+                match event {
+                    Some(KademliaEvent::PutRecordSuccess { query_id: got_query_id, key }) => {
+                        assert_eq!(got_query_id, query1);
+                        assert_eq!(key, original_record.key);
+
+                        // Due to manual validation, the record will be stored later, so we request
+                        // it in `kad_handle2` after receiving the incoming record
+                        put_record_success = true;
+                    }
+                    _ => {}
+                }
+            }
             event = kad_handle2.next() => {
                 match event {
                     Some(KademliaEvent::IncomingRecord { record: got_record }) => {
@@ -558,6 +630,11 @@ async fn get_record_retrieves_local_and_remote_records() {
             }
         }
     }
+
+    assert!(
+        put_record_success,
+        "Publisher was not notified that the record was received",
+    );
 }
 
 #[tokio::test]
