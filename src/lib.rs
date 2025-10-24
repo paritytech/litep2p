@@ -384,7 +384,7 @@ impl Litep2p {
 
         // enable mdns if the config exists
         if let Some(config) = litep2p_config.mdns.take() {
-            let mdns = Mdns::new(transport_handle, config, listen_addresses.clone())?;
+            let mdns = Mdns::new(transport_handle, config, listen_addresses.clone());
 
             litep2p_config.executor.run(Box::pin(async move {
                 let _ = mdns.start().await;
