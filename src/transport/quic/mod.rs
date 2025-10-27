@@ -589,7 +589,7 @@ mod tests {
         codec::ProtocolCodec,
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
-        transport::manager::{IpDialingMode::All, ProtocolContext, TransportHandle},
+        transport::manager::{IpDialingMode, ProtocolContext, TransportHandle},
         types::protocol::ProtocolName,
         BandwidthSink,
     };
