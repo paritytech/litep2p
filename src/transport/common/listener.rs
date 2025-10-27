@@ -374,7 +374,7 @@ fn multiaddr_to_socket_address(
     tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
 
     if !ip_dialing_mode.allows_address(address) {
-        tracing::error!(
+        tracing::debug!(
             target: LOG_TARGET,
             ?address,
             ?ip_dialing_mode,
