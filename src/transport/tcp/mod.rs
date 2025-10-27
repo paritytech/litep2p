@@ -727,8 +727,67 @@ mod tests {
     };
     use multiaddr::Protocol;
     use multihash::Multihash;
-    use std::{collections::HashSet, sync::Arc};
+    use std::{collections::HashSet, str::FromStr, sync::Arc};
     use tokio::sync::mpsc::channel;
+
+    #[tokio::test]
+    async fn deny_private_ip_dials() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let keypair1 = Keypair::generate();
+        let (tx1, _rx1) = channel(64);
+        let (event_tx1, _event_rx1) = channel(64);
+        let bandwidth_sink = BandwidthSink::new();
+
+        let handle = crate::transport::manager::TransportHandle {
+            executor: Arc::new(DefaultExecutor {}),
+            next_substream_id: Default::default(),
+            next_connection_id: Default::default(),
+            keypair: keypair1.clone(),
+            tx: event_tx1,
+            bandwidth_sink: bandwidth_sink.clone(),
+            protocols: HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolContext {
+                    tx: tx1,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
+                },
+            )]),
+            ip_dialing_mode: IpDialingMode::GlobalOnly,
+        };
+
+        let transport_config1 = Config {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        };
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
+
+        let (mut transport, listen_addresses) =
+            TcpTransport::new(handle, transport_config1, resolver.clone()).unwrap();
+        let listen_address = listen_addresses[0].clone();
+
+        // Dialing local addresses is unsupported.
+        transport.dial(ConnectionId::new(), listen_address).unwrap_err();
+
+        // DNS with private IP is unsupported.
+        transport
+            .dial(
+                ConnectionId::new(),
+                Multiaddr::from_str("/dns/127.0.0.1/tcp/30333").unwrap(),
+            )
+            .unwrap_err();
+
+        // Public DNS is allowed.
+        transport
+            .dial(
+                ConnectionId::new(),
+                Multiaddr::from_str("/dns/polkadot-bootnode-0.polkadot.io/tcp/30333/p2p/12D3KooWSz8r2WyCdsfWHgPyvD8GKQdJ1UAiRmrcrs8sQB3fe2KU").unwrap(),
+            )
+            .unwrap();
+    }
 
     #[tokio::test]
     async fn connect_and_accept_works() {
