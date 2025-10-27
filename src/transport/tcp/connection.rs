@@ -469,6 +469,7 @@ impl TcpConnection {
                 address,
                 port,
                 dns_type,
+                ..
             } => match dns_type {
                 DnsType::Dns => Multiaddr::empty()
                     .with(Protocol::Dns(Cow::Owned(address)))
@@ -749,7 +750,7 @@ impl TcpConnection {
 
 #[cfg(test)]
 mod tests {
-    use crate::transport::tcp::TcpTransport;
+    use crate::transport::{manager::IpDialingMode, tcp::TcpTransport};
 
     use super::*;
     use hickory_resolver::{name_server::TokioConnectionProvider, TokioResolver};
@@ -783,6 +784,7 @@ mod tests {
                 )
                 .build(),
             ),
+            IpDialingMode::All,
         )
         .await
         .unwrap();
@@ -885,6 +887,7 @@ mod tests {
                 )
                 .build(),
             ),
+            IpDialingMode::All,
         )
         .await
         .unwrap();
@@ -1034,6 +1037,7 @@ mod tests {
                 )
                 .build(),
             ),
+            IpDialingMode::All,
         )
         .await
         .unwrap();
@@ -1087,6 +1091,7 @@ mod tests {
                 )
                 .build(),
             ),
+            IpDialingMode::All,
         )
         .await
         .unwrap();
@@ -1267,6 +1272,7 @@ mod tests {
                 )
                 .build(),
             ),
+            IpDialingMode::All,
         )
         .await
         .unwrap();
@@ -1402,6 +1408,7 @@ mod tests {
                 )
                 .build(),
             ),
+            IpDialingMode::All,
         )
         .await
         .unwrap();

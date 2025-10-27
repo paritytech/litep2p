@@ -26,7 +26,7 @@ use crate::{
     error::{DialError, Error},
     transport::{
         common::listener::{DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
-        manager::TransportHandle,
+        manager::{IpDialingMode, TransportHandle},
         tcp::{
             config::Config,
             connection::{NegotiatedConnection, TcpConnection},
@@ -134,6 +134,9 @@ pub(crate) struct TcpTransport {
 
     /// DNS resolver.
     resolver: Arc<TokioResolver>,
+
+    /// IP dialing mode.
+    ip_dialing_mode: IpDialingMode,
 }
 
 impl TcpTransport {
@@ -182,8 +185,10 @@ impl TcpTransport {
         connection_open_timeout: Duration,
         nodelay: bool,
         resolver: Arc<TokioResolver>,
+        ip_dialing_mode: IpDialingMode,
     ) -> Result<(Multiaddr, TcpStream), DialError> {
-        let (socket_address, _) = TcpAddress::multiaddr_to_socket_address(&address)?;
+        let (socket_address, _) =
+            TcpAddress::multiaddr_to_socket_address(&address, ip_dialing_mode)?;
 
         let remote_address =
             match tokio::time::timeout(connection_open_timeout, socket_address.lookup_ip(resolver))
@@ -281,9 +286,12 @@ impl TransportBuilder for TcpTransport {
         mut config: Self::Config,
         resolver: Arc<TokioResolver>,
     ) -> crate::Result<(Self, Vec<Multiaddr>)> {
+        let ip_dialing_mode = context.ip_dialing_mode;
+
         tracing::debug!(
             target: LOG_TARGET,
             listen_addresses = ?config.listen_addresses,
+            ?ip_dialing_mode,
             "start tcp transport",
         );
 
@@ -308,6 +316,7 @@ impl TransportBuilder for TcpTransport {
                 pending_raw_connections: FuturesStream::new(),
                 cancel_futures: HashMap::new(),
                 resolver,
+                ip_dialing_mode,
             },
             listen_addresses,
         ))
@@ -318,7 +327,8 @@ impl Transport for TcpTransport {
     fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, ?connection_id, ?address, "open connection");
 
-        let (socket_address, peer) = TcpAddress::multiaddr_to_socket_address(&address)?;
+        let (socket_address, peer) =
+            TcpAddress::multiaddr_to_socket_address(&address, self.ip_dialing_mode)?;
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
@@ -328,6 +338,7 @@ impl Transport for TcpTransport {
         let keypair = self.context.keypair.clone();
         let nodelay = self.config.nodelay;
         let resolver = self.resolver.clone();
+        let ip_dialing_mode = self.ip_dialing_mode;
 
         self.pending_dials.insert(connection_id, address.clone());
         self.pending_connections.push(Box::pin(async move {
@@ -337,6 +348,7 @@ impl Transport for TcpTransport {
                 connection_open_timeout,
                 nodelay,
                 resolver,
+                ip_dialing_mode,
             )
             .await
             .map_err(|error| (connection_id, error))?;
@@ -443,6 +455,7 @@ impl Transport for TcpTransport {
                 let connection_open_timeout = self.config.connection_open_timeout;
                 let nodelay = self.config.nodelay;
                 let resolver = self.resolver.clone();
+                let ip_dialing_mode = self.ip_dialing_mode;
 
                 async move {
                     TcpTransport::dial_peer(
@@ -451,6 +464,7 @@ impl Transport for TcpTransport {
                         connection_open_timeout,
                         nodelay,
                         resolver,
+                        ip_dialing_mode,
                     )
                     .await
                     .map_err(|error| (address, error))
@@ -501,7 +515,9 @@ impl Transport for TcpTransport {
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
 
-        let (socket_address, peer) = TcpAddress::multiaddr_to_socket_address(&address)?;
+        // Address already validated during the dial process.
+        let (socket_address, peer) =
+            TcpAddress::multiaddr_to_socket_address(&address, IpDialingMode::All)?;
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
@@ -703,15 +719,75 @@ mod tests {
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
         transport::manager::{
-            limits::ConnectionLimitsConfig, ProtocolContext, SupportedTransport, TransportManager,
+            limits::ConnectionLimitsConfig, IpDialingMode, ProtocolContext, SupportedTransport,
+            TransportManager,
         },
         types::protocol::ProtocolName,
         BandwidthSink, PeerId,
     };
     use multiaddr::Protocol;
     use multihash::Multihash;
-    use std::{collections::HashSet, sync::Arc};
+    use std::{collections::HashSet, str::FromStr, sync::Arc};
     use tokio::sync::mpsc::channel;
+
+    #[tokio::test]
+    async fn deny_private_ip_dials() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let keypair1 = Keypair::generate();
+        let (tx1, _rx1) = channel(64);
+        let (event_tx1, _event_rx1) = channel(64);
+        let bandwidth_sink = BandwidthSink::new();
+
+        let handle = crate::transport::manager::TransportHandle {
+            executor: Arc::new(DefaultExecutor {}),
+            next_substream_id: Default::default(),
+            next_connection_id: Default::default(),
+            keypair: keypair1.clone(),
+            tx: event_tx1,
+            bandwidth_sink: bandwidth_sink.clone(),
+            protocols: HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolContext {
+                    tx: tx1,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
+                },
+            )]),
+            ip_dialing_mode: IpDialingMode::GlobalOnly,
+        };
+
+        let transport_config1 = Config {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        };
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
+
+        let (mut transport, listen_addresses) =
+            TcpTransport::new(handle, transport_config1, resolver.clone()).unwrap();
+        let listen_address = listen_addresses[0].clone();
+
+        // Dialing local addresses is unsupported.
+        transport.dial(ConnectionId::new(), listen_address).unwrap_err();
+
+        // DNS with private IP is unsupported.
+        transport
+            .dial(
+                ConnectionId::new(),
+                Multiaddr::from_str("/dns/127.0.0.1/tcp/30333").unwrap(),
+            )
+            .unwrap_err();
+
+        // Public DNS is allowed.
+        transport
+            .dial(
+                ConnectionId::new(),
+                Multiaddr::from_str("/dns/polkadot-bootnode-0.polkadot.io/tcp/30333/p2p/12D3KooWSz8r2WyCdsfWHgPyvD8GKQdJ1UAiRmrcrs8sQB3fe2KU").unwrap(),
+            )
+            .unwrap();
+    }
 
     #[tokio::test]
     async fn connect_and_accept_works() {
@@ -731,7 +807,6 @@ mod tests {
             keypair: keypair1.clone(),
             tx: event_tx1,
             bandwidth_sink: bandwidth_sink.clone(),
-
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
@@ -740,6 +815,7 @@ mod tests {
                     fallback_names: Vec::new(),
                 },
             )]),
+            ip_dialing_mode: IpDialingMode::All,
         };
         let transport_config1 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -762,7 +838,6 @@ mod tests {
             keypair: keypair2.clone(),
             tx: event_tx2,
             bandwidth_sink: bandwidth_sink.clone(),
-
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
@@ -771,6 +846,7 @@ mod tests {
                     fallback_names: Vec::new(),
                 },
             )]),
+            ip_dialing_mode: IpDialingMode::All,
         };
         let transport_config2 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -825,7 +901,6 @@ mod tests {
             keypair: keypair1.clone(),
             tx: event_tx1,
             bandwidth_sink: bandwidth_sink.clone(),
-
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
@@ -834,6 +909,7 @@ mod tests {
                     fallback_names: Vec::new(),
                 },
             )]),
+            ip_dialing_mode: IpDialingMode::All,
         };
         let transport_config1 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -856,7 +932,6 @@ mod tests {
             keypair: keypair2.clone(),
             tx: event_tx2,
             bandwidth_sink: bandwidth_sink.clone(),
-
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
@@ -865,6 +940,7 @@ mod tests {
                     fallback_names: Vec::new(),
                 },
             )]),
+            ip_dialing_mode: IpDialingMode::All,
         };
         let transport_config2 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -914,7 +990,6 @@ mod tests {
             keypair: keypair1.clone(),
             tx: event_tx1,
             bandwidth_sink: bandwidth_sink.clone(),
-
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
@@ -923,6 +998,7 @@ mod tests {
                     fallback_names: Vec::new(),
                 },
             )]),
+            ip_dialing_mode: IpDialingMode::All,
         };
         let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
         let (mut transport1, _) =
@@ -952,7 +1028,6 @@ mod tests {
             keypair: keypair2.clone(),
             tx: event_tx2,
             bandwidth_sink: bandwidth_sink.clone(),
-
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
@@ -961,6 +1036,7 @@ mod tests {
                     fallback_names: Vec::new(),
                 },
             )]),
+            ip_dialing_mode: IpDialingMode::All,
         };
 
         let (mut transport2, _) = TcpTransport::new(handle2, Default::default(), resolver).unwrap();
@@ -1002,6 +1078,7 @@ mod tests {
             BandwidthSink::new(),
             8usize,
             ConnectionLimitsConfig::default(),
+            IpDialingMode::All,
         );
         let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());

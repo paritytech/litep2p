@@ -589,7 +589,7 @@ mod tests {
         codec::ProtocolCodec,
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
-        transport::manager::{ProtocolContext, TransportHandle},
+        transport::manager::{IpDialingMode, ProtocolContext, TransportHandle},
         types::protocol::ProtocolName,
         BandwidthSink,
     };
@@ -613,6 +613,7 @@ mod tests {
             keypair: keypair1.clone(),
             tx: event_tx1,
             bandwidth_sink: BandwidthSink::new(),
+            ip_dialing_mode: IpDialingMode::All,
 
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
@@ -640,6 +641,7 @@ mod tests {
             keypair: keypair2.clone(),
             tx: event_tx2,
             bandwidth_sink: BandwidthSink::new(),
+            ip_dialing_mode: IpDialingMode::All,
 
             protocols: HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
