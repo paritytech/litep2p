@@ -382,21 +382,32 @@ impl WebRtcConnection {
             target: LOG_TARGET,
             peer = ?self.peer,
             ?channel_id,
+            data_len = ?data.len(),
             "handle opening outbound substream",
         );
 
         let rtc_message = WebRtcMessage::decode(&data)
             .map_err(|err| SubstreamError::NegotiationError(err.into()))?;
-        let message = rtc_message.payload.ok_or(SubstreamError::NegotiationError(
+        let payload = rtc_message.payload.ok_or(SubstreamError::NegotiationError(
             ParseError::InvalidData.into(),
         ))?;
 
-        let HandshakeResult::Succeeded(protocol) = dialer_state.register_response(message)? else {
+        // All multistream-select messages are length-prefixed. Since this code path is not using
+        // multistream_select::protocol::MessageIO, we need to decode and remove the length here.
+        let remaining: &[u8] = &payload;
+        let (len, tail) = unsigned_varint::decode::usize(remaining).
+            map_err(|_| SubstreamError::NegotiationError(
+                ParseError::InvalidData.into(),
+            ))?;
+
+        let message = tail[..len].to_vec();
+
+    let HandshakeResult::Succeeded(protocol) = dialer_state.register_response(message)? else {
             tracing::trace!(
                 target: LOG_TARGET,
                 peer = ?self.peer,
                 ?channel_id,
-                "multisteam-select handshake not ready",
+                "multistream-select handshake not ready",
             );
 
             self.channels.insert(
@@ -631,7 +642,7 @@ impl WebRtcConnection {
             protocol: protocol.to_string(),
         });
 
-        self.rtc.channel(channel_id).unwrap().set_buffered_amount_low_threshold(1024);
+        // self.rtc.channel(channel_id).unwrap().set_buffered_amount_low_threshold(1024);
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -803,7 +814,8 @@ impl WebRtcConnection {
                 },
                 event = self.handles.next() => match event {
                     None => unreachable!(),
-                    Some((channel_id, None | Some(SubstreamEvent::Close))) => {
+                    Some((_, None)) => {}
+                    Some((channel_id, Some(SubstreamEvent::Close))) => {
                         tracing::trace!(
                             target: LOG_TARGET,
                             peer = ?self.peer,

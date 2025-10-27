@@ -357,12 +357,25 @@ impl WebRtcDialerState {
         &mut self,
         payload: Vec<u8>,
     ) -> Result<HandshakeResult, crate::error::NegotiationError> {
-        let Message::Protocols(protocols) =
-            Message::decode(payload.into()).map_err(|_| ParseError::InvalidData)?
-        else {
-            return Err(crate::error::NegotiationError::MultistreamSelectError(
-                NegotiationError::Failed,
-            ));
+
+        let protocols = match Message::decode(payload.into()) {
+            Ok(Message::Header(HeaderLine::V1)) => {
+                self.state = HandshakeState::WaitingProtocol;
+                return Ok(HandshakeResult::NotReady);
+            }
+            Ok(Message::Protocol(protocol)) => vec![protocol],
+            Ok(Message::Protocols(protocols)) => protocols,
+            Ok(Message::NotAvailable) => {
+                return match &self.state {
+                    HandshakeState::WaitingProtocol =>
+                        Err(error::NegotiationError::MultistreamSelectError(
+                            NegotiationError::Failed
+                        )),
+                    _ => Err(error::NegotiationError::StateMismatch),
+                }
+            }
+            Ok(Message::ListProtocols) => return Err(error::NegotiationError::StateMismatch),
+            Err(_) => return Err(error::NegotiationError::ParseError(ParseError::InvalidData)),
         };
 
         let mut protocol_iter = protocols.into_iter();
@@ -410,7 +423,9 @@ mod tests {
     use super::*;
     use crate::multistream_select::listener_select_proto;
     use std::time::Duration;
+    use bytes::BufMut;
     use tokio::net::{TcpListener, TcpStream};
+    use crate::multistream_select::protocol::MSG_MULTISTREAM_1_0;
 
     #[tokio::test]
     async fn select_proto_basic() {
@@ -805,9 +820,10 @@ mod tests {
     }
 
     #[test]
-    fn register_response_invalid_message() {
-        // send only header line
+    fn register_response_header_only() {
         let mut bytes = BytesMut::with_capacity(32);
+        bytes.put_u8(MSG_MULTISTREAM_1_0.len() as u8);
+
         let message = Message::Header(HeaderLine::V1);
         message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
 
@@ -815,7 +831,8 @@ mod tests {
             WebRtcDialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
 
         match dialer_state.register_response(bytes.freeze().to_vec()) {
-            Err(error::NegotiationError::MultistreamSelectError(NegotiationError::Failed)) => {}
+            Ok(HandshakeResult::NotReady) => {},
+            Err(err) => panic!("unexpected error: {:?}", err),
             event => panic!("invalid event: {event:?}"),
         }
     }
