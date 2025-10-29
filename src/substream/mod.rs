@@ -833,8 +833,8 @@ where
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let inner = Pin::into_inner(self);
 
-        for (key, mut substream) in inner.substreams.iter_mut() {
-            match Pin::new(&mut substream).poll_next(cx) {
+        for (key, substream) in inner.substreams.iter_mut() {
+            match Pin::new(substream).poll_next(cx) {
                 Poll::Pending => continue,
                 Poll::Ready(Some(data)) => return Poll::Ready(Some((*key, data))),
                 Poll::Ready(None) =>
@@ -849,58 +849,33 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{mock::substream::MockSubstream, PeerId};
-    use futures::{SinkExt, StreamExt};
+    use crate::{mock::substream::MockSubstream, utils::futures_stream::FuturesStream};
+    use futures::StreamExt;
 
     #[test]
     fn add_substream() {
-        let mut set = SubstreamSet::<PeerId, MockSubstream>::new();
+        let mut set = FuturesStream::new();
 
-        let peer = PeerId::random();
         let substream = MockSubstream::new();
-        set.insert(peer, substream);
+        let task = async |mut substream: MockSubstream| {
+            let request = match substream.next().await {
+                Some(Ok(request)) => Ok(request),
+                Some(Err(error)) => Err(error),
+                None => Err(SubstreamError::ConnectionClosed),
+            };
 
-        let peer = PeerId::random();
+            (request, substream)
+        };
+        set.push(task(substream));
+
         let substream = MockSubstream::new();
-        set.insert(peer, substream);
-    }
-
-    #[test]
-    #[should_panic]
-    #[cfg(debug_assertions)]
-    fn add_same_peer_twice() {
-        let mut set = SubstreamSet::<PeerId, MockSubstream>::new();
-
-        let peer = PeerId::random();
-        let substream1 = MockSubstream::new();
-        let substream2 = MockSubstream::new();
-
-        set.insert(peer, substream1);
-        set.insert(peer, substream2);
-    }
-
-    #[test]
-    fn remove_substream() {
-        let mut set = SubstreamSet::<PeerId, MockSubstream>::new();
-
-        let peer1 = PeerId::random();
-        let substream1 = MockSubstream::new();
-        set.insert(peer1, substream1);
-
-        let peer2 = PeerId::random();
-        let substream2 = MockSubstream::new();
-        set.insert(peer2, substream2);
-
-        assert!(set.remove(&peer1).is_some());
-        assert!(set.remove(&peer2).is_some());
-        assert!(set.remove(&PeerId::random()).is_none());
+        set.push(task(substream));
     }
 
     #[tokio::test]
     async fn poll_data_from_substream() {
-        let mut set = SubstreamSet::<PeerId, MockSubstream>::new();
+        let mut set = FuturesStream::new();
 
-        let peer = PeerId::random();
         let mut substream = MockSubstream::new();
         substream
             .expect_poll_next()
@@ -911,24 +886,32 @@ mod tests {
             .times(1)
             .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"world"[..])))));
         substream.expect_poll_next().returning(|_| Poll::Pending);
-        set.insert(peer, substream);
 
-        let value = set.next().await.unwrap();
-        assert_eq!(value.0, peer);
-        assert_eq!(value.1.unwrap(), BytesMut::from(&b"hello"[..]));
+        let task = async |mut substream: MockSubstream| {
+            let request = match substream.next().await {
+                Some(Ok(request)) => Ok(request),
+                Some(Err(error)) => Err(error),
+                None => Err(SubstreamError::ConnectionClosed),
+            };
 
-        let value = set.next().await.unwrap();
-        assert_eq!(value.0, peer);
-        assert_eq!(value.1.unwrap(), BytesMut::from(&b"world"[..]));
+            (request, substream)
+        };
+
+        set.push(task(substream));
+        let (value, substream) = set.next().await.unwrap();
+        assert_eq!(value.unwrap(), BytesMut::from(&b"hello"[..]));
+
+        set.push(task(substream));
+        let (value, _substream) = set.next().await.unwrap();
+        assert_eq!(value.unwrap(), BytesMut::from(&b"world"[..]));
 
         assert!(futures::poll!(set.next()).is_pending());
     }
 
     #[tokio::test]
     async fn substream_closed() {
-        let mut set = SubstreamSet::<PeerId, MockSubstream>::new();
+        let mut set = FuturesStream::new();
 
-        let peer = PeerId::random();
         let mut substream = MockSubstream::new();
         substream
             .expect_poll_next()
@@ -936,65 +919,42 @@ mod tests {
             .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"hello"[..])))));
         substream.expect_poll_next().times(1).return_once(|_| Poll::Ready(None));
         substream.expect_poll_next().returning(|_| Poll::Pending);
-        set.insert(peer, substream);
 
-        let value = set.next().await.unwrap();
-        assert_eq!(value.0, peer);
-        assert_eq!(value.1.unwrap(), BytesMut::from(&b"hello"[..]));
+        let task = async |mut substream: MockSubstream| {
+            let request = match substream.next().await {
+                Some(Ok(request)) => Ok(request),
+                Some(Err(error)) => Err(error),
+                None => Err(SubstreamError::ConnectionClosed),
+            };
 
-        match set.next().await {
-            Some((exited_peer, Err(SubstreamError::ConnectionClosed))) => {
-                assert_eq!(peer, exited_peer);
-            }
-            _ => panic!("inavlid event received"),
-        }
-    }
+            (request, substream)
+        };
 
-    #[tokio::test]
-    async fn get_mut_substream() {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .try_init();
+        set.push(task(substream));
 
-        let mut set = SubstreamSet::<PeerId, MockSubstream>::new();
+        let (value, substream) = set.next().await.unwrap();
+        assert_eq!(value.unwrap(), BytesMut::from(&b"hello"[..]));
 
-        let peer = PeerId::random();
-        let mut substream = MockSubstream::new();
-        substream
-            .expect_poll_next()
-            .times(1)
-            .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"hello"[..])))));
-        substream.expect_poll_ready().times(1).return_once(|_| Poll::Ready(Ok(())));
-        substream.expect_start_send().times(1).return_once(|_| Ok(()));
-        substream.expect_poll_flush().times(1).return_once(|_| Poll::Ready(Ok(())));
-        substream
-            .expect_poll_next()
-            .times(1)
-            .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"world"[..])))));
-        substream.expect_poll_next().returning(|_| Poll::Pending);
-        set.insert(peer, substream);
-
-        let value = set.next().await.unwrap();
-        assert_eq!(value.0, peer);
-        assert_eq!(value.1.unwrap(), BytesMut::from(&b"hello"[..]));
-
-        let substream = set.get_mut(&peer).unwrap();
-        substream.send(vec![1, 2, 3, 4].into()).await.unwrap();
-
-        let value = set.next().await.unwrap();
-        assert_eq!(value.0, peer);
-        assert_eq!(value.1.unwrap(), BytesMut::from(&b"world"[..]));
-
-        // try to get non-existent substream
-        assert!(set.get_mut(&PeerId::random()).is_none());
+        set.push(task(substream));
+        let (value, _substream) = set.next().await.unwrap();
+        assert_eq!(value, Err(SubstreamError::ConnectionClosed));
     }
 
     #[tokio::test]
     async fn poll_data_from_two_substreams() {
-        let mut set = SubstreamSet::<PeerId, MockSubstream>::new();
+        let mut set = FuturesStream::new();
+
+        let task = async |mut substream: MockSubstream| {
+            let request = match substream.next().await {
+                Some(Ok(request)) => Ok(request),
+                Some(Err(error)) => Err(error),
+                None => Err(SubstreamError::ConnectionClosed),
+            };
+
+            (request, substream)
+        };
 
         // prepare first substream
-        let peer1 = PeerId::random();
         let mut substream1 = MockSubstream::new();
         substream1
             .expect_poll_next()
@@ -1005,10 +965,9 @@ mod tests {
             .times(1)
             .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"world"[..])))));
         substream1.expect_poll_next().returning(|_| Poll::Pending);
-        set.insert(peer1, substream1);
+        set.push(task(substream1));
 
         // prepare second substream
-        let peer2 = PeerId::random();
         let mut substream2 = MockSubstream::new();
         substream2
             .expect_poll_next()
@@ -1019,32 +978,32 @@ mod tests {
             .times(1)
             .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"huup"[..])))));
         substream2.expect_poll_next().returning(|_| Poll::Pending);
-        set.insert(peer2, substream2);
+        set.push(task(substream2));
 
-        let expected: Vec<Vec<(PeerId, BytesMut)>> = vec![
+        let expected: Vec<Vec<BytesMut>> = vec![
             vec![
-                (peer1, BytesMut::from(&b"hello"[..])),
-                (peer1, BytesMut::from(&b"world"[..])),
-                (peer2, BytesMut::from(&b"siip"[..])),
-                (peer2, BytesMut::from(&b"huup"[..])),
+                BytesMut::from(&b"hello"[..]),
+                BytesMut::from(&b"world"[..]),
+                BytesMut::from(&b"siip"[..]),
+                BytesMut::from(&b"huup"[..]),
             ],
             vec![
-                (peer1, BytesMut::from(&b"hello"[..])),
-                (peer2, BytesMut::from(&b"siip"[..])),
-                (peer1, BytesMut::from(&b"world"[..])),
-                (peer2, BytesMut::from(&b"huup"[..])),
+                BytesMut::from(&b"hello"[..]),
+                BytesMut::from(&b"siip"[..]),
+                BytesMut::from(&b"world"[..]),
+                BytesMut::from(&b"huup"[..]),
             ],
             vec![
-                (peer2, BytesMut::from(&b"siip"[..])),
-                (peer2, BytesMut::from(&b"huup"[..])),
-                (peer1, BytesMut::from(&b"hello"[..])),
-                (peer1, BytesMut::from(&b"world"[..])),
+                BytesMut::from(&b"siip"[..]),
+                BytesMut::from(&b"huup"[..]),
+                BytesMut::from(&b"hello"[..]),
+                BytesMut::from(&b"world"[..]),
             ],
             vec![
-                (peer1, BytesMut::from(&b"hello"[..])),
-                (peer2, BytesMut::from(&b"siip"[..])),
-                (peer2, BytesMut::from(&b"huup"[..])),
-                (peer1, BytesMut::from(&b"world"[..])),
+                BytesMut::from(&b"hello"[..]),
+                BytesMut::from(&b"siip"[..]),
+                BytesMut::from(&b"huup"[..]),
+                BytesMut::from(&b"world"[..]),
             ],
         ];
 
@@ -1052,8 +1011,9 @@ mod tests {
         let mut values = Vec::new();
 
         for _ in 0..4 {
-            let value = set.next().await.unwrap();
-            values.push((value.0, value.1.unwrap()));
+            let (value, substream) = set.next().await.unwrap();
+            values.push(value.unwrap());
+            set.push(task(substream));
         }
 
         let mut correct_found = false;
