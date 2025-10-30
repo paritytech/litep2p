@@ -257,7 +257,7 @@ pub struct TransportManager {
 #[derive(Default)]
 pub struct TransportManagerBuilder {
     keypair: Option<Keypair>,
-    supported_transports: Option<HashSet<SupportedTransport>>,
+    supported_transports: HashSet<SupportedTransport>,
     bandwidth_sink: Option<BandwidthSink>,
     max_parallel_dials: usize,
     connection_limits_config: Option<limits::ConnectionLimitsConfig>,
@@ -268,7 +268,7 @@ impl TransportManagerBuilder {
     pub fn new() -> Self {
         Self {
             keypair: None,
-            supported_transports: None,
+            supported_transports: HashSet::new(),
             bandwidth_sink: None,
             max_parallel_dials: MAX_PARALLEL_DIALS,
             connection_limits_config: None,
@@ -286,7 +286,7 @@ impl TransportManagerBuilder {
         &mut self,
         supported_transports: HashSet<SupportedTransport>,
     ) -> &mut Self {
-        self.supported_transports = Some(supported_transports);
+        self.supported_transports = supported_transports;
         self
     }
 
@@ -325,7 +325,7 @@ impl TransportManagerBuilder {
             local_peer_id,
             peers.clone(),
             cmd_tx,
-            self.supported_transports.clone().unwrap_or_default(),
+            self.supported_transports.clone(),
             listen_addresses.clone(),
             public_addresses.clone(),
         );
