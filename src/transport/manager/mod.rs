@@ -254,6 +254,7 @@ pub struct TransportManager {
     opening_errors: HashMap<ConnectionId, Vec<(Multiaddr, DialError)>>,
 }
 
+#[derive(Default)]
 pub struct TransportManagerBuilder {
     keypair: Option<Keypair>,
     supported_transports: Option<HashSet<SupportedTransport>>,
