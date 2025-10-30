@@ -32,7 +32,7 @@ use crate::{
             peer_state::{ConnectionRecord, PeerState, StateDialResult},
             types::PeerContext,
         },
-        Endpoint, Transport, TransportEvent,
+        Endpoint, Transport, TransportEvent, MAX_PARALLEL_DIALS,
     },
     types::{protocol::ProtocolName, ConnectionId},
     BandwidthSink, PeerId,
@@ -259,7 +259,7 @@ pub struct TransportManagerBuilder {
     keypair: Option<Keypair>,
     supported_transports: Option<HashSet<SupportedTransport>>,
     bandwidth_sink: Option<BandwidthSink>,
-    max_parallel_dials: Option<usize>,
+    max_parallel_dials: usize,
     connection_limits_config: Option<limits::ConnectionLimitsConfig>,
 }
 
@@ -270,7 +270,7 @@ impl TransportManagerBuilder {
             keypair: None,
             supported_transports: None,
             bandwidth_sink: None,
-            max_parallel_dials: None,
+            max_parallel_dials: MAX_PARALLEL_DIALS,
             connection_limits_config: None,
         }
     }
@@ -298,7 +298,7 @@ impl TransportManagerBuilder {
 
     /// Set the maximum parallel dials per peer
     pub fn max_parallel_dials(&mut self, max_parrallel_dials: usize) -> &mut Self {
-        self.max_parallel_dials = Some(max_parrallel_dials);
+        self.max_parallel_dials = max_parrallel_dials;
         self
     }
 
@@ -334,7 +334,7 @@ impl TransportManagerBuilder {
             local_peer_id,
             keypair,
             bandwidth_sink: self.bandwidth_sink.clone().unwrap_or(BandwidthSink::new()),
-            max_parallel_dials: self.max_parallel_dials.unwrap_or(8usize),
+            max_parallel_dials: self.max_parallel_dials,
             protocols: HashMap::new(),
             protocol_names: HashSet::new(),
             listen_addresses,
