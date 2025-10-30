@@ -852,24 +852,27 @@ mod tests {
     use crate::{mock::substream::MockSubstream, utils::futures_stream::FuturesStream};
     use futures::StreamExt;
 
+    async fn get_data_from_substream(
+        mut substream: MockSubstream,
+    ) -> (Result<BytesMut, SubstreamError>, MockSubstream) {
+        let request = match substream.next().await {
+            Some(Ok(request)) => Ok(request),
+            Some(Err(error)) => Err(error),
+            None => Err(SubstreamError::ConnectionClosed),
+        };
+
+        (request, substream)
+    }
+
     #[test]
     fn add_substream() {
         let mut set = FuturesStream::new();
 
         let substream = MockSubstream::new();
-        let task = async |mut substream: MockSubstream| {
-            let request = match substream.next().await {
-                Some(Ok(request)) => Ok(request),
-                Some(Err(error)) => Err(error),
-                None => Err(SubstreamError::ConnectionClosed),
-            };
-
-            (request, substream)
-        };
-        set.push(task(substream));
+        set.push(get_data_from_substream(substream));
 
         let substream = MockSubstream::new();
-        set.push(task(substream));
+        set.push(get_data_from_substream(substream));
     }
 
     #[tokio::test]
@@ -887,21 +890,11 @@ mod tests {
             .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"world"[..])))));
         substream.expect_poll_next().returning(|_| Poll::Pending);
 
-        let task = async |mut substream: MockSubstream| {
-            let request = match substream.next().await {
-                Some(Ok(request)) => Ok(request),
-                Some(Err(error)) => Err(error),
-                None => Err(SubstreamError::ConnectionClosed),
-            };
-
-            (request, substream)
-        };
-
-        set.push(task(substream));
+        set.push(get_data_from_substream(substream));
         let (value, substream) = set.next().await.unwrap();
         assert_eq!(value.unwrap(), BytesMut::from(&b"hello"[..]));
 
-        set.push(task(substream));
+        set.push(get_data_from_substream(substream));
         let (value, _substream) = set.next().await.unwrap();
         assert_eq!(value.unwrap(), BytesMut::from(&b"world"[..]));
 
@@ -920,22 +913,12 @@ mod tests {
         substream.expect_poll_next().times(1).return_once(|_| Poll::Ready(None));
         substream.expect_poll_next().returning(|_| Poll::Pending);
 
-        let task = async |mut substream: MockSubstream| {
-            let request = match substream.next().await {
-                Some(Ok(request)) => Ok(request),
-                Some(Err(error)) => Err(error),
-                None => Err(SubstreamError::ConnectionClosed),
-            };
-
-            (request, substream)
-        };
-
-        set.push(task(substream));
+        set.push(get_data_from_substream(substream));
 
         let (value, substream) = set.next().await.unwrap();
         assert_eq!(value.unwrap(), BytesMut::from(&b"hello"[..]));
 
-        set.push(task(substream));
+        set.push(get_data_from_substream(substream));
         let (value, _substream) = set.next().await.unwrap();
         assert_eq!(value, Err(SubstreamError::ConnectionClosed));
     }
@@ -943,16 +926,6 @@ mod tests {
     #[tokio::test]
     async fn poll_data_from_two_substreams() {
         let mut set = FuturesStream::new();
-
-        let task = async |mut substream: MockSubstream| {
-            let request = match substream.next().await {
-                Some(Ok(request)) => Ok(request),
-                Some(Err(error)) => Err(error),
-                None => Err(SubstreamError::ConnectionClosed),
-            };
-
-            (request, substream)
-        };
 
         // prepare first substream
         let mut substream1 = MockSubstream::new();
@@ -965,7 +938,7 @@ mod tests {
             .times(1)
             .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"world"[..])))));
         substream1.expect_poll_next().returning(|_| Poll::Pending);
-        set.push(task(substream1));
+        set.push(get_data_from_substream(substream1));
 
         // prepare second substream
         let mut substream2 = MockSubstream::new();
@@ -978,7 +951,7 @@ mod tests {
             .times(1)
             .return_once(|_| Poll::Ready(Some(Ok(BytesMut::from(&b"huup"[..])))));
         substream2.expect_poll_next().returning(|_| Poll::Pending);
-        set.push(task(substream2));
+        set.push(get_data_from_substream(substream2));
 
         let expected: Vec<Vec<BytesMut>> = vec![
             vec![
@@ -1013,7 +986,7 @@ mod tests {
         for _ in 0..4 {
             let (value, substream) = set.next().await.unwrap();
             values.push(value.unwrap());
-            set.push(task(substream));
+            set.push(get_data_from_substream(substream));
         }
 
         let mut correct_found = false;
