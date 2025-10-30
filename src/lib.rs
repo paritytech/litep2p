@@ -171,11 +171,11 @@ impl Litep2p {
 
         let supported_transports = Self::supported_transports(&litep2p_config);
         let (mut transport_manager, transport_handle) = TransportManagerBuilder::new()
-            .keypair(litep2p_config.keypair.clone())
-            .supported_transports(supported_transports)
-            .bandwidth_sink(bandwidth_sink.clone())
-            .max_parallel_dials(litep2p_config.max_parallel_dials)
-            .connection_limits_config(litep2p_config.connection_limits)
+            .with_keypair(litep2p_config.keypair.clone())
+            .with_supported_transports(supported_transports)
+            .with_bandwidth_sink(bandwidth_sink.clone())
+            .with_max_parallel_dials(litep2p_config.max_parallel_dials)
+            .with_connection_limits_config(litep2p_config.connection_limits)
             .build();
 
         // add known addresses to `TransportManager`, if any exist

@@ -276,13 +276,13 @@ impl TransportManagerBuilder {
     }
 
     /// Set the keypair
-    pub fn keypair(&mut self, keypair: Keypair) -> &mut Self {
+    pub fn with_keypair(&mut self, keypair: Keypair) -> &mut Self {
         self.keypair = Some(keypair);
         self
     }
 
     /// Set the supported transports
-    pub fn supported_transports(
+    pub fn with_supported_transports(
         &mut self,
         supported_transports: HashSet<SupportedTransport>,
     ) -> &mut Self {
@@ -291,19 +291,19 @@ impl TransportManagerBuilder {
     }
 
     /// Set the bandwidth sink
-    pub fn bandwidth_sink(&mut self, bandwidth_sink: BandwidthSink) -> &mut Self {
+    pub fn with_bandwidth_sink(&mut self, bandwidth_sink: BandwidthSink) -> &mut Self {
         self.bandwidth_sink = Some(bandwidth_sink);
         self
     }
 
     /// Set the maximum parallel dials per peer
-    pub fn max_parallel_dials(&mut self, max_parrallel_dials: usize) -> &mut Self {
+    pub fn with_max_parallel_dials(&mut self, max_parrallel_dials: usize) -> &mut Self {
         self.max_parallel_dials = max_parrallel_dials;
         self
     }
 
     /// Set connection limits configuration.
-    pub fn connection_limits_config(
+    pub fn with_connection_limits_config(
         &mut self,
         connection_limits_config: limits::ConnectionLimitsConfig,
     ) -> &mut Self {
@@ -1663,7 +1663,7 @@ mod tests {
     async fn tried_to_self_using_peer_id() {
         let keypair = Keypair::generate();
         let local_peer_id = PeerId::from_public_key(&keypair.public().into());
-        let (mut manager, _handle) = TransportManagerBuilder::new().keypair(keypair).build();
+        let (mut manager, _handle) = TransportManagerBuilder::new().with_keypair(keypair).build();
 
         assert!(manager.dial(local_peer_id).await.is_err());
     }
@@ -1855,7 +1855,7 @@ mod tests {
         transports.insert(SupportedTransport::Quic);
 
         let (mut _manager, handle) =
-            TransportManagerBuilder::new().supported_transports(transports).build();
+            TransportManagerBuilder::new().with_supported_transports(transports).build();
 
         // ipv6
         let address = Multiaddr::empty()
@@ -3189,7 +3189,7 @@ mod tests {
             .try_init();
 
         let (mut manager, _handle) = TransportManagerBuilder::new()
-            .connection_limits_config(
+            .with_connection_limits_config(
                 ConnectionLimitsConfig::default()
                     .max_incoming_connections(Some(3))
                     .max_outgoing_connections(Some(2)),
@@ -3263,7 +3263,7 @@ mod tests {
             .try_init();
 
         let (mut manager, _handle) = TransportManagerBuilder::new()
-            .connection_limits_config(
+            .with_connection_limits_config(
                 ConnectionLimitsConfig::default()
                     .max_incoming_connections(Some(3))
                     .max_outgoing_connections(Some(2)),
