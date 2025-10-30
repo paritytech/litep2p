@@ -254,13 +254,18 @@ pub struct TransportManager {
     opening_errors: HashMap<ConnectionId, Vec<(Multiaddr, DialError)>>,
 }
 
-#[derive(Default)]
 pub struct TransportManagerBuilder {
     keypair: Option<Keypair>,
     supported_transports: HashSet<SupportedTransport>,
     bandwidth_sink: Option<BandwidthSink>,
     max_parallel_dials: usize,
     connection_limits_config: limits::ConnectionLimitsConfig,
+}
+
+impl Default for TransportManagerBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TransportManagerBuilder {
