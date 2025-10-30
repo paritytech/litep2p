@@ -170,7 +170,7 @@ impl Litep2p {
         );
 
         let supported_transports = Self::supported_transports(&litep2p_config);
-        let (mut transport_manager, transport_handle) = TransportManagerBuilder::new()
+        let mut transport_manager = TransportManagerBuilder::new()
             .with_keypair(litep2p_config.keypair.clone())
             .with_supported_transports(supported_transports)
             .with_bandwidth_sink(bandwidth_sink.clone())
@@ -178,6 +178,7 @@ impl Litep2p {
             .with_connection_limits_config(litep2p_config.connection_limits)
             .build();
 
+        let transport_handle = transport_manager.transport_manager_handle.clone();
         // add known addresses to `TransportManager`, if any exist
         if !litep2p_config.known_addresses.is_empty() {
             for (peer, addresses) in litep2p_config.known_addresses {
