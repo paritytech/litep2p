@@ -260,7 +260,7 @@ pub struct TransportManagerBuilder {
     supported_transports: HashSet<SupportedTransport>,
     bandwidth_sink: Option<BandwidthSink>,
     max_parallel_dials: usize,
-    connection_limits_config: Option<limits::ConnectionLimitsConfig>,
+    connection_limits_config: limits::ConnectionLimitsConfig,
 }
 
 impl TransportManagerBuilder {
@@ -271,7 +271,7 @@ impl TransportManagerBuilder {
             supported_transports: HashSet::new(),
             bandwidth_sink: None,
             max_parallel_dials: MAX_PARALLEL_DIALS,
-            connection_limits_config: None,
+            connection_limits_config: limits::ConnectionLimitsConfig::default(),
         }
     }
 
@@ -307,7 +307,7 @@ impl TransportManagerBuilder {
         &mut self,
         connection_limits_config: limits::ConnectionLimitsConfig,
     ) -> &mut Self {
-        self.connection_limits_config = Some(connection_limits_config);
+        self.connection_limits_config = connection_limits_config;
         self
     }
 
@@ -348,9 +348,7 @@ impl TransportManagerBuilder {
             cmd_rx,
             event_tx,
             pending_connections: HashMap::new(),
-            connection_limits: limits::ConnectionLimits::new(
-                self.connection_limits_config.clone().unwrap_or_default(),
-            ),
+            connection_limits: limits::ConnectionLimits::new(self.connection_limits_config.clone()),
             opening_errors: HashMap::new(),
         };
 
