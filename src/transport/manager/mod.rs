@@ -291,37 +291,37 @@ impl TransportManagerBuilder {
     }
 
     /// Set the keypair
-    pub fn with_keypair(&mut self, keypair: Keypair) -> &mut Self {
+    pub fn with_keypair(mut self, keypair: Keypair) -> Self {
         self.keypair = Some(keypair);
         self
     }
 
     /// Set the supported transports
     pub fn with_supported_transports(
-        &mut self,
+        mut self,
         supported_transports: HashSet<SupportedTransport>,
-    ) -> &mut Self {
+    ) -> Self {
         self.supported_transports = supported_transports;
         self
     }
 
     /// Set the bandwidth sink
-    pub fn with_bandwidth_sink(&mut self, bandwidth_sink: BandwidthSink) -> &mut Self {
+    pub fn with_bandwidth_sink(mut self, bandwidth_sink: BandwidthSink) -> Self {
         self.bandwidth_sink = Some(bandwidth_sink);
         self
     }
 
     /// Set the maximum parallel dials per peer
-    pub fn with_max_parallel_dials(&mut self, max_parrallel_dials: usize) -> &mut Self {
+    pub fn with_max_parallel_dials(mut self, max_parrallel_dials: usize) -> Self {
         self.max_parallel_dials = max_parrallel_dials;
         self
     }
 
     /// Set connection limits configuration.
     pub fn with_connection_limits_config(
-        &mut self,
+        mut self,
         connection_limits_config: limits::ConnectionLimitsConfig,
-    ) -> &mut Self {
+    ) -> Self {
         self.connection_limits_config = connection_limits_config;
         self
     }
@@ -340,7 +340,7 @@ impl TransportManagerBuilder {
             local_peer_id,
             peers.clone(),
             cmd_tx,
-            self.supported_transports.clone(),
+            self.supported_transports,
             listen_addresses.clone(),
             public_addresses.clone(),
         );
@@ -358,12 +358,12 @@ impl TransportManagerBuilder {
             next_substream_id: Arc::new(AtomicUsize::new(0usize)),
             transports: TransportContext::new(),
             peers,
-            transport_manager_handle: handle.clone(),
+            transport_manager_handle: handle,
             event_rx,
             cmd_rx,
             event_tx,
             pending_connections: HashMap::new(),
-            connection_limits: limits::ConnectionLimits::new(self.connection_limits_config.clone()),
+            connection_limits: limits::ConnectionLimits::new(self.connection_limits_config),
             opening_errors: HashMap::new(),
         }
     }
