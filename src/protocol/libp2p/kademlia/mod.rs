@@ -1280,7 +1280,7 @@ mod tests {
             ProtocolName::from("/kad/1"),
             Vec::new(),
             Default::default(),
-            handle,
+            manager.transport_manager_handle(),
             KEEP_ALIVE_TIMEOUT,
         );
         let (event_tx, event_rx) = channel(64);

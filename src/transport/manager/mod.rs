@@ -233,7 +233,7 @@ pub struct TransportManager {
     peers: Arc<RwLock<HashMap<PeerId, PeerContext>>>,
 
     /// Handle to [`crate::transport::manager::TransportManager`].
-    pub transport_manager_handle: TransportManagerHandle,
+    transport_manager_handle: TransportManagerHandle,
 
     /// RX channel for receiving events from installed transports.
     event_rx: Receiver<TransportManagerEvent>,
@@ -379,6 +379,11 @@ impl TransportManager {
         ConnectionId::from(connection_id)
     }
 
+    /// Get the transport manager handle
+    pub fn transport_manager_handle(&self) -> TransportManagerHandle {
+        self.transport_manager_handle.clone()
+    }
+
     /// Register protocol to the [`crate::transport::manager::TransportManager`].
     ///
     /// This allocates new context for the protocol and returns a handle
@@ -403,7 +408,7 @@ impl TransportManager {
             protocol.clone(),
             fallback_names.clone(),
             self.next_substream_id.clone(),
-            self.transport_manager_handle.clone(),
+            self.transport_manager_handle(),
             keep_alive_timeout,
         );
 
