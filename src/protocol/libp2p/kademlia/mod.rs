@@ -1272,7 +1272,7 @@ mod tests {
     }
 
     fn make_kademlia() -> (Kademlia, Context, TransportManager) {
-        let (manager, handle) = TransportManagerBuilder::new().build();
+        let manager = TransportManagerBuilder::new().build();
 
         let peer = PeerId::random();
         let (transport_service, _tx) = TransportService::new(

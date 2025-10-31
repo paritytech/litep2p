@@ -335,7 +335,7 @@ impl TransportManagerBuilder {
             public_addresses.clone(),
         );
 
-        let transport_manager = TransportManager {
+        TransportManager {
             local_peer_id,
             keypair,
             bandwidth_sink: self.bandwidth_sink.clone().unwrap_or(BandwidthSink::new()),
@@ -355,9 +355,7 @@ impl TransportManagerBuilder {
             pending_connections: HashMap::new(),
             connection_limits: limits::ConnectionLimits::new(self.connection_limits_config.clone()),
             opening_errors: HashMap::new(),
-        };
-
-        transport_manager
+        }
     }
 }
 

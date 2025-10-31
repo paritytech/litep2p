@@ -48,7 +48,7 @@ fn make_notification_protocol() -> (
     TransportManager,
     Sender<InnerTransportEvent>,
 ) {
-    let (manager, handle) = TransportManagerBuilder::new().build();
+    let manager = TransportManagerBuilder::new().build();
 
     let peer = PeerId::random();
     let (transport_service, tx) = TransportService::new(
@@ -56,7 +56,7 @@ fn make_notification_protocol() -> (
         ProtocolName::from("/notif/1"),
         Vec::new(),
         std::sync::Arc::new(Default::default()),
-        handle,
+        manager.transport_manager_handle(),
         KEEP_ALIVE_TIMEOUT,
     );
     let (config, handle) = NotificationConfig::new(

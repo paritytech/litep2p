@@ -994,7 +994,7 @@ mod tests {
 
     #[tokio::test]
     async fn dial_error_reported_for_outbound_connections() {
-        let (mut manager, _handle) = TransportManagerBuilder::new().build();
+        let mut manager = TransportManagerBuilder::new().build();
         let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
         manager.register_transport(
