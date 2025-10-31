@@ -68,7 +68,7 @@ const LOG_TARGET: &str = "litep2p::notification";
 /// Connection state.
 ///
 /// Used to track transport level connectivity state when there is a pending validation.
-/// See [`PeerState::PendingValidation.`] for more details.
+/// See [`PeerState::ValidationPending.`] for more details.
 #[derive(Debug, PartialEq, Eq)]
 enum ConnectionState {
     /// There is a active, transport-level connection open to the peer.
