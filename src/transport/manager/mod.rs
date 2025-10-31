@@ -327,8 +327,8 @@ impl TransportManagerBuilder {
     }
 
     /// Build [`TransportManager`].
-    pub fn build(&mut self) -> TransportManager {
-        let keypair = self.keypair.clone().unwrap_or(Keypair::generate());
+    pub fn build(self) -> TransportManager {
+        let keypair = self.keypair.unwrap_or_else(Keypair::generate);
         let local_peer_id = PeerId::from_public_key(&keypair.public().into());
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (cmd_tx, cmd_rx) = channel(256);
@@ -348,7 +348,7 @@ impl TransportManagerBuilder {
         TransportManager {
             local_peer_id,
             keypair,
-            bandwidth_sink: self.bandwidth_sink.clone().unwrap_or(BandwidthSink::new()),
+            bandwidth_sink: self.bandwidth_sink.unwrap_or_else(BandwidthSink::new),
             max_parallel_dials: self.max_parallel_dials,
             protocols: HashMap::new(),
             protocol_names: HashSet::new(),
