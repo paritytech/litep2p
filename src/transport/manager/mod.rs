@@ -254,11 +254,21 @@ pub struct TransportManager {
     opening_errors: HashMap<ConnectionId, Vec<(Multiaddr, DialError)>>,
 }
 
+/// Builder for [`crate::transport::manager::TransportManager`].
 pub struct TransportManagerBuilder {
+    /// Keypair.
     keypair: Option<Keypair>,
+
+    /// Supported transports.
     supported_transports: HashSet<SupportedTransport>,
+
+    /// Bandwidth sink.
     bandwidth_sink: Option<BandwidthSink>,
+
+    /// Maximum parallel dial attempts per peer.
     max_parallel_dials: usize,
+
+    /// Connection limits config.
     connection_limits_config: limits::ConnectionLimitsConfig,
 }
 
