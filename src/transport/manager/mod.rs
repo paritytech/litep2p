@@ -32,7 +32,7 @@ use crate::{
             peer_state::{ConnectionRecord, PeerState, StateDialResult},
             types::PeerContext,
         },
-        Endpoint, Transport, TransportEvent,
+        Endpoint, Transport, TransportEvent, MAX_PARALLEL_DIALS,
     },
     types::{protocol::ProtocolName, ConnectionId},
     BandwidthSink, PeerId,
@@ -254,57 +254,122 @@ pub struct TransportManager {
     opening_errors: HashMap<ConnectionId, Vec<(Multiaddr, DialError)>>,
 }
 
-impl TransportManager {
-    /// Create new [`crate::transport::manager::TransportManager`].
-    // TODO: https://github.com/paritytech/litep2p/issues/343 don't return handle here
-    pub fn new(
-        keypair: Keypair,
+/// Builder for [`crate::transport::manager::TransportManager`].
+pub struct TransportManagerBuilder {
+    /// Keypair.
+    keypair: Option<Keypair>,
+
+    /// Supported transports.
+    supported_transports: HashSet<SupportedTransport>,
+
+    /// Bandwidth sink.
+    bandwidth_sink: Option<BandwidthSink>,
+
+    /// Maximum parallel dial attempts per peer.
+    max_parallel_dials: usize,
+
+    /// Connection limits config.
+    connection_limits_config: limits::ConnectionLimitsConfig,
+}
+
+impl Default for TransportManagerBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TransportManagerBuilder {
+    /// Create new [`crate::transport::manager::TransportManagerBuilder`].
+    pub fn new() -> Self {
+        Self {
+            keypair: None,
+            supported_transports: HashSet::new(),
+            bandwidth_sink: None,
+            max_parallel_dials: MAX_PARALLEL_DIALS,
+            connection_limits_config: limits::ConnectionLimitsConfig::default(),
+        }
+    }
+
+    /// Set the keypair
+    pub fn with_keypair(mut self, keypair: Keypair) -> Self {
+        self.keypair = Some(keypair);
+        self
+    }
+
+    /// Set the supported transports
+    pub fn with_supported_transports(
+        mut self,
         supported_transports: HashSet<SupportedTransport>,
-        bandwidth_sink: BandwidthSink,
-        max_parallel_dials: usize,
+    ) -> Self {
+        self.supported_transports = supported_transports;
+        self
+    }
+
+    /// Set the bandwidth sink
+    pub fn with_bandwidth_sink(mut self, bandwidth_sink: BandwidthSink) -> Self {
+        self.bandwidth_sink = Some(bandwidth_sink);
+        self
+    }
+
+    /// Set the maximum parallel dials per peer
+    pub fn with_max_parallel_dials(mut self, max_parrallel_dials: usize) -> Self {
+        self.max_parallel_dials = max_parrallel_dials;
+        self
+    }
+
+    /// Set connection limits configuration.
+    pub fn with_connection_limits_config(
+        mut self,
         connection_limits_config: limits::ConnectionLimitsConfig,
-    ) -> (Self, TransportManagerHandle) {
+    ) -> Self {
+        self.connection_limits_config = connection_limits_config;
+        self
+    }
+
+    /// Build [`TransportManager`].
+    pub fn build(self) -> TransportManager {
+        let keypair = self.keypair.unwrap_or_else(Keypair::generate);
         let local_peer_id = PeerId::from_public_key(&keypair.public().into());
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let (cmd_tx, cmd_rx) = channel(256);
         let (event_tx, event_rx) = channel(256);
         let listen_addresses = Arc::new(RwLock::new(HashSet::new()));
         let public_addresses = PublicAddresses::new(local_peer_id);
+
         let handle = TransportManagerHandle::new(
             local_peer_id,
             peers.clone(),
             cmd_tx,
-            supported_transports,
+            self.supported_transports,
             listen_addresses.clone(),
             public_addresses.clone(),
         );
 
-        (
-            Self {
-                peers,
-                cmd_rx,
-                keypair,
-                event_tx,
-                event_rx,
-                local_peer_id,
-                bandwidth_sink,
-                listen_addresses,
-                public_addresses,
-                max_parallel_dials,
-                protocols: HashMap::new(),
-                transports: TransportContext::new(),
-                protocol_names: HashSet::new(),
-                transport_manager_handle: handle.clone(),
-                pending_connections: HashMap::new(),
-                next_substream_id: Arc::new(AtomicUsize::new(0usize)),
-                next_connection_id: Arc::new(AtomicUsize::new(0usize)),
-                connection_limits: limits::ConnectionLimits::new(connection_limits_config),
-                opening_errors: HashMap::new(),
-            },
-            handle,
-        )
+        TransportManager {
+            local_peer_id,
+            keypair,
+            bandwidth_sink: self.bandwidth_sink.unwrap_or_else(BandwidthSink::new),
+            max_parallel_dials: self.max_parallel_dials,
+            protocols: HashMap::new(),
+            protocol_names: HashSet::new(),
+            listen_addresses,
+            public_addresses,
+            next_connection_id: Arc::new(AtomicUsize::new(0usize)),
+            next_substream_id: Arc::new(AtomicUsize::new(0usize)),
+            transports: TransportContext::new(),
+            peers,
+            transport_manager_handle: handle,
+            event_rx,
+            cmd_rx,
+            event_tx,
+            pending_connections: HashMap::new(),
+            connection_limits: limits::ConnectionLimits::new(self.connection_limits_config),
+            opening_errors: HashMap::new(),
+        }
     }
+}
 
+impl TransportManager {
     /// Get iterator to installed protocols.
     pub fn protocols(&self) -> impl Iterator<Item = &ProtocolName> {
         self.protocols.keys()
@@ -320,6 +385,11 @@ impl TransportManager {
         let connection_id = self.next_connection_id.fetch_add(1usize, Ordering::Relaxed);
 
         ConnectionId::from(connection_id)
+    }
+
+    /// Get the transport manager handle
+    pub fn transport_manager_handle(&self) -> TransportManagerHandle {
+        self.transport_manager_handle.clone()
     }
 
     /// Register protocol to the [`crate::transport::manager::TransportManager`].
@@ -346,7 +416,7 @@ impl TransportManager {
             protocol.clone(),
             fallback_names.clone(),
             self.next_substream_id.clone(),
-            self.transport_manager_handle.clone(),
+            self.transport_manager_handle(),
             keep_alive_timeout,
         );
 
@@ -1532,14 +1602,7 @@ mod tests {
     #[should_panic]
     #[cfg(debug_assertions)]
     fn duplicate_protocol() {
-        let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            sink,
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1559,14 +1622,7 @@ mod tests {
     #[should_panic]
     #[cfg(debug_assertions)]
     fn fallback_protocol_as_duplicate_main_protocol() {
-        let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            sink,
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1589,14 +1645,7 @@ mod tests {
     #[should_panic]
     #[cfg(debug_assertions)]
     fn duplicate_fallback_protocol() {
-        let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            sink,
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
 
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1622,14 +1671,7 @@ mod tests {
     #[should_panic]
     #[cfg(debug_assertions)]
     fn duplicate_transport() {
-        let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            sink,
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
 
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
@@ -1639,27 +1681,14 @@ mod tests {
     async fn tried_to_self_using_peer_id() {
         let keypair = Keypair::generate();
         let local_peer_id = PeerId::from_public_key(&keypair.public().into());
-        let sink = BandwidthSink::new();
-        let (mut manager, _handle) = TransportManager::new(
-            keypair,
-            HashSet::new(),
-            sink,
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().with_keypair(keypair).build();
 
         assert!(manager.dial(local_peer_id).await.is_err());
     }
 
     #[tokio::test]
     async fn try_to_dial_over_disabled_transport() {
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -1683,13 +1712,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
@@ -1745,13 +1768,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -1776,13 +1793,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -1821,13 +1832,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -1840,13 +1845,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -1873,13 +1872,9 @@ mod tests {
         #[cfg(feature = "quic")]
         transports.insert(SupportedTransport::Quic);
 
-        let (_manager, handle) = TransportManager::new(
-            Keypair::generate(),
-            transports,
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let manager = TransportManagerBuilder::new().with_supported_transports(transports).build();
+
+        let handle = manager.transport_manager_handle;
 
         // ipv6
         let address = Multiaddr::empty()
@@ -1935,13 +1930,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -2002,13 +1991,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -2089,13 +2072,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let _handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -2174,13 +2151,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
@@ -2283,13 +2254,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
@@ -2379,13 +2344,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
@@ -2488,13 +2447,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
@@ -2592,13 +2545,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
@@ -2736,13 +2683,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
 
         manager.on_dial_failure(ConnectionId::random()).unwrap();
     }
@@ -2755,13 +2696,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         manager.on_connection_closed(PeerId::random(), ConnectionId::random()).unwrap();
     }
 
@@ -2773,13 +2708,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         manager
             .on_connection_opened(
                 SupportedTransport::Tcp,
@@ -2797,13 +2726,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let connection_id = ConnectionId::random();
         let peer = PeerId::random();
 
@@ -2821,13 +2744,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let connection_id = ConnectionId::random();
         let peer = PeerId::random();
 
@@ -2848,13 +2765,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
 
         manager
             .on_open_failure(SupportedTransport::Tcp, ConnectionId::random())
@@ -2869,13 +2780,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let connection_id = ConnectionId::random();
         let peer = PeerId::random();
 
@@ -2889,26 +2794,14 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
 
         assert!(manager.next().await.is_none());
     }
 
     #[tokio::test]
     async fn dial_already_connected_peer() {
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
 
         let peer = {
             let peer = PeerId::random();
@@ -2950,13 +2843,7 @@ mod tests {
 
     #[tokio::test]
     async fn peer_already_being_dialed() {
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
 
         let peer = {
             let peer = PeerId::random();
@@ -3013,13 +2900,7 @@ mod tests {
 
     #[tokio::test]
     async fn pending_connection_for_disconnected_peer() {
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
 
         let peer = {
             let peer = PeerId::random();
@@ -3056,13 +2937,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
 
         // transport doesn't start with ip/dns
         {
@@ -3122,13 +2997,7 @@ mod tests {
 
     #[tokio::test]
     async fn dial_address_peer_id_missing() {
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
 
         async fn call_manager(manager: &mut TransportManager, address: Multiaddr) {
             match manager.dial_address(address).await {
@@ -3176,13 +3045,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
@@ -3262,13 +3125,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
@@ -3350,15 +3207,13 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default()
-                .max_incoming_connections(Some(3))
-                .max_outgoing_connections(Some(2)),
-        );
+        let mut manager = TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                ConnectionLimitsConfig::default()
+                    .max_incoming_connections(Some(3))
+                    .max_outgoing_connections(Some(2)),
+            )
+            .build();
         // The connection limit is agnostic of the underlying transports.
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -3426,15 +3281,13 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default()
-                .max_incoming_connections(Some(3))
-                .max_outgoing_connections(Some(2)),
-        );
+        let mut manager = TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                ConnectionLimitsConfig::default()
+                    .max_incoming_connections(Some(3))
+                    .max_outgoing_connections(Some(2)),
+            )
+            .build();
         // The connection limit is agnostic of the underlying transports.
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
@@ -3515,13 +3368,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         // Random peer ID.
@@ -3568,13 +3415,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         // Random peer ID.
@@ -3720,13 +3561,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let peer = PeerId::random();
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
@@ -3806,13 +3641,7 @@ mod tests {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let peer = PeerId::random();
         let connection_id = ConnectionId::from(0);
 
