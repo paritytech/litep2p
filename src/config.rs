@@ -70,7 +70,7 @@ impl From<Role> for crate::yamux::Mode {
 
 /// Configuration builder for [`Litep2p`](`crate::Litep2p`).
 pub struct ConfigBuilder {
-    // TCP transport configuration.
+    /// TCP transport configuration.
     tcp: Option<TcpConfig>,
 
     /// QUIC transport config.
