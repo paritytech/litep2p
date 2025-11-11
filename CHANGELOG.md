@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2025-10-28
+
+This release ensures that polling the yamux controller after an error does not lead to unexpected behavior.
+
+### Fixed
+
+- yamux/control: Ensure poll next inbound is not called after errors  ([#445](https://github.com/paritytech/litep2p/pull/445))
+
 ## [0.11.0] - 2025-10-20
 
 This release adds support for RSA remote network identity keys gated behind `rsa` feature. It also fixes mDNS initialization in the environment with no multicast addresses available and Bitswap compatibility with kubo IPFS client >= v0.37.0.
