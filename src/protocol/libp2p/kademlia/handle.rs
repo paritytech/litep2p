@@ -41,7 +41,7 @@ use std::{
 ///
 /// Quorum defines how many peers must be successfully contacted
 /// in order for the query to be considered successful.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub enum Quorum {
     /// All peers must be successfully contacted.
@@ -156,6 +156,9 @@ pub enum KademliaCommand {
         /// Provided key.
         key: RecordKey,
 
+        /// [`Quorum`] for the query.
+        quorum: Quorum,
+
         /// Query ID for the query.
         query_id: QueryId,
     },
@@ -238,6 +241,15 @@ pub enum KademliaEvent {
 
         /// Record key.
         key: RecordKey,
+    },
+
+    /// `ADD_PROVIDER` query succeeded.
+    AddProviderSuccess {
+        /// Query ID.
+        query_id: QueryId,
+
+        /// Provided key.
+        provided_key: RecordKey,
     },
 
     /// Query failed.
@@ -373,9 +385,16 @@ impl KademliaHandle {
     ///
     /// Register the local peer ID & its `public_addresses` as a provider for a given `key`.
     /// Returns [`Err`] only if `Kademlia` is terminating.
-    pub async fn start_providing(&mut self, key: RecordKey) -> QueryId {
+    pub async fn start_providing(&mut self, key: RecordKey, quorum: Quorum) -> QueryId {
         let query_id = self.next_query_id();
-        let _ = self.cmd_tx.send(KademliaCommand::StartProviding { key, query_id }).await;
+        let _ = self
+            .cmd_tx
+            .send(KademliaCommand::StartProviding {
+                key,
+                quorum,
+                query_id,
+            })
+            .await;
 
         query_id
     }

@@ -29,6 +29,7 @@ use crate::{
         },
         record::{ContentProvider, Key, ProviderRecord, Record},
         types::Key as KademliaKey,
+        Quorum,
     },
     utils::futures_stream::FuturesStream,
     PeerId,
@@ -49,6 +50,7 @@ pub enum MemoryStoreAction {
     RefreshProvider {
         provided_key: Key,
         provider: ContentProvider,
+        quorum: Quorum,
     },
 }
 
@@ -63,7 +65,7 @@ pub struct MemoryStore {
     /// Provider records.
     provider_keys: HashMap<Key, Vec<ProviderRecord>>,
     /// Local providers.
-    local_providers: HashMap<Key, ContentProvider>,
+    local_providers: HashMap<Key, (ContentProvider, Quorum)>,
     /// Futures to signal it's time to republish a local provider.
     pending_provider_refresh: FuturesStream<BoxFuture<'static, Key>>,
 }
@@ -187,24 +189,9 @@ impl MemoryStore {
     /// the furthest already inserted provider. The furthest provider is then discarded.
     ///
     /// Returns `true` if the provider was added, `false` otherwise.
+    ///
+    /// `quorum` is only relevant for local providers.
     pub fn put_provider(&mut self, key: Key, provider: ContentProvider) -> bool {
-        // Helper to schedule local provider refresh.
-        let mut schedule_local_provider_refresh = |provider_record: ProviderRecord| {
-            let key = provider_record.key.clone();
-            let refresh_interval = self.config.provider_refresh_interval;
-            self.local_providers.insert(
-                key.clone(),
-                ContentProvider {
-                    peer: provider_record.provider,
-                    addresses: provider_record.addresses,
-                },
-            );
-            self.pending_provider_refresh.push(Box::pin(async move {
-                tokio::time::sleep(refresh_interval).await;
-                key
-            }));
-        };
-
         // Make sure we have no more than `max_provider_addresses`.
         let provider_record = {
             let mut record = ProviderRecord {
@@ -222,10 +209,6 @@ impl MemoryStore {
         match self.provider_keys.entry(provider_record.key.clone()) {
             Entry::Vacant(entry) =>
                 if can_insert_new_key {
-                    if provider_record.provider == self.local_peer_id {
-                        schedule_local_provider_refresh(provider_record.clone());
-                    }
-
                     entry.insert(vec![provider_record]);
 
                     true
@@ -249,9 +232,6 @@ impl MemoryStore {
 
                 match provider_position {
                     Ok(i) => {
-                        if provider_record.provider == self.local_peer_id {
-                            schedule_local_provider_refresh(provider_record.clone());
-                        }
                         // Update the provider in place.
                         providers[i] = provider_record.clone();
 
@@ -275,10 +255,6 @@ impl MemoryStore {
                                 providers.pop();
                             }
 
-                            if provider_record.provider == self.local_peer_id {
-                                schedule_local_provider_refresh(provider_record.clone());
-                            }
-
                             providers.insert(i, provider_record.clone());
 
                             true
@@ -286,6 +262,31 @@ impl MemoryStore {
                     }
                 }
             }
+        }
+    }
+
+    /// Try to add ourself as a provider for `key`.
+    ///
+    /// Returns `true` if the provider was added, `false` otherwise.
+    pub fn put_local_provider(&mut self, key: Key, quorum: Quorum) -> bool {
+        let provider = ContentProvider {
+            peer: self.local_peer_id,
+            // For local providers addresses are populated when replying to `GET_PROVIDERS`
+            // requests.
+            addresses: vec![],
+        };
+
+        if self.put_provider(key.clone(), provider.clone()) {
+            let refresh_interval = self.config.provider_refresh_interval;
+            self.local_providers.insert(key.clone(), (provider, quorum));
+            self.pending_provider_refresh.push(Box::pin(async move {
+                tokio::time::sleep(refresh_interval).await;
+                key
+            }));
+
+            true
+        } else {
+            false
         }
     }
 
@@ -332,7 +333,7 @@ impl MemoryStore {
     pub async fn next_action(&mut self) -> Option<MemoryStoreAction> {
         // [`FuturesStream`] never terminates, so `and_then()` below is always triggered.
         self.pending_provider_refresh.next().await.and_then(|key| {
-            if let Some(provider) = self.local_providers.get(&key).cloned() {
+            if let Some((provider, quorum)) = self.local_providers.get(&key).cloned() {
                 tracing::trace!(
                     target: LOG_TARGET,
                     ?key,
@@ -342,6 +343,7 @@ impl MemoryStore {
                 Some(MemoryStoreAction::RefreshProvider {
                     provided_key: key,
                     provider,
+                    quorum,
                 })
             } else {
                 tracing::trace!(
@@ -851,15 +853,19 @@ mod tests {
         let key = Key::from(vec![1, 2, 3]);
         let local_provider = ContentProvider {
             peer: local_peer_id,
-            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16))],
+            addresses: vec![],
         };
+        let quorum = Quorum::All;
 
         assert!(store.local_providers.is_empty());
         assert_eq!(store.pending_provider_refresh.len(), 0);
 
-        assert!(store.put_provider(key.clone(), local_provider.clone()));
+        assert!(store.put_local_provider(key.clone(), quorum));
 
-        assert_eq!(store.local_providers.get(&key), Some(&local_provider),);
+        assert_eq!(
+            store.local_providers.get(&key),
+            Some(&(local_provider, quorum)),
+        );
         assert_eq!(store.pending_provider_refresh.len(), 1);
     }
 
@@ -878,21 +884,25 @@ mod tests {
 
         let local_provider = ContentProvider {
             peer: local_peer_id,
-            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16))],
+            addresses: vec![],
         };
+        let quorum = Quorum::N(5.try_into().unwrap());
 
         assert!(store.local_providers.is_empty());
         assert_eq!(store.pending_provider_refresh.len(), 0);
 
         assert!(store.put_provider(key.clone(), remote_provider.clone()));
-        assert!(store.put_provider(key.clone(), local_provider.clone()));
+        assert!(store.put_local_provider(key.clone(), quorum));
 
         let got_providers = store.get_providers(&key);
         assert_eq!(got_providers.len(), 2);
         assert!(got_providers.contains(&remote_provider));
         assert!(got_providers.contains(&local_provider));
 
-        assert_eq!(store.local_providers.get(&key), Some(&local_provider),);
+        assert_eq!(
+            store.local_providers.get(&key),
+            Some(&(local_provider, quorum))
+        );
         assert_eq!(store.pending_provider_refresh.len(), 1);
     }
 
@@ -904,14 +914,18 @@ mod tests {
         let key = Key::from(vec![1, 2, 3]);
         let local_provider = ContentProvider {
             peer: local_peer_id,
-            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16))],
+            addresses: vec![],
         };
+        let quorum = Quorum::One;
 
         assert!(store.local_providers.is_empty());
 
-        assert!(store.put_provider(key.clone(), local_provider.clone()));
+        assert!(store.put_local_provider(key.clone(), quorum));
 
-        assert_eq!(store.local_providers.get(&key), Some(&local_provider),);
+        assert_eq!(
+            store.local_providers.get(&key),
+            Some(&(local_provider, quorum))
+        );
 
         store.remove_local_provider(key.clone());
 
@@ -934,18 +948,22 @@ mod tests {
 
         let local_provider = ContentProvider {
             peer: local_peer_id,
-            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16))],
+            addresses: vec![],
         };
+        let quorum = Quorum::One;
 
         assert!(store.put_provider(key.clone(), remote_provider.clone()));
-        assert!(store.put_provider(key.clone(), local_provider.clone()));
+        assert!(store.put_local_provider(key.clone(), quorum));
 
         let got_providers = store.get_providers(&key);
         assert_eq!(got_providers.len(), 2);
         assert!(got_providers.contains(&remote_provider));
         assert!(got_providers.contains(&local_provider));
 
-        assert_eq!(store.local_providers.get(&key), Some(&local_provider),);
+        assert_eq!(
+            store.local_providers.get(&key),
+            Some(&(local_provider, quorum))
+        );
 
         store.remove_local_provider(key.clone());
 
@@ -967,13 +985,17 @@ mod tests {
         let key = Key::from(vec![1, 2, 3]);
         let local_provider = ContentProvider {
             peer: local_peer_id,
-            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16))],
+            addresses: vec![],
         };
+        let quorum = Quorum::One;
 
-        assert!(store.put_provider(key.clone(), local_provider.clone()));
+        assert!(store.put_local_provider(key.clone(), quorum));
 
         assert_eq!(store.get_providers(&key), vec![local_provider.clone()]);
-        assert_eq!(store.local_providers.get(&key), Some(&local_provider));
+        assert_eq!(
+            store.local_providers.get(&key),
+            Some(&(local_provider.clone(), quorum))
+        );
 
         // No actions are instantly generated.
         assert!(matches!(
@@ -987,7 +1009,8 @@ mod tests {
                 .unwrap(),
             Some(MemoryStoreAction::RefreshProvider {
                 provided_key: key,
-                provider: local_provider
+                provider: local_provider,
+                quorum,
             }),
         );
     }
@@ -1013,18 +1036,22 @@ mod tests {
 
         let local_provider = ContentProvider {
             peer: local_peer_id,
-            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16))],
+            addresses: vec![],
         };
+        let quorum = Quorum::One;
 
         assert!(store.put_provider(key.clone(), remote_provider.clone()));
-        assert!(store.put_provider(key.clone(), local_provider.clone()));
+        assert!(store.put_local_provider(key.clone(), quorum));
 
         let got_providers = store.get_providers(&key);
         assert_eq!(got_providers.len(), 2);
         assert!(got_providers.contains(&remote_provider));
         assert!(got_providers.contains(&local_provider));
 
-        assert_eq!(store.local_providers.get(&key), Some(&local_provider));
+        assert_eq!(
+            store.local_providers.get(&key),
+            Some(&(local_provider.clone(), quorum))
+        );
 
         // No actions are instantly generated.
         assert!(matches!(
@@ -1038,7 +1065,8 @@ mod tests {
                 .unwrap(),
             Some(MemoryStoreAction::RefreshProvider {
                 provided_key: key,
-                provider: local_provider
+                provider: local_provider,
+                quorum,
             }),
         );
     }
@@ -1057,13 +1085,17 @@ mod tests {
         let key = Key::from(vec![1, 2, 3]);
         let local_provider = ContentProvider {
             peer: local_peer_id,
-            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10001u16))],
+            addresses: vec![],
         };
+        let quorum = Quorum::One;
 
-        assert!(store.put_provider(key.clone(), local_provider.clone()));
+        assert!(store.put_local_provider(key.clone(), quorum));
 
         assert_eq!(store.get_providers(&key), vec![local_provider.clone()]);
-        assert_eq!(store.local_providers.get(&key), Some(&local_provider));
+        assert_eq!(
+            store.local_providers.get(&key),
+            Some(&(local_provider, quorum))
+        );
 
         store.remove_local_provider(key);
 

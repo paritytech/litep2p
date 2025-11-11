@@ -106,8 +106,17 @@ enum QueryType {
         /// Provider record that need to be stored.
         provider: ContentProvider,
 
+        /// [`Quorum`] that needs to be reached for the query to succeed.
+        quorum: Quorum,
+
         /// Context for the `FIND_NODE` query.
         context: FindNodeContext<RecordKey>,
+    },
+
+    /// `ADD_PROVIDER` message sending phase.
+    AddProviderToFoundNodes {
+        /// Context for tracking `ADD_PROVIDER` requests.
+        context: PutToTargetPeersContext,
     },
 
     /// `GET_PROVIDERS` query.
@@ -181,6 +190,18 @@ pub enum QueryAction {
 
         /// Peers for whom the `ADD_PROVIDER` must be sent to.
         peers: Vec<KademliaPeer>,
+
+        /// [`Quorum`] that needs to be reached for the query to succeed.
+        quorum: Quorum,
+    },
+
+    /// `ADD_PROVIDER` query succeeded.
+    AddProviderQuerySucceeded {
+        /// ID of the query that succeeded.
+        query: QueryId,
+
+        /// Provided key.
+        provided_key: RecordKey,
     },
 
     /// `GET_VALUE` query succeeded.
@@ -399,6 +420,7 @@ impl QueryEngine {
         provided_key: RecordKey,
         provider: ContentProvider,
         candidates: VecDeque<KademliaPeer>,
+        quorum: Quorum,
     ) -> QueryId {
         tracing::debug!(
             target: LOG_TARGET,
@@ -421,6 +443,7 @@ impl QueryEngine {
             QueryType::AddProvider {
                 provided_key,
                 provider,
+                quorum,
                 context: FindNodeContext::new(config, candidates),
             },
         );
@@ -486,6 +509,29 @@ impl QueryEngine {
         );
     }
 
+    /// Start `ADD_PROVIDER` requests tracking.
+    pub fn start_add_provider_to_found_nodes_requests_tracking(
+        &mut self,
+        query_id: QueryId,
+        provided_key: RecordKey,
+        peers: Vec<PeerId>,
+        quorum: Quorum,
+    ) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?query_id,
+            num_peers = ?peers.len(),
+            "start `ADD_PROVIDER` progress tracking"
+        );
+
+        self.queries.insert(
+            query_id,
+            QueryType::AddProviderToFoundNodes {
+                context: PutToTargetPeersContext::new(query_id, provided_key, peers, quorum),
+            },
+        );
+    }
+
     /// Register response failure from a queried peer.
     pub fn register_response_failure(&mut self, query: QueryId, peer: PeerId) {
         tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register response failure");
@@ -503,13 +549,16 @@ impl QueryEngine {
             Some(QueryType::PutRecordToPeers { context, .. }) => {
                 context.register_response_failure(peer);
             }
-            Some(QueryType::PutRecordToFoundNodes { context, .. }) => {
+            Some(QueryType::PutRecordToFoundNodes { context }) => {
                 context.register_response_failure(peer);
             }
             Some(QueryType::GetRecord { context }) => {
                 context.register_response_failure(peer);
             }
             Some(QueryType::AddProvider { context, .. }) => {
+                context.register_response_failure(peer);
+            }
+            Some(QueryType::AddProviderToFoundNodes { context }) => {
                 context.register_response_failure(peer);
             }
             Some(QueryType::GetProviders { context }) => {
@@ -519,12 +568,7 @@ impl QueryEngine {
     }
 
     /// Register that `response` received from `peer`.
-    pub fn register_response(
-        &mut self,
-        query: QueryId,
-        peer: PeerId,
-        message: KademliaMessage,
-    ) -> Option<QueryAction> {
+    pub fn register_response(&mut self, query: QueryId, peer: PeerId, message: KademliaMessage) {
         tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register response");
 
         match self.queries.get_mut(&query) {
@@ -535,36 +579,98 @@ impl QueryEngine {
                 KademliaMessage::FindNode { peers, .. } => {
                     context.register_response(peer, peers);
                 }
-                _ => unreachable!(),
+                message => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        "unexpected response to `FIND_NODE`: {message}",
+                    );
+                    context.register_response_failure(peer);
+                }
             },
             Some(QueryType::PutRecord { context, .. }) => match message {
                 KademliaMessage::FindNode { peers, .. } => {
                     context.register_response(peer, peers);
                 }
-                _ => unreachable!(),
+                message => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        "unexpected response to `FIND_NODE` during `PUT_VALUE` query: {message}",
+                    );
+                    context.register_response_failure(peer);
+                }
             },
             Some(QueryType::PutRecordToPeers { context, .. }) => match message {
                 KademliaMessage::FindNode { peers, .. } => {
                     context.register_response(peer, peers);
                 }
-                _ => unreachable!(),
+                message => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        "unexpected response to `FIND_NODE` during `PUT_VALUE` (to peers): {message}",
+                    );
+                    context.register_response_failure(peer);
+                }
             },
-            Some(QueryType::PutRecordToFoundNodes { context, .. }) => match message {
+            Some(QueryType::PutRecordToFoundNodes { context }) => match message {
                 KademliaMessage::PutValue { .. } => {
                     context.register_response(peer);
                 }
-                _ => unreachable!(),
+                message => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        "unexpected response to `PUT_VALUE`: {message}",
+                    );
+                    context.register_response_failure(peer);
+                }
             },
             Some(QueryType::GetRecord { context }) => match message {
                 KademliaMessage::GetRecord { record, peers, .. } =>
                     context.register_response(peer, record, peers),
-                _ => unreachable!(),
+                message => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        "unexpected response to `GET_VALUE`: {message}",
+                    );
+                    context.register_response_failure(peer);
+                }
             },
             Some(QueryType::AddProvider { context, .. }) => match message {
                 KademliaMessage::FindNode { peers, .. } => {
                     context.register_response(peer, peers);
                 }
-                _ => unreachable!(),
+                message => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        "unexpected response to `FIND_NODE` during `ADD_PROVIDER` query: {message}",
+                    );
+                    context.register_response_failure(peer);
+                }
+            },
+            Some(QueryType::AddProviderToFoundNodes { context, .. }) => match message {
+                KademliaMessage::AddProvider { .. } => {
+                    context.register_response(peer);
+                }
+                message => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        "unexpected response to `ADD_PROVIDER`: {message}",
+                    );
+                    context.register_response_failure(peer);
+                }
             },
             Some(QueryType::GetProviders { context }) => match message {
                 KademliaMessage::GetProviders {
@@ -574,11 +680,17 @@ impl QueryEngine {
                 } => {
                     context.register_response(peer, providers, peers);
                 }
-                _ => unreachable!(),
+                message => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?query,
+                        ?peer,
+                        "unexpected response to `GET_PROVIDERS`: {message}",
+                    );
+                    context.register_response_failure(peer);
+                }
             },
         }
-
-        None
     }
 
     pub fn register_send_failure(&mut self, query: QueryId, peer: PeerId) {
@@ -597,13 +709,16 @@ impl QueryEngine {
             Some(QueryType::PutRecordToPeers { context, .. }) => {
                 context.register_send_failure(peer);
             }
-            Some(QueryType::PutRecordToFoundNodes { context, .. }) => {
+            Some(QueryType::PutRecordToFoundNodes { context }) => {
                 context.register_send_failure(peer);
             }
             Some(QueryType::GetRecord { context }) => {
                 context.register_send_failure(peer);
             }
             Some(QueryType::AddProvider { context, .. }) => {
+                context.register_send_failure(peer);
+            }
+            Some(QueryType::AddProviderToFoundNodes { context }) => {
                 context.register_send_failure(peer);
             }
             Some(QueryType::GetProviders { context }) => {
@@ -635,6 +750,9 @@ impl QueryEngine {
                 context.register_send_success(peer);
             }
             Some(QueryType::AddProvider { context, .. }) => {
+                context.register_send_success(peer);
+            }
+            Some(QueryType::AddProviderToFoundNodes { context, .. }) => {
                 context.register_send_success(peer);
             }
             Some(QueryType::GetProviders { context }) => {
@@ -673,6 +791,10 @@ impl QueryEngine {
             Some(QueryType::GetProviders { context }) => context.next_peer_action(peer),
             Some(QueryType::PutRecordToFoundNodes { .. }) => {
                 // All `PUT_VALUE` requests were sent when initiating this query type.
+                None
+            }
+            Some(QueryType::AddProviderToFoundNodes { .. }) => {
+                // All `ADD_PROVIDER` requests were sent when initiating this query type.
                 None
             }
         }
@@ -717,13 +839,20 @@ impl QueryEngine {
             QueryType::AddProvider {
                 provided_key,
                 provider,
+                quorum,
                 context,
             } => QueryAction::AddProviderToFoundNodes {
                 query: context.config.query,
                 provided_key,
                 provider,
                 peers: context.responses.into_values().collect::<Vec<_>>(),
+                quorum,
             },
+            QueryType::AddProviderToFoundNodes { context } =>
+                QueryAction::AddProviderQuerySucceeded {
+                    query: context.query,
+                    provided_key: context.key,
+                },
             QueryType::GetProviders { context } => QueryAction::GetProvidersQueryDone {
                 query_id: context.config.query,
                 provided_key: context.config.target.clone().into_preimage(),
@@ -751,6 +880,7 @@ impl QueryEngine {
                 QueryType::AddProvider { context, .. } => context.next_action(),
                 QueryType::GetProviders { context } => context.next_action(),
                 QueryType::PutRecordToFoundNodes { context, .. } => context.next_action(),
+                QueryType::AddProviderToFoundNodes { context, .. } => context.next_action(),
             };
 
             match action {
@@ -1475,6 +1605,539 @@ mod tests {
 
                 assert_eq!(record.key, original_record.key);
                 assert_eq!(record.value, original_record.value);
+            }
+            event => panic!("invalid event received {:?}", event),
+        }
+    }
+
+    #[test]
+    fn add_provider_fails() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let local_peer_id = PeerId::random();
+        let mut engine = QueryEngine::new(local_peer_id, 20usize, 3usize);
+        let original_provided_key = RecordKey::new(&vec![1, 2, 3, 4]);
+        let local_content_provider = ContentProvider {
+            peer: local_peer_id,
+            addresses: vec![],
+        };
+        let target_key = Key::new(original_provided_key.clone());
+
+        let distances = {
+            let mut distances = std::collections::BTreeMap::new();
+
+            for i in 1..64 {
+                let peer = make_peer_id(i, 0);
+                let key = Key::from(peer);
+
+                distances.insert(target_key.distance(&key), peer);
+            }
+
+            distances
+        };
+        let mut iter = distances.iter();
+
+        // start add provider with one known peer
+        let original_query_id = QueryId(1340);
+        let _query = engine.start_add_provider(
+            original_query_id,
+            original_provided_key.clone(),
+            local_content_provider.clone(),
+            vec![KademliaPeer::new(
+                *iter.next().unwrap().1,
+                vec![],
+                ConnectionType::NotConnected,
+            )]
+            .into(),
+            Quorum::All,
+        );
+
+        let action = engine.next_action();
+        assert!(engine.next_action().is_none());
+
+        // the one known peer responds with 3 other peers it knows
+        match action {
+            Some(QueryAction::SendMessage { query, peer, .. }) => {
+                engine.register_response(
+                    query,
+                    peer,
+                    KademliaMessage::FindNode {
+                        target: Vec::new(),
+                        peers: vec![
+                            KademliaPeer::new(
+                                *iter.next().unwrap().1,
+                                vec![],
+                                ConnectionType::NotConnected,
+                            ),
+                            KademliaPeer::new(
+                                *iter.next().unwrap().1,
+                                vec![],
+                                ConnectionType::NotConnected,
+                            ),
+                            KademliaPeer::new(
+                                *iter.next().unwrap().1,
+                                vec![],
+                                ConnectionType::NotConnected,
+                            ),
+                        ],
+                    },
+                );
+            }
+            _ => panic!("invalid event received"),
+        }
+
+        // send empty response for the last three nodes
+        for _ in 0..3 {
+            match engine.next_action() {
+                Some(QueryAction::SendMessage { query, peer, .. }) => {
+                    println!("next send message to {peer:?}");
+                    engine.register_response(
+                        query,
+                        peer,
+                        KademliaMessage::FindNode {
+                            target: Vec::new(),
+                            peers: vec![],
+                        },
+                    );
+                }
+                _ => panic!("invalid event received"),
+            }
+        }
+
+        let mut peers = match engine.next_action() {
+            Some(QueryAction::AddProviderToFoundNodes {
+                query,
+                provided_key,
+                provider,
+                peers,
+                quorum,
+            }) => {
+                assert_eq!(query, original_query_id);
+                assert_eq!(provided_key, original_provided_key);
+                assert_eq!(provider, local_content_provider);
+                assert_eq!(peers.len(), 4);
+                assert!(matches!(quorum, Quorum::All));
+
+                peers
+            }
+            _ => panic!("invalid event received"),
+        };
+
+        engine.start_add_provider_to_found_nodes_requests_tracking(
+            original_query_id,
+            original_provided_key.clone(),
+            peers.iter().map(|p| p.peer).collect(),
+            Quorum::All,
+        );
+
+        // sends to all but one peer succeed
+        let last_peer = peers.pop().unwrap();
+        for peer in peers {
+            engine.register_send_success(original_query_id, peer.peer);
+        }
+        engine.register_send_failure(original_query_id, last_peer.peer);
+
+        match engine.next_action() {
+            Some(QueryAction::QueryFailed { query }) => {
+                assert_eq!(query, original_query_id);
+            }
+            _ => panic!("invalid event received"),
+        }
+
+        assert!(engine.next_action().is_none());
+    }
+
+    #[test]
+    fn add_provider_succeeds() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let local_peer_id = PeerId::random();
+        let mut engine = QueryEngine::new(local_peer_id, 20usize, 3usize);
+        let original_provided_key = RecordKey::new(&vec![1, 2, 3, 4]);
+        let local_content_provider = ContentProvider {
+            peer: local_peer_id,
+            addresses: vec![],
+        };
+
+        let target_key = Key::new(original_provided_key.clone());
+        let distances = {
+            let mut distances = std::collections::BTreeMap::new();
+
+            for i in 1..64 {
+                let peer = make_peer_id(i, 0);
+                let key = Key::from(peer);
+
+                distances.insert(target_key.distance(&key), peer);
+            }
+
+            distances
+        };
+        let mut iter = distances.iter();
+
+        // start add provider with one known peer
+        let add_query_id = QueryId(1340);
+        let _query = engine.start_add_provider(
+            add_query_id,
+            original_provided_key.clone(),
+            local_content_provider.clone(),
+            vec![KademliaPeer::new(
+                *iter.next().unwrap().1,
+                vec![],
+                ConnectionType::NotConnected,
+            )]
+            .into(),
+            Quorum::All,
+        );
+
+        let action = engine.next_action();
+        assert!(engine.next_action().is_none());
+
+        // the one known peer responds with 3 other peers it knows
+        match action {
+            Some(QueryAction::SendMessage { query, peer, .. }) => {
+                engine.register_response(
+                    query,
+                    peer,
+                    KademliaMessage::FindNode {
+                        target: Vec::new(),
+                        peers: vec![
+                            KademliaPeer::new(
+                                *iter.next().unwrap().1,
+                                vec![],
+                                ConnectionType::NotConnected,
+                            ),
+                            KademliaPeer::new(
+                                *iter.next().unwrap().1,
+                                vec![],
+                                ConnectionType::NotConnected,
+                            ),
+                            KademliaPeer::new(
+                                *iter.next().unwrap().1,
+                                vec![],
+                                ConnectionType::NotConnected,
+                            ),
+                        ],
+                    },
+                );
+            }
+            _ => panic!("invalid event received"),
+        }
+
+        // send empty response for the last three nodes
+        for _ in 0..3 {
+            match engine.next_action() {
+                Some(QueryAction::SendMessage { query, peer, .. }) => {
+                    println!("next send message to {peer:?}");
+                    engine.register_response(
+                        query,
+                        peer,
+                        KademliaMessage::FindNode {
+                            target: Vec::new(),
+                            peers: vec![],
+                        },
+                    );
+                }
+                _ => panic!("invalid event received"),
+            }
+        }
+
+        let peers = match engine.next_action() {
+            Some(QueryAction::AddProviderToFoundNodes {
+                query,
+                provided_key,
+                provider,
+                peers,
+                quorum,
+            }) => {
+                assert_eq!(query, add_query_id);
+                assert_eq!(provided_key, original_provided_key);
+                assert_eq!(provider, local_content_provider);
+                assert_eq!(peers.len(), 4);
+                assert!(matches!(quorum, Quorum::All));
+
+                peers
+            }
+            _ => panic!("invalid event received"),
+        };
+
+        engine.start_add_provider_to_found_nodes_requests_tracking(
+            add_query_id,
+            original_provided_key.clone(),
+            peers.iter().map(|p| p.peer).collect(),
+            Quorum::All,
+        );
+
+        // simulate successful sends to all peers
+        for peer in &peers {
+            engine.register_send_success(add_query_id, peer.peer);
+        }
+
+        match engine.next_action() {
+            Some(QueryAction::AddProviderQuerySucceeded {
+                query,
+                provided_key,
+            }) => {
+                assert_eq!(query, add_query_id);
+                assert_eq!(provided_key, original_provided_key);
+            }
+            _ => panic!("invalid event received"),
+        }
+
+        assert!(engine.next_action().is_none());
+
+        // get providers from those peers.
+        let get_query_id = QueryId(1341);
+        let _query = engine.start_get_providers(
+            get_query_id,
+            original_provided_key.clone(),
+            vec![
+                KademliaPeer::new(peers[0].peer, vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(peers[1].peer, vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(peers[2].peer, vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(peers[3].peer, vec![], ConnectionType::NotConnected),
+            ]
+            .into(),
+            vec![],
+        );
+
+        for _ in 0..4 {
+            match engine.next_action() {
+                Some(QueryAction::SendMessage { query, peer, .. }) => {
+                    assert_eq!(query, get_query_id);
+                    engine.register_response(
+                        query,
+                        peer,
+                        KademliaMessage::GetProviders {
+                            key: Some(original_provided_key.clone()),
+                            peers: vec![],
+                            providers: vec![local_content_provider.clone().into()],
+                        },
+                    );
+                }
+                event => panic!("invalid event received {:?}", event),
+            }
+        }
+
+        match engine.next_action() {
+            Some(QueryAction::GetProvidersQueryDone {
+                query_id,
+                provided_key,
+                providers,
+            }) => {
+                assert_eq!(query_id, get_query_id);
+                assert_eq!(provided_key, original_provided_key);
+                assert_eq!(providers, vec![local_content_provider]);
+            }
+            event => panic!("invalid event received {:?}", event),
+        }
+    }
+
+    #[test]
+    fn add_provider_succeeds_with_quorum_one() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let local_peer_id = PeerId::random();
+        let mut engine = QueryEngine::new(local_peer_id, 20usize, 3usize);
+        let original_provided_key = RecordKey::new(&vec![1, 2, 3, 4]);
+        let local_content_provider = ContentProvider {
+            peer: local_peer_id,
+            addresses: vec![],
+        };
+
+        let target_key = Key::new(original_provided_key.clone());
+        let distances = {
+            let mut distances = std::collections::BTreeMap::new();
+
+            for i in 1..64 {
+                let peer = make_peer_id(i, 0);
+                let key = Key::from(peer);
+
+                distances.insert(target_key.distance(&key), peer);
+            }
+
+            distances
+        };
+        let mut iter = distances.iter();
+
+        // start add provider with one known peer
+        let add_query_id = QueryId(1340);
+        let _query = engine.start_add_provider(
+            add_query_id,
+            original_provided_key.clone(),
+            local_content_provider.clone(),
+            vec![KademliaPeer::new(
+                *iter.next().unwrap().1,
+                vec![],
+                ConnectionType::NotConnected,
+            )]
+            .into(),
+            Quorum::One,
+        );
+
+        let action = engine.next_action();
+        assert!(engine.next_action().is_none());
+
+        // the one known peer responds with 3 other peers it knows
+        match action {
+            Some(QueryAction::SendMessage { query, peer, .. }) => {
+                engine.register_response(
+                    query,
+                    peer,
+                    KademliaMessage::FindNode {
+                        target: Vec::new(),
+                        peers: vec![
+                            KademliaPeer::new(
+                                *iter.next().unwrap().1,
+                                vec![],
+                                ConnectionType::NotConnected,
+                            ),
+                            KademliaPeer::new(
+                                *iter.next().unwrap().1,
+                                vec![],
+                                ConnectionType::NotConnected,
+                            ),
+                            KademliaPeer::new(
+                                *iter.next().unwrap().1,
+                                vec![],
+                                ConnectionType::NotConnected,
+                            ),
+                        ],
+                    },
+                );
+            }
+            _ => panic!("invalid event received"),
+        }
+
+        // send empty response for the last three nodes
+        for _ in 0..3 {
+            match engine.next_action() {
+                Some(QueryAction::SendMessage { query, peer, .. }) => {
+                    println!("next send message to {peer:?}");
+                    engine.register_response(
+                        query,
+                        peer,
+                        KademliaMessage::FindNode {
+                            target: Vec::new(),
+                            peers: vec![],
+                        },
+                    );
+                }
+                _ => panic!("invalid event received"),
+            }
+        }
+
+        let peers = match engine.next_action() {
+            Some(QueryAction::AddProviderToFoundNodes {
+                query,
+                provided_key,
+                provider,
+                peers,
+                quorum,
+            }) => {
+                assert_eq!(query, add_query_id);
+                assert_eq!(provided_key, original_provided_key);
+                assert_eq!(provider, local_content_provider);
+                assert_eq!(peers.len(), 4);
+                assert!(matches!(quorum, Quorum::One));
+
+                peers
+            }
+            _ => panic!("invalid event received"),
+        };
+
+        engine.start_add_provider_to_found_nodes_requests_tracking(
+            add_query_id,
+            original_provided_key.clone(),
+            peers.iter().map(|p| p.peer).collect(),
+            Quorum::One,
+        );
+
+        // all but one peer fail
+        assert!(peers.len() > 1);
+        engine.register_send_success(add_query_id, peers.first().unwrap().peer);
+        for peer in peers.iter().skip(1) {
+            engine.register_send_failure(add_query_id, peer.peer);
+        }
+
+        match engine.next_action() {
+            Some(QueryAction::AddProviderQuerySucceeded {
+                query,
+                provided_key,
+            }) => {
+                assert_eq!(query, add_query_id);
+                assert_eq!(provided_key, original_provided_key);
+            }
+            _ => panic!("invalid event received"),
+        }
+
+        assert!(engine.next_action().is_none());
+
+        // get providers from those peers.
+        let get_query_id = QueryId(1341);
+        let _query = engine.start_get_providers(
+            get_query_id,
+            original_provided_key.clone(),
+            vec![
+                KademliaPeer::new(peers[0].peer, vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(peers[1].peer, vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(peers[2].peer, vec![], ConnectionType::NotConnected),
+                KademliaPeer::new(peers[3].peer, vec![], ConnectionType::NotConnected),
+            ]
+            .into(),
+            vec![],
+        );
+
+        // first peer responds with the provider
+        match engine.next_action() {
+            Some(QueryAction::SendMessage { query, peer, .. }) => {
+                assert_eq!(query, get_query_id);
+                engine.register_response(
+                    query,
+                    peer,
+                    KademliaMessage::GetProviders {
+                        key: Some(original_provided_key.clone()),
+                        peers: vec![],
+                        providers: vec![local_content_provider.clone().into()],
+                    },
+                );
+            }
+            event => panic!("invalid event received {:?}", event),
+        }
+
+        // other peers respond with no providers
+        for _ in 1..4 {
+            match engine.next_action() {
+                Some(QueryAction::SendMessage { query, peer, .. }) => {
+                    assert_eq!(query, get_query_id);
+                    engine.register_response(
+                        query,
+                        peer,
+                        KademliaMessage::GetProviders {
+                            key: Some(original_provided_key.clone()),
+                            peers: vec![],
+                            providers: vec![],
+                        },
+                    );
+                }
+                event => panic!("invalid event received {:?}", event),
+            }
+        }
+
+        match engine.next_action() {
+            Some(QueryAction::GetProvidersQueryDone {
+                query_id,
+                provided_key,
+                providers,
+            }) => {
+                assert_eq!(query_id, get_query_id);
+                assert_eq!(provided_key, original_provided_key);
+                assert_eq!(providers, vec![local_content_provider]);
             }
             event => panic!("invalid event received {:?}", event),
         }

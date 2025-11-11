@@ -922,6 +922,7 @@ impl Kademlia {
                 provided_key,
                 provider,
                 peers,
+                quorum,
             } => {
                 tracing::trace!(
                     target: LOG_TARGET,
@@ -932,7 +933,7 @@ impl Kademlia {
 
                 let message = KademliaMessage::add_provider(provided_key.clone(), provider);
 
-                for peer in peers {
+                for peer in &peers {
                     if let Err(error) = self.open_substream_or_dial(
                         peer.peer,
                         PeerAction::SendAddProvider(query, message.clone()),
@@ -948,6 +949,28 @@ impl Kademlia {
                     }
                 }
 
+                self.engine.start_add_provider_to_found_nodes_requests_tracking(
+                    query,
+                    provided_key,
+                    peers.into_iter().map(|peer| peer.peer).collect(),
+                    quorum,
+                );
+
+                Ok(())
+            }
+            QueryAction::AddProviderQuerySucceeded {
+                query,
+                provided_key,
+            } => {
+                tracing::debug!(target: LOG_TARGET, ?query, "`ADD_PROVIDER` query succeeded");
+
+                let _ = self
+                    .event_tx
+                    .send(KademliaEvent::AddProviderSuccess {
+                        query_id: query,
+                        provided_key,
+                    })
+                    .await;
                 Ok(())
             }
             QueryAction::GetRecordQueryDone { query_id } => {
@@ -1215,6 +1238,7 @@ impl Kademlia {
                         }
                         Some(KademliaCommand::StartProviding {
                             key,
+                            quorum,
                             query_id
                         }) => {
                             tracing::debug!(
@@ -1230,7 +1254,7 @@ impl Kademlia {
                                 addresses,
                             };
 
-                            self.store.put_provider(key.clone(), provider.clone());
+                            self.store.put_local_provider(key.clone(), quorum);
 
                             self.engine.start_add_provider(
                                 query_id,
@@ -1239,6 +1263,7 @@ impl Kademlia {
                                 self.routing_table
                                     .closest(&Key::new(key), self.replication_factor)
                                     .into(),
+                                quorum,
                             );
                         }
                         Some(KademliaCommand::StopProviding {
@@ -1349,16 +1374,17 @@ impl Kademlia {
                     }
                 },
                 action = self.store.next_action() => match action {
-                    Some(MemoryStoreAction::RefreshProvider { provided_key, provider }) => {
+                    Some(MemoryStoreAction::RefreshProvider { provided_key, provider, quorum }) => {
                         tracing::trace!(
                             target: LOG_TARGET,
                             ?provided_key,
                             "republishing local provider",
                         );
 
-                        self.store.put_provider(provided_key.clone(), provider.clone());
-                        // We never update local provider addresses in the store when refresh
-                        // it, as this is done anyway when replying to `GET_PROVIDERS` request.
+                        self.store.put_local_provider(provided_key.clone(), quorum);
+
+                        // We never update local provider addresses in the store during refresh,
+                        // as this is done anyway when replying to `GET_PROVIDERS` request.
 
                         let query_id = self.next_query_id();
                         self.engine.start_add_provider(
@@ -1368,6 +1394,7 @@ impl Kademlia {
                             self.routing_table
                                 .closest(&Key::new(provided_key), self.replication_factor)
                                 .into(),
+                            quorum,
                         );
                     }
                     None => {}
