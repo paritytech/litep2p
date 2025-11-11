@@ -149,7 +149,7 @@ impl QueryExecutor {
 
     /// Send message and ignore sending errors.
     ///
-    /// This is a hackish way of dealing with older litep2p nodes not exppecting receiving
+    /// This is a hackish way of dealing with older litep2p nodes not expecting receiving
     /// `PUT_VALUE` ACK messages. This should eventually be removed.
     // TODO: remove this as part of https://github.com/paritytech/litep2p/issues/429.
     pub fn send_message_eat_failure(
