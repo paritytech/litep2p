@@ -644,7 +644,7 @@ impl QueryEngine {
     }
 
     /// Register peer failure when it is not known whether sending or receiveiing failed.
-    /// This is called from [`Kademlia::disconnect_peer`].
+    /// This is called from [`super::Kademlia::disconnect_peer`].
     pub fn register_peer_failure(&mut self, query: QueryId, peer: PeerId) {
         tracing::trace!(target: LOG_TARGET, ?query, ?peer, "register peer failure");
 
