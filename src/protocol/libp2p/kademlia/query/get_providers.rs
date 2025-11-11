@@ -207,6 +207,18 @@ impl GetProvidersContext {
         }
     }
 
+    /// Register a failure of sending a `GET_PROVIDERS` request to `peer`.
+    pub fn register_send_failure(&mut self, _peer: PeerId) {
+        // In case of a send failure, `register_response_failure` is called as well.
+        // Failure is handled there.
+    }
+
+    /// Register a success of sending a `GET_PROVIDERS` request to `peer`.
+    pub fn register_send_success(&mut self, _peer: PeerId) {
+        // `GET_PROVIDERS` requests are compound request-response pairs of messages,
+        // so we handle final success/failure in `register_response`/`register_response_failure`.
+    }
+
     /// Get next action for `peer`.
     // TODO: https://github.com/paritytech/litep2p/issues/40 remove this and store the next action to `PeerAction`
     pub fn next_peer_action(&mut self, peer: &PeerId) -> Option<QueryAction> {

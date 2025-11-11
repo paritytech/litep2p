@@ -89,14 +89,25 @@ mod schema {
 #[derive(Debug, Clone)]
 #[allow(clippy::enum_variant_names)]
 enum PeerAction {
-    /// Send `FIND_NODE` message to peer.
+    /// Find nodes (and values/providers) as part of `FIND_NODE`/`GET_VALUE`/`GET_PROVIDERS` query.
+    // TODO: may be a better naming would be `SendFindRequest`?
     SendFindNode(QueryId),
 
     /// Send `PUT_VALUE` message to peer.
     SendPutValue(QueryId, Bytes),
 
     /// Send `ADD_PROVIDER` message to peer.
-    SendAddProvider(Bytes),
+    SendAddProvider(QueryId, Bytes),
+}
+
+impl PeerAction {
+    fn query_id(&self) -> QueryId {
+        match self {
+            PeerAction::SendFindNode(query_id) => *query_id,
+            PeerAction::SendPutValue(query_id, _) => *query_id,
+            PeerAction::SendAddProvider(query_id, _) => *query_id,
+        }
+    }
 }
 
 /// Peer context.
@@ -252,6 +263,7 @@ impl Kademlia {
                             );
 
                             if let PeerAction::SendFindNode(query_id) = action {
+                                self.engine.register_send_failure(query_id, peer);
                                 self.engine.register_response_failure(query_id, peer);
                             }
                         }
@@ -291,13 +303,19 @@ impl Kademlia {
         tracing::trace!(target: LOG_TARGET, ?peer, ?query, "disconnect peer");
 
         if let Some(query) = query {
-            self.engine.register_response_failure(query, peer);
+            self.engine.register_peer_failure(query, peer);
         }
 
+        // Apart from the failing query, we need to fail all other pending queries for the peer
+        // being disconnected.
         if let Some(PeerContext { pending_actions }) = self.peers.remove(&peer) {
             pending_actions.into_iter().for_each(|(_, action)| {
-                if let PeerAction::SendFindNode(query_id) = action {
-                    self.engine.register_response_failure(query_id, peer);
+                // Don't report failure twice for the same `query_id` if it was already reported
+                // above. (We can still have other pending queries for the peer that
+                // need to be reported.)
+                let query_id = action.query_id();
+                if Some(query_id) != query {
+                    self.engine.register_peer_failure(query_id, peer);
                 }
             });
         }
@@ -371,12 +389,19 @@ impl Kademlia {
             Some(PeerAction::SendPutValue(query, message)) => {
                 tracing::trace!(target: LOG_TARGET, ?peer, "send `PUT_VALUE` message");
 
-                self.executor.send_request_read_response(peer, Some(query), message, substream);
+                self.executor.send_request_eat_response_failure(
+                    peer,
+                    Some(query),
+                    message,
+                    substream,
+                );
+                // TODO: replace this with `send_request_read_response` as part of
+                // https://github.com/paritytech/litep2p/issues/429.
             }
-            Some(PeerAction::SendAddProvider(message)) => {
+            Some(PeerAction::SendAddProvider(query, message)) => {
                 tracing::trace!(target: LOG_TARGET, ?peer, "send `ADD_PROVIDER` message");
 
-                self.executor.send_message(peer, message, substream);
+                self.executor.send_message(peer, Some(query), message, substream);
             }
         }
 
@@ -454,6 +479,7 @@ impl Kademlia {
                             peer,
                             KademliaMessage::FindNode { target, peers },
                         );
+                        substream.close().await;
                     }
                     None => {
                         tracing::trace!(
@@ -468,7 +494,7 @@ impl Kademlia {
                             self.routing_table
                                 .closest(&Key::new(target.as_ref()), self.replication_factor),
                         );
-                        self.executor.send_message(peer, message.into(), substream);
+                        self.executor.send_message(peer, None, message.into(), substream);
                     }
                 }
             }
@@ -487,6 +513,7 @@ impl Kademlia {
                         peer,
                         KademliaMessage::PutValue { record },
                     );
+                    substream.close().await;
                 }
                 None => {
                     tracing::trace!(
@@ -506,7 +533,9 @@ impl Kademlia {
                         record.key.clone(),
                         record.value.clone(),
                     );
-                    self.executor.send_message(peer, message, substream);
+                    self.executor.send_message_eat_failure(peer, None, message, substream);
+                    // TODO: replace this with `send_message` as part of
+                    // https://github.com/paritytech/litep2p/issues/429.
 
                     let _ = self.event_tx.send(KademliaEvent::IncomingRecord { record }).await;
                 }
@@ -531,6 +560,8 @@ impl Kademlia {
                             peer,
                             KademliaMessage::GetRecord { key, record, peers },
                         );
+
+                        substream.close().await;
                     }
                     (None, Some(key)) => {
                         tracing::trace!(
@@ -547,7 +578,7 @@ impl Kademlia {
 
                         let message =
                             KademliaMessage::get_value_response(key, closest_peers, value);
-                        self.executor.send_message(peer, message.into(), substream);
+                        self.executor.send_message(peer, None, message.into(), substream);
                     }
                     (None, None) => tracing::debug!(
                         target: LOG_TARGET,
@@ -639,6 +670,8 @@ impl Kademlia {
                                 providers,
                             },
                         );
+
+                        substream.close().await;
                     }
                     (None, Some(key)) => {
                         tracing::trace!(
@@ -664,7 +697,7 @@ impl Kademlia {
 
                         let message =
                             KademliaMessage::get_providers_response(providers, &closer_peers);
-                        self.executor.send_message(peer, message.into(), substream);
+                        self.executor.send_message(peer, None, message.into(), substream);
                     }
                     (None, None) => tracing::debug!(
                         target: LOG_TARGET,
@@ -703,10 +736,8 @@ impl Kademlia {
         };
 
         if let Some(context) = self.peers.get_mut(&peer) {
-            let query = match context.pending_actions.remove(&substream_id) {
-                Some(PeerAction::SendFindNode(query)) => Some(query),
-                _ => None,
-            };
+            let query =
+                context.pending_actions.remove(&substream_id).as_ref().map(PeerAction::query_id);
 
             self.disconnect_peer(peer, query).await;
         }
@@ -723,17 +754,19 @@ impl Kademlia {
         };
 
         for action in actions {
-            if let PeerAction::SendFindNode(query_id) = action {
-                tracing::trace!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    query = ?query_id,
-                    ?addresses,
-                    "report failure for pending query",
-                );
+            let query = action.query_id();
 
-                self.engine.register_response_failure(query_id, peer);
-            }
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?peer,
+                ?query,
+                ?addresses,
+                "report failure for pending query",
+            );
+
+            // Fail both sending and receiving due to dial failure.
+            self.engine.register_send_failure(query, peer);
+            self.engine.register_response_failure(query, peer);
         }
     }
 
@@ -793,11 +826,13 @@ impl Kademlia {
     async fn on_query_action(&mut self, action: QueryAction) -> Result<(), (QueryId, PeerId)> {
         match action {
             QueryAction::SendMessage { query, peer, .. } => {
+                // This action is used for `FIND_NODE`, `GET_VALUE` and `GET_PROVIDERS` queries.
                 if self
                     .open_substream_or_dial(peer, PeerAction::SendFindNode(query), Some(query))
                     .is_err()
                 {
                     // Announce the error to the query engine.
+                    self.engine.register_send_failure(query, peer);
                     self.engine.register_response_failure(query, peer);
                 }
                 Ok(())
@@ -883,6 +918,7 @@ impl Kademlia {
                 Ok(())
             }
             QueryAction::AddProviderToFoundNodes {
+                query,
                 provided_key,
                 provider,
                 peers,
@@ -899,7 +935,7 @@ impl Kademlia {
                 for peer in peers {
                     if let Err(error) = self.open_substream_or_dial(
                         peer.peer,
-                        PeerAction::SendAddProvider(message.clone()),
+                        PeerAction::SendAddProvider(query, message.clone()),
                         None,
                     ) {
                         tracing::debug!(
@@ -1014,13 +1050,51 @@ impl Kademlia {
                                 "message sent to peer",
                             );
                             let _ = substream.close().await;
+
+                            if let Some(query_id) = query_id {
+                                self.engine.register_send_success(query_id, peer);
+                            }
+                        }
+                        // This is a workaround to gracefully handle older litep2p nodes not
+                        // sending/receiving `PUT_VALUE` ACKs. This should eventually be removed.
+                        // TODO: remove this as part of
+                        // https://github.com/paritytech/litep2p/issues/429.
+                        QueryResult::AssumeSendSuccess => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                query = ?query_id,
+                                "treating message as sent to peer",
+                            );
+
+                            if let Some(query_id) = query_id {
+                                self.engine.register_send_success(query_id, peer);
+                            }
+                        }
+                        QueryResult::SendFailure { reason } => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                query = ?query_id,
+                                ?reason,
+                                "failed to send message to peer",
+                            );
+
+                            self.disconnect_peer(peer, query_id).await;
                         }
                         QueryResult::ReadSuccess { substream, message } => {
-                            tracing::trace!(target: LOG_TARGET,
+                            tracing::trace!(
+                                target: LOG_TARGET,
                                 ?peer,
                                 query = ?query_id,
                                 "message read from peer",
                             );
+
+                            if let Some(query_id) = query_id {
+                                // Read success for locally originating requests implies send
+                                // success.
+                                self.engine.register_send_success(query_id, peer);
+                            }
 
                             if let Err(error) = self.on_message_received(
                                 peer,
@@ -1028,19 +1102,20 @@ impl Kademlia {
                                 message,
                                 substream
                             ).await {
-                                tracing::debug!(target: LOG_TARGET,
+                                tracing::debug!(
+                                    target: LOG_TARGET,
                                     ?peer,
                                     ?error,
                                     "failed to process message",
                                 );
                             }
                         }
-                        QueryResult::SubstreamClosed | QueryResult::Timeout => {
+                        QueryResult::ReadFailure { reason } => {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?peer,
                                 query = ?query_id,
-                                ?result,
+                                ?reason,
                                 "failed to read message from substream",
                             );
 

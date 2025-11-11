@@ -184,6 +184,11 @@ async fn records_are_stored_automatically() {
                         let _ = kad_handle2
                             .get_record(RecordKey::from(vec![1, 2, 3]), Quorum::One).await;
                     }
+                    Some(KademliaEvent::QueryFailed { query_id: got_query_id }) => {
+                        assert_eq!(got_query_id, query_id);
+
+                        panic!("query failed")
+                    }
                     _ => {}
                 }
             }

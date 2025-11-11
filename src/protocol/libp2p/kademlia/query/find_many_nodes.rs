@@ -52,6 +52,12 @@ impl FindManyNodesContext {
     /// Register `FIND_NODE` response from `peer`.
     pub fn register_response(&mut self, _peer: PeerId, _peers: Vec<KademliaPeer>) {}
 
+    /// Register a failure of sending a request to `peer`.
+    pub fn register_send_failure(&mut self, _peer: PeerId) {}
+
+    /// Register a success of sending a request to `peer`.
+    pub fn register_send_success(&mut self, _peer: PeerId) {}
+
     /// Get next action for `peer`.
     pub fn next_peer_action(&mut self, _peer: &PeerId) -> Option<QueryAction> {
         None
