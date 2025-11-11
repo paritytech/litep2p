@@ -100,6 +100,16 @@ enum PeerAction {
     SendAddProvider(QueryId, Bytes),
 }
 
+impl PeerAction {
+    fn query_id(&self) -> QueryId {
+        match self {
+            PeerAction::SendFindNode(query_id) => *query_id,
+            PeerAction::SendPutValue(query_id, _) => *query_id,
+            PeerAction::SendAddProvider(query_id, _) => *query_id,
+        }
+    }
+}
+
 /// Peer context.
 #[derive(Default)]
 struct PeerContext {
@@ -300,17 +310,10 @@ impl Kademlia {
         // being disconnected.
         if let Some(PeerContext { pending_actions }) = self.peers.remove(&peer) {
             pending_actions.into_iter().for_each(|(_, action)| {
-                let query_id = match action {
-                    // `SendFindNode` includes `FIND_NODE`, `GET_VALUE` and `GET_PROVIDERS`
-                    // queries.
-                    PeerAction::SendFindNode(query_id)
-                    | PeerAction::SendPutValue(query_id, _)
-                    | PeerAction::SendAddProvider(query_id, _) => query_id,
-                };
-
                 // Don't report failure twice for the same `query_id` if it was already reported
                 // above. (We can still have other pending queries for the peer that
                 // need to be reported.)
+                let query_id = action.query_id();
                 if Some(query_id) != query {
                     self.engine.register_peer_failure(query_id, peer);
                 }
@@ -733,13 +736,8 @@ impl Kademlia {
         };
 
         if let Some(context) = self.peers.get_mut(&peer) {
-            let query = match context.pending_actions.remove(&substream_id) {
-                // `SendFindNode` includes `FIND_NODE`, `GET_VALUE` and `GET_PROVIDERS` queries.
-                Some(PeerAction::SendFindNode(query))
-                | Some(PeerAction::SendPutValue(query, _))
-                | Some(PeerAction::SendAddProvider(query, _)) => Some(query),
-                None => None,
-            };
+            let query =
+                context.pending_actions.remove(&substream_id).as_ref().map(PeerAction::query_id);
 
             self.disconnect_peer(peer, query).await;
         }
@@ -756,12 +754,7 @@ impl Kademlia {
         };
 
         for action in actions {
-            let query = match action {
-                // `SendFindNode` includes `FIND_NODE`, `GET_VALUE` and `GET_PROVIDERS` messages.
-                PeerAction::SendFindNode(query_id)
-                | PeerAction::SendPutValue(query_id, _)
-                | PeerAction::SendAddProvider(query_id, _) => query_id,
-            };
+            let query = action.query_id();
 
             tracing::trace!(
                 target: LOG_TARGET,
