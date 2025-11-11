@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2025-11-11
+
+This release adds `KademliaEvent::PutRecordSuccess` & `KademliaEvent::AddProviderSuccess` events to Kademlia, allowing to track whether publishing a record or a provider was successfull. While `PutRecordSuccess` was present in the previous versions of litep2p, it was actually never emitted. Note that `AddProviderSuccess` and `QueryFailed` are also generated during automatic provider refresh, so those may be emitted for `QueryId`s not know to the client code.
+
+### Added
+
+- kademlia: Track success of `ADD_PROVIDER` queries ([#432](https://github.com/paritytech/litep2p/pull/432))
+- kademlia: Workaround for dealing with not implemented `PUT_VALUE` ACKs ([#430](https://github.com/paritytech/litep2p/pull/430))
+- kademlia: Track success of `PUT_VALUE` queries ([#427](https://github.com/paritytech/litep2p/pull/427))
+
+### Fixed
+
+- Identify: gracefully close substream after sending payload ([#466](https://github.com/paritytech/litep2p/pull/466))
+- fix: transport context polling order ([#456](https://github.com/paritytech/litep2p/pull/456))
+
+### Changed
+
+- refactor: implement builder pattern for TransportManager ([#453](https://github.com/paritytech/litep2p/pull/453))
+
 ## [0.11.1] - 2025-10-28
 
 This release ensures that polling the yamux controller after an error does not lead to unexpected behavior.
