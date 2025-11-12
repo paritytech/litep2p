@@ -812,8 +812,7 @@ impl WebRtcConnection {
                 },
                 event = self.handles.next() => match event {
                     None => unreachable!(),
-                    Some((_, None)) => {}
-                    Some((channel_id, Some(SubstreamEvent::Close))) => {
+                    Some((channel_id, None | Some(SubstreamEvent::Close))) => {
                         tracing::trace!(
                             target: LOG_TARGET,
                             peer = ?self.peer,
