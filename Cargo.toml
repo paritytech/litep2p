@@ -33,7 +33,7 @@ prost = "0.13.5"
 rand = { version = "0.8.0", features = ["getrandom"] }
 serde = "1.0.158"
 sha2 = "0.10.9"
-simple-dns = "0.9.3"
+simple-dns = "0.11.0"
 smallvec = "1.15.0"
 snow = { version = "0.9.3", features = ["ring-resolver"], default-features = false }
 socket2 = { version = "0.5.9", features = ["all"] }

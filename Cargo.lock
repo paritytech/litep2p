@@ -3368,9 +3368,9 @@ checksum = "d66dc143e6b11c1eddc06d5c423cfc97062865baf299914ab64caa38182078fe"
 
 [[package]]
 name = "simple-dns"
-version = "0.9.3"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dee851d0e5e7af3721faea1843e8015e820a234f81fda3dea9247e15bac9a86a"
+checksum = "f8cba3b4c122239e3b4473674cb7c79ad2693f008f0746bfe2fc3fe1ffcd936a"
 dependencies = [
  "bitflags 2.10.0",
 ]
