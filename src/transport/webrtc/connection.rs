@@ -822,7 +822,10 @@ impl WebRtcConnection {
                             ?channel_id,
                             "channel closed",
                         );
+
+                        self.rtc.direct_api().close_data_channel(channel_id);
                         self.channels.insert(channel_id, ChannelState::Closing);
+                        self.handles.remove(&channel_id);
                     }
                     Some((channel_id, Some(SubstreamEvent::Message(data)))) => {
                         if let Err(error) = self.on_outbound_data(channel_id, data) {
