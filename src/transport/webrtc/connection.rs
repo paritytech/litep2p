@@ -642,8 +642,6 @@ impl WebRtcConnection {
             protocol: protocol.to_string(),
         });
 
-        // self.rtc.channel(channel_id).unwrap().set_buffered_amount_low_threshold(1024);
-
         tracing::trace!(
             target: LOG_TARGET,
             peer = ?self.peer,
