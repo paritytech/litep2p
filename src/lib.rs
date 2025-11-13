@@ -259,8 +259,8 @@ impl Litep2p {
             }));
         }
 
-        // start kademlia protocol event loop if enabled
-        if let Some(kademlia_config) = litep2p_config.kademlia.take() {
+        // start kademlia protocol event loops
+        for kademlia_config in litep2p_config.kademlia.into_iter() {
             tracing::debug!(
                 target: LOG_TARGET,
                 protocol_names = ?kademlia_config.protocol_names,
