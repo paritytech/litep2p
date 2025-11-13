@@ -22,11 +22,11 @@
 
 use crate::{
     codec::unsigned_varint::UnsignedVarint,
-    error::{self, Error, ParseError},
+    error::{self, Error, ParseError, SubstreamError},
     multistream_select::{
         protocol::{
             webrtc_encode_multistream_message, HeaderLine, Message, MessageIO, Protocol,
-            ProtocolError,
+            ProtocolError, PROTO_MULTISTREAM_1_0
         },
         Negotiated, NegotiationError, Version,
     },
@@ -41,7 +41,6 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use crate::error::SubstreamError;
 
 const LOG_TARGET: &str = "litep2p::multistream-select";
 
@@ -358,20 +357,32 @@ impl WebRtcDialerState {
         &mut self,
         payload: Vec<u8>,
     ) -> Result<HandshakeResult, crate::error::NegotiationError> {
-        let header = Protocol::try_from(&b"/multistream/1.0.0"[..])
-            .expect("valid multitstream-select header");
-
         // All multistream-select messages are length-prefixed. Since this code path is not using
         // multistream_select::protocol::MessageIO, we need to decode and remove the length here.
         let mut remaining: &[u8] = &payload;
         let (len, tail) = unsigned_varint::decode::usize(remaining).
-            map_err(|_| error::NegotiationError::ParseError(ParseError::InvalidData))?;
+            map_err(|error| {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?error,
+                    message = ?payload,
+                    "Failed to decode length-prefix in multistream message");
+                error::NegotiationError::ParseError(ParseError::InvalidData)
+            })?;
 
         let payload = tail[..len].to_vec();
 
-        let mut protocols = match Message::decode(payload.into()) {
+        let message = Message::decode(payload.into());
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?message,
+            "Decoded message while registering response",
+        );
+
+        let mut protocols = match message {
             Ok(Message::Header(HeaderLine::V1)) => {
-                vec![header.clone()]
+                vec![PROTO_MULTISTREAM_1_0]
             }
             Ok(Message::Protocol(protocol)) => vec![protocol],
             Ok(Message::Protocols(protocols)) => protocols,
@@ -396,7 +407,14 @@ impl WebRtcDialerState {
             }
 
             let (len, tail) = unsigned_varint::decode::usize(remaining).
-                map_err(|_| error::NegotiationError::ParseError(ParseError::InvalidData))?;
+                map_err(|error| {
+                    tracing::debug!(
+                    target: LOG_TARGET,
+                    ?error,
+                    message = ?remaining,
+                    "Failed to decode length-prefix in multistream message");
+                    error::NegotiationError::ParseError(ParseError::InvalidData)
+                })?;
 
             if len > tail.len() {
                 break;
@@ -406,7 +424,15 @@ impl WebRtcDialerState {
 
             match Message::decode(payload.into()) {
                 Ok(Message::Protocol(protocol)) => protocols.push(protocol),
-                Err(_) => return Err(error::NegotiationError::ParseError(ParseError::InvalidData)),
+                Err(error) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?error,
+                        message = ?tail[..len],
+                        "Failed to decode multistream message",
+                    );
+                    return Err(error::NegotiationError::ParseError(ParseError::InvalidData))
+                },
                 _ => return Err(error::NegotiationError::StateMismatch),
             }
 
@@ -419,7 +445,7 @@ impl WebRtcDialerState {
                 (HandshakeState::WaitingResponse, None) =>
                     return Err(crate::error::NegotiationError::StateMismatch),
                 (HandshakeState::WaitingResponse, Some(protocol)) => {
-                    if protocol == header {
+                    if protocol == PROTO_MULTISTREAM_1_0 {
                         self.state = HandshakeState::WaitingProtocol;
                     } else {
                         return Err(crate::error::NegotiationError::MultistreamSelectError(

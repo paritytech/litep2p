@@ -54,6 +54,8 @@ pub const MSG_MULTISTREAM_1_0: &[u8] = b"/multistream/1.0.0\n";
 const MSG_PROTOCOL_NA: &[u8] = b"na\n";
 /// The encoded form of a multistream-select 'ls' message.
 const MSG_LS: &[u8] = b"ls\n";
+/// A Protocol instance for the `/multistream/1.0.0` header line.
+pub const PROTO_MULTISTREAM_1_0: Protocol = Protocol(Bytes::from_static(MSG_MULTISTREAM_1_0));
 /// Logging target.
 const LOG_TARGET: &str = "litep2p::multistream-select";
 
