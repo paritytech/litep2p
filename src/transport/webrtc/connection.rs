@@ -388,19 +388,9 @@ impl WebRtcConnection {
 
         let rtc_message = WebRtcMessage::decode(&data)
             .map_err(|err| SubstreamError::NegotiationError(err.into()))?;
-        let payload = rtc_message.payload.ok_or(SubstreamError::NegotiationError(
+        let message = rtc_message.payload.ok_or(SubstreamError::NegotiationError(
             ParseError::InvalidData.into(),
         ))?;
-
-        // All multistream-select messages are length-prefixed. Since this code path is not using
-        // multistream_select::protocol::MessageIO, we need to decode and remove the length here.
-        let remaining: &[u8] = &payload;
-        let (len, tail) = unsigned_varint::decode::usize(remaining).
-            map_err(|_| SubstreamError::NegotiationError(
-                ParseError::InvalidData.into(),
-            ))?;
-
-        let message = tail[..len].to_vec();
 
     let HandshakeResult::Succeeded(protocol) = dialer_state.register_response(message)? else {
             tracing::trace!(
