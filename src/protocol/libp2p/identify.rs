@@ -302,7 +302,9 @@ impl Identify {
                         "failed to send ipfs identify response",
                     );
                 }
-                Ok(_) => {}
+                Ok(_) => {
+                    substream.close().await;
+                }
             }
         }))
     }
