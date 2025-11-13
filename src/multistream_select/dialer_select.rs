@@ -359,7 +359,7 @@ impl WebRtcDialerState {
     ) -> Result<HandshakeResult, crate::error::NegotiationError> {
         // All multistream-select messages are length-prefixed. Since this code path is not using
         // multistream_select::protocol::MessageIO, we need to decode and remove the length here.
-        let mut remaining: &[u8] = &payload;
+        let remaining: &[u8] = &payload;
         let (len, tail) = unsigned_varint::decode::usize(remaining).
             map_err(|error| {
                 tracing::debug!(
@@ -399,44 +399,9 @@ impl WebRtcDialerState {
             Err(_) => return Err(error::NegotiationError::ParseError(ParseError::InvalidData)),
         };
 
-        remaining = &tail[len..];
-
-        loop {
-            if remaining.is_empty() {
-                break;
-            }
-
-            let (len, tail) = unsigned_varint::decode::usize(remaining).
-                map_err(|error| {
-                    tracing::debug!(
-                    target: LOG_TARGET,
-                    ?error,
-                    message = ?remaining,
-                    "Failed to decode length-prefix in multistream message");
-                    error::NegotiationError::ParseError(ParseError::InvalidData)
-                })?;
-
-            if len > tail.len() {
-                break;
-            }
-
-            let payload = tail[..len].to_vec();
-
-            match Message::decode(payload.into()) {
-                Ok(Message::Protocol(protocol)) => protocols.push(protocol),
-                Err(error) => {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?error,
-                        message = ?tail[..len],
-                        "Failed to decode multistream message",
-                    );
-                    return Err(error::NegotiationError::ParseError(ParseError::InvalidData))
-                },
-                _ => return Err(error::NegotiationError::StateMismatch),
-            }
-
-            remaining = &tail[len..];
+        match drain_trailing_protocols(tail, len) {
+            Ok(protos) => protocols.extend(protos),
+            Err(error) => return Err(error),
         }
 
         let mut protocol_iter = protocols.into_iter();
@@ -474,6 +439,54 @@ impl WebRtcDialerState {
             }
         }
     }
+}
+
+fn drain_trailing_protocols(
+    tail: &[u8],
+    len: usize,
+) -> Result<Vec<Protocol>, error::NegotiationError> {
+    let mut protocols = vec![];
+    let mut remaining = &tail[len..];
+
+    loop {
+        if remaining.is_empty() {
+            break;
+        }
+
+        let (len, tail) = unsigned_varint::decode::usize(remaining).
+            map_err(|error| {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?error,
+                    message = ?remaining,
+                    "Failed to decode length-prefix in multistream message");
+                error::NegotiationError::ParseError(ParseError::InvalidData)
+            })?;
+
+        if len > tail.len() {
+            break;
+        }
+
+        let payload = tail[..len].to_vec();
+
+        match Message::decode(payload.into()) {
+            Ok(Message::Protocol(protocol)) => protocols.push(protocol),
+            Err(error) => {
+                tracing::debug!(
+                        target: LOG_TARGET,
+                        ?error,
+                        message = ?tail[..len],
+                        "Failed to decode multistream message",
+                    );
+                return Err(error::NegotiationError::ParseError(ParseError::InvalidData))
+            },
+            _ => return Err(error::NegotiationError::StateMismatch),
+        }
+
+        remaining = &tail[len..];
+    }
+
+    Ok(protocols)
 }
 
 #[cfg(test)]
