@@ -460,7 +460,15 @@ fn drain_trailing_protocols(
         })?;
 
         if len > tail.len() {
-            break;
+            tracing::debug!(
+                target: LOG_TARGET,
+                message = ?tail,
+                length_prefix = len,
+                actual_length = tail.len(),
+                "Truncated multistream message",
+            );
+
+            return Err(error::NegotiationError::ParseError(ParseError::InvalidData));
         }
 
         let payload = tail[..len].to_vec();
@@ -896,17 +904,20 @@ mod tests {
     #[test]
     fn header_line_missing() {
         // header line missing
-        let mut bytes = BytesMut::with_capacity(256);
-        let message = Message::Protocols(vec![
-            Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
-            Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
-        ]);
-        message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
+        let proto = b"/13371338/proto/1";
+        let mut bytes = BytesMut::with_capacity(proto.len() + 2);
+        bytes.put_u8((proto.len() + 1) as u8);
+
+        let response = Message::Protocol(Protocol::try_from(&proto[..]).unwrap())
+            .encode(&mut bytes)
+            .expect("valid message encodes");
+
+        let response = bytes.freeze().to_vec();
 
         let (mut dialer_state, _message) =
             WebRtcDialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
 
-        match dialer_state.register_response(bytes.freeze().to_vec()) {
+        match dialer_state.register_response(response) {
             Err(error::NegotiationError::MultistreamSelectError(NegotiationError::Failed)) => {}
             event => panic!("invalid event: {event:?}"),
         }
