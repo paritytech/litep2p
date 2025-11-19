@@ -26,7 +26,7 @@ use crate::{
     multistream_select::{
         protocol::{
             webrtc_encode_multistream_message, HeaderLine, Message, MessageIO, Protocol,
-            ProtocolError, PROTO_MULTISTREAM_1_0
+            ProtocolError, PROTO_MULTISTREAM_1_0,
         },
         Negotiated, NegotiationError, Version,
     },
@@ -360,15 +360,14 @@ impl WebRtcDialerState {
         // All multistream-select messages are length-prefixed. Since this code path is not using
         // multistream_select::protocol::MessageIO, we need to decode and remove the length here.
         let remaining: &[u8] = &payload;
-        let (len, tail) = unsigned_varint::decode::usize(remaining).
-            map_err(|error| {
-                tracing::debug!(
+        let (len, tail) = unsigned_varint::decode::usize(remaining).map_err(|error| {
+            tracing::debug!(
                     target: LOG_TARGET,
                     ?error,
                     message = ?payload,
                     "Failed to decode length-prefix in multistream message");
-                error::NegotiationError::ParseError(ParseError::InvalidData)
-            })?;
+            error::NegotiationError::ParseError(ParseError::InvalidData)
+        })?;
 
         let payload = tail[..len].to_vec();
 
@@ -386,15 +385,13 @@ impl WebRtcDialerState {
             }
             Ok(Message::Protocol(protocol)) => vec![protocol],
             Ok(Message::Protocols(protocols)) => protocols,
-            Ok(Message::NotAvailable) => {
+            Ok(Message::NotAvailable) =>
                 return match &self.state {
-                    HandshakeState::WaitingProtocol =>
-                        Err(error::NegotiationError::MultistreamSelectError(
-                            NegotiationError::Failed
-                        )),
+                    HandshakeState::WaitingProtocol => Err(
+                        error::NegotiationError::MultistreamSelectError(NegotiationError::Failed),
+                    ),
                     _ => Err(error::NegotiationError::StateMismatch),
-                }
-            }
+                },
             Ok(Message::ListProtocols) => return Err(error::NegotiationError::StateMismatch),
             Err(_) => return Err(error::NegotiationError::ParseError(ParseError::InvalidData)),
         };
@@ -453,15 +450,14 @@ fn drain_trailing_protocols(
             break;
         }
 
-        let (len, tail) = unsigned_varint::decode::usize(remaining).
-            map_err(|error| {
-                tracing::debug!(
+        let (len, tail) = unsigned_varint::decode::usize(remaining).map_err(|error| {
+            tracing::debug!(
                     target: LOG_TARGET,
                     ?error,
                     message = ?remaining,
                     "Failed to decode length-prefix in multistream message");
-                error::NegotiationError::ParseError(ParseError::InvalidData)
-            })?;
+            error::NegotiationError::ParseError(ParseError::InvalidData)
+        })?;
 
         if len > tail.len() {
             break;
@@ -473,13 +469,13 @@ fn drain_trailing_protocols(
             Ok(Message::Protocol(protocol)) => protocols.push(protocol),
             Err(error) => {
                 tracing::debug!(
-                        target: LOG_TARGET,
-                        ?error,
-                        message = ?tail[..len],
-                        "Failed to decode multistream message",
-                    );
-                return Err(error::NegotiationError::ParseError(ParseError::InvalidData))
-            },
+                    target: LOG_TARGET,
+                    ?error,
+                    message = ?tail[..len],
+                    "Failed to decode multistream message",
+                );
+                return Err(error::NegotiationError::ParseError(ParseError::InvalidData));
+            }
             _ => return Err(error::NegotiationError::StateMismatch),
         }
 
@@ -492,11 +488,10 @@ fn drain_trailing_protocols(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::multistream_select::listener_select_proto;
-    use std::time::Duration;
+    use crate::multistream_select::{listener_select_proto, protocol::MSG_MULTISTREAM_1_0};
     use bytes::BufMut;
+    use std::time::Duration;
     use tokio::net::{TcpListener, TcpStream};
-    use crate::multistream_select::protocol::MSG_MULTISTREAM_1_0;
 
     #[tokio::test]
     async fn select_proto_basic() {
@@ -892,7 +887,7 @@ mod tests {
             WebRtcDialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
 
         match dialer_state.register_response(bytes.freeze().to_vec()) {
-            Ok(HandshakeResult::NotReady) => {},
+            Ok(HandshakeResult::NotReady) => {}
             Err(err) => panic!("unexpected error: {:?}", err),
             event => panic!("invalid event: {event:?}"),
         }

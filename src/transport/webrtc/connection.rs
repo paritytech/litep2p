@@ -392,7 +392,7 @@ impl WebRtcConnection {
             ParseError::InvalidData.into(),
         ))?;
 
-    let HandshakeResult::Succeeded(protocol) = dialer_state.register_response(message)? else {
+        let HandshakeResult::Succeeded(protocol) = dialer_state.register_response(message)? else {
             tracing::trace!(
                 target: LOG_TARGET,
                 peer = ?self.peer,
