@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1] - 2025-11-19
+
+This release adds support for connecting to multiple Kademlia DHT networks. The change is backward-compatible, no client code modifications should be needed compared to v0.12.0.
+
+### Changed
+
+- kad: Allow connecting to more than one DHT network ([#473](https://github.com/paritytech/litep2p/pull/473))
+- service: Log services that have closed ([#474](https://github.com/paritytech/litep2p/pull/474))
+- update simple-dns ([#470](https://github.com/paritytech/litep2p/pull/470))
+
 ## [0.12.0] - 2025-11-11
 
 This release adds `KademliaEvent::PutRecordSuccess` & `KademliaEvent::AddProviderSuccess` events to Kademlia, allowing to track whether publishing a record or a provider was successfull. While `PutRecordSuccess` was present in the previous versions of litep2p, it was actually never emitted. Note that `AddProviderSuccess` and `QueryFailed` are also generated during automatic provider refresh, so those may be emitted for `QueryId`s not known to the client code.
