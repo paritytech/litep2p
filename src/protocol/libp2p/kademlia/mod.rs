@@ -240,7 +240,9 @@ impl Kademlia {
                 self.routing_table.on_connection_established(Key::from(peer), endpoint);
 
                 let Some(actions) = self.pending_dials.remove(&peer) else {
-                    entry.insert(PeerContext::new());
+                    // Note that we do not add peer entry if we don't have any pending actions.
+                    // This is done to not populate `self.peers` with peers that don't support
+                    // our Kademlia protocol.
                     return Ok(());
                 };
 
@@ -343,6 +345,7 @@ impl Kademlia {
         let pending_action = &mut self
             .peers
             .get_mut(&peer)
+            // If we opened an outbound substream, we must have pending actions for the peer.
             .ok_or(Error::PeerDoesntExist(peer))?
             .pending_actions
             .remove(&substream_id);
@@ -411,6 +414,10 @@ impl Kademlia {
     /// Remote opened a substream to local node.
     async fn on_inbound_substream(&mut self, peer: PeerId, substream: Substream) {
         tracing::trace!(target: LOG_TARGET, ?peer, "inbound substream opened");
+
+        // Ensure peer entry exists to treat peer as [`ConnectionType::Connected`].
+        // when inserting into the routing table.
+        self.peers.entry(peer).or_default();
 
         self.executor.read_message(peer, None, substream);
     }
