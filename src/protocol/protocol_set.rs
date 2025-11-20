@@ -83,7 +83,8 @@ pub enum InnerTransportEvent {
 
     /// Failed to dial peer.
     ///
-    /// This is reported to that protocol which initiated the connection.
+    /// This is reported to that protocol which initiated the connection. The addresses are only forwarded
+    /// if the protocol was registered with `DialFailureAddresses::Required`.
     DialFailure {
         /// Peer ID.
         peer: PeerId,
