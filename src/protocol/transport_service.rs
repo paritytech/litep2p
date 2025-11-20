@@ -564,7 +564,11 @@ impl Stream for TransportService {
         while let Poll::Ready(event) = self.rx.poll_recv(cx) {
             match event {
                 None => {
-                    tracing::warn!(target: LOG_TARGET, "transport service closed");
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        protocol = ?protocol_name,
+                        "transport service closed"
+                    );
                     return Poll::Ready(None);
                 }
                 Some(InnerTransportEvent::ConnectionEstablished {

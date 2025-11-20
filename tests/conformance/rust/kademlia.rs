@@ -284,7 +284,7 @@ async fn put_record() {
     let record_key = RecordKey::new(&vec![1, 2, 3, 4]);
     let record = Record::new(record_key, vec![1, 3, 3, 7, 1, 3, 3, 8]);
 
-    let _ = kad_handle.put_record(record).await;
+    let _ = kad_handle.put_record(record, Quorum::All).await;
 
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -439,7 +439,7 @@ async fn litep2p_add_provider_to_libp2p() {
 
     let litep2p_peer_id = PeerId::from_bytes(&litep2p.local_peer_id().to_bytes()).unwrap();
     let key = vec![1u8, 2u8, 3u8];
-    litep2p_kad.start_providing(RecordKey::new(&key)).await;
+    litep2p_kad.start_providing(RecordKey::new(&key), Quorum::All).await;
 
     loop {
         tokio::select! {
@@ -606,7 +606,7 @@ async fn libp2p_get_providers_from_litep2p() {
 
     // Store provider locally in litep2p.
     let original_key = vec![1u8, 2u8, 3u8];
-    litep2p_kad.start_providing(original_key.clone().into()).await;
+    litep2p_kad.start_providing(original_key.clone().into(), Quorum::All).await;
 
     // Drive litep2p a little bit to make sure the provider record is stored and no `ADD_PROVIDER`
     // requests are generated (because no peers are know yet).
