@@ -272,7 +272,7 @@ impl AddressStore {
     ///
     /// This will remove the address from the store and add it to the known bad addresses.
     /// This guarantees that the address will not be re-added to the store.
-    pub fn unrecoverable_address(&mut self, address: Multiaddr) {
+    fn unrecoverable_address(&mut self, address: Multiaddr) {
         self.addresses.remove(&address);
 
         if self.known_bad_addresses.len() >= self.max_capacity {
