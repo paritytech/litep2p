@@ -18,15 +18,15 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{error::DialError, PeerId};
+use crate::{
+    error::{DialError, NegotiationError},
+    PeerId,
+};
 
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 
 use std::collections::{hash_map::Entry, HashMap, HashSet};
-
-/// Logging target for the file.
-const LOG_TARGET: &str = "litep2p::transport-manager::address";
 
 /// Maximum number of addresses tracked for a peer.
 const MAX_ADDRESSES: usize = 64;
@@ -215,6 +215,9 @@ impl AddressStore {
     pub fn error_score(error: &DialError) -> i32 {
         match error {
             DialError::AddressError(_) => scores::ADDRESS_FAILURE,
+            DialError::NegotiationError(NegotiationError::PeerIdMismatch(_, _)) =>
+                scores::ADDRESS_FAILURE,
+
             _ => scores::CONNECTION_FAILURE,
         }
     }
@@ -229,13 +232,8 @@ impl AddressStore {
     /// If the address is not in the store, it will be inserted.
     /// Otherwise, the score and connection ID will be updated.
     pub fn insert(&mut self, record: AddressRecord) {
-        if self.known_bad_addresses.contains(&record.address) {
-            tracing::debug!(
-                target: LOG_TARGET,
-                address = ?record.address,
-                "Ignoring address marked as unrecoverable",
-            );
-
+        if record.score == scores::ADDRESS_FAILURE {
+            self.unrecoverable_address(record.address);
             return;
         }
 
@@ -274,13 +272,13 @@ impl AddressStore {
     ///
     /// This will remove the address from the store and add it to the known bad addresses.
     /// This guarantees that the address will not be re-added to the store.
-    pub fn unrecoverable_address(&mut self, address: &Multiaddr) {
-        self.addresses.remove(address);
+    pub fn unrecoverable_address(&mut self, address: Multiaddr) {
+        self.addresses.remove(&address);
 
         if self.known_bad_addresses.len() >= self.max_capacity {
             return;
         }
-        self.known_bad_addresses.insert(address.clone());
+        self.known_bad_addresses.insert(address);
     }
 
     /// Return the available addresses sorted by score.
