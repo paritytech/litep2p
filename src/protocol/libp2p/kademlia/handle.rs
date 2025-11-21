@@ -201,7 +201,7 @@ pub enum KademliaEvent {
     /// in order to add the peers to routing table.
     RoutingTableUpdate {
         /// Discovered peers.
-        peers: Vec<PeerId>,
+        peers: Vec<(PeerId, Vec<Multiaddr>)>,
     },
 
     /// `GET_VALUE` query succeeded.

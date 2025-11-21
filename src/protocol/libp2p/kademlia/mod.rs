@@ -435,7 +435,10 @@ impl Kademlia {
         let _ = self
             .event_tx
             .send(KademliaEvent::RoutingTableUpdate {
-                peers: peers.iter().map(|peer| peer.peer).collect::<Vec<PeerId>>(),
+                peers: peers
+                    .iter()
+                    .map(|peer| (peer.peer, peer.addresses()))
+                    .collect::<Vec<(PeerId, Vec<Multiaddr>)>>(),
             })
             .await;
 
