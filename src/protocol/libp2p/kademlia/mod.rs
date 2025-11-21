@@ -439,11 +439,12 @@ impl Kademlia {
             })
             .await;
 
-        for info in peers {
-            let addresses = info.addresses();
-            self.service.add_known_address(&info.peer, addresses.clone().into_iter());
+        if std::matches!(self.update_mode, RoutingTableUpdateMode::Automatic) {
+            for info in peers {
+                let addresses = info.addresses();
 
-            if std::matches!(self.update_mode, RoutingTableUpdateMode::Automatic) {
+                self.service.add_known_address(&info.peer, addresses.clone().into_iter());
+
                 self.routing_table.add_known_peer(
                     info.peer,
                     addresses,
