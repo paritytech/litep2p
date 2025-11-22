@@ -351,6 +351,14 @@ pub fn webrtc_listener_negotiate<'a>(
     supported_protocols: &'a mut impl Iterator<Item = &'a ProtocolName>,
     payload: Bytes,
 ) -> crate::Result<ListenerSelectResult> {
+    let payload = if payload.len() > 2 && payload[0..payload.len() - 2] != b"\n\n"[..] {
+        let mut buf = BytesMut::from(payload);
+        buf.extend_from_slice(b"\n");
+        buf.freeze()
+    } else {
+        payload
+    };
+
     let Message::Protocols(protocols) = Message::decode(payload).map_err(|_| Error::InvalidData)?
     else {
         return Err(Error::NegotiationError(
@@ -466,12 +474,7 @@ mod tests {
         message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
 
         match webrtc_listener_negotiate(&mut local_protocols.iter(), bytes.freeze()) {
-            Err(error) => assert!(std::matches!(
-                error,
-                Error::NegotiationError(error::NegotiationError::MultistreamSelectError(
-                    NegotiationError::Failed
-                ))
-            )),
+            Err(error) => assert!(std::matches!(error, Error::InvalidData)),
             event => panic!("invalid event: {event:?}"),
         }
     }
@@ -495,12 +498,7 @@ mod tests {
         message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
 
         match webrtc_listener_negotiate(&mut local_protocols.iter(), bytes.freeze()) {
-            Err(error) => assert!(std::matches!(
-                error,
-                Error::NegotiationError(error::NegotiationError::MultistreamSelectError(
-                    NegotiationError::Failed
-                ))
-            )),
+            Err(error) => assert!(std::matches!(error, Error::InvalidData)),
             event => panic!("invalid event: {event:?}"),
         }
     }
