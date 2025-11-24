@@ -798,11 +798,12 @@ mod tests {
         let (cmd_tx, _cmd_rx) = channel(64);
 
         let local_peer_id = PeerId::random();
-        let first_addr: Multiaddr = "/ip6/::1/tcp/8888".parse().expect("valid multiaddress");
-        let second_addr: Multiaddr = "/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress");
+        let specific_bind: Multiaddr = "/ip6/::1/tcp/8888".parse().expect("valid multiaddress");
+        let ipv6_bind: Multiaddr = "/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress");
+        let wildcard_bind: Multiaddr = "/ip4/0.0.0.0/tcp/9000".parse().unwrap();
 
         let listen_addresses = Arc::new(RwLock::new(
-            [first_addr.clone(), second_addr.clone()].iter().cloned().collect(),
+            [specific_bind, wildcard_bind, ipv6_bind].into_iter().collect(),
         ));
         println!("{:?}", listen_addresses);
 
@@ -815,12 +816,14 @@ mod tests {
             public_addresses: PublicAddresses::new(local_peer_id),
         };
 
-        // local addresses
+        // Exact matches
+        assert!(handle
+            .is_local_address(&"/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress")));
         assert!(handle.is_local_address(
             &"/ip6/::1/tcp/8888".parse::<Multiaddr>().expect("valid multiaddress")
         ));
-        assert!(handle
-            .is_local_address(&"/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress")));
+
+        // Peer ID stripping
         assert!(handle.is_local_address(
             &"/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
@@ -831,7 +834,6 @@ mod tests {
                 .parse()
                 .expect("valid multiaddress")
         ));
-
         // same address but different peer id
         assert!(handle.is_local_address(
             &"/ip6/::1/tcp/8888/p2p/12D3KooWPGxxxQiBEBZ52RY31Z2chn4xsDrGCMouZ88izJrak2T1"
@@ -844,10 +846,29 @@ mod tests {
                 .expect("valid multiaddress")
         ));
 
-        // different address
+        // Port collision protection: we listen on 0.0.0.0:9000 and should match any loopback
+        // address on port 9000.
+        assert!(
+            handle.is_local_address(&"/ip4/127.0.0.1/tcp/9000".parse().unwrap()),
+            "Loopback input should satisfy Wildcard (0.0.0.0) listener"
+        );
+        // 8.8.8.8 is a different IP.
+        assert!(
+            !handle.is_local_address(&"/ip4/8.8.8.8/tcp/9000".parse().unwrap()),
+            "Remote IP with same port should NOT be considered local against Wildcard listener"
+        );
+
+        // Port mismatches
+        assert!(
+            !handle.is_local_address(&"/ip4/127.0.0.1/tcp/1234".parse().unwrap()),
+            "Same IP but different port should fail"
+        );
+        assert!(
+            !handle.is_local_address(&"/ip4/0.0.0.0/tcp/1234".parse().unwrap()),
+            "Wildcard IP but different port should fail"
+        );
         assert!(!handle
             .is_local_address(&"/ip4/127.0.0.1/tcp/9999".parse().expect("valid multiaddress")));
-        // different address
         assert!(!handle
             .is_local_address(&"/ip4/127.0.0.1/tcp/7777".parse().expect("valid multiaddress")));
     }
