@@ -40,6 +40,7 @@ use tokio::sync::mpsc::{error::TrySendError, Sender};
 
 use std::{
     collections::{HashMap, HashSet},
+    net::IpAddr,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -164,14 +165,66 @@ impl TransportManagerHandle {
         }
     }
 
+    /// Helper to extract IP and Port from a Multiaddr
+    fn extract_ip_port(&self, addr: &Multiaddr) -> Option<(IpAddr, u16)> {
+        let mut iter = addr.iter();
+        let ip = match iter.next() {
+            Some(Protocol::Ip4(i)) => IpAddr::V4(i),
+            Some(Protocol::Ip6(i)) => IpAddr::V6(i),
+            _ => return None,
+        };
+
+        let port = match iter.next() {
+            Some(Protocol::Tcp(p)) | Some(Protocol::Udp(p)) => p,
+            _ => return None,
+        };
+
+        Some((ip, port))
+    }
+
     /// Check if the address is a local listen address and if so, discard it.
     fn is_local_address(&self, address: &Multiaddr) -> bool {
+        // Strip the peer ID if present.
         let address: Multiaddr = address
             .iter()
             .take_while(|protocol| !std::matches!(protocol, Protocol::P2p(_)))
             .collect();
 
-        self.listen_addresses.read().contains(&address)
+        // Check for the exact match.
+        let listen_addresses = self.listen_addresses.read();
+        if listen_addresses.contains(&address) {
+            return true;
+        }
+
+        let Some((ip, port)) = self.extract_ip_port(&address) else {
+            return false;
+        };
+
+        for listen_address in listen_addresses.iter() {
+            let Some((listen_ip, listen_port)) = self.extract_ip_port(listen_address) else {
+                continue;
+            };
+
+            if port == listen_port {
+                // Exact IP match.
+                if listen_ip == ip {
+                    return true;
+                }
+
+                // Check if the listener is binding to any (0.0.0.0) interface
+                // and the incoming is a loopback address.
+                if listen_ip.is_unspecified() && ip.is_loopback() {
+                    return true;
+                }
+
+                // Check for ipv4/ipv6 loopback equivalence.
+                if listen_ip.is_loopback() && ip.is_loopback() {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Add one or more known addresses for peer.
@@ -745,11 +798,12 @@ mod tests {
         let (cmd_tx, _cmd_rx) = channel(64);
 
         let local_peer_id = PeerId::random();
-        let first_addr: Multiaddr = "/ip6/::1/tcp/8888".parse().expect("valid multiaddress");
-        let second_addr: Multiaddr = "/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress");
+        let specific_bind: Multiaddr = "/ip6/::1/tcp/8888".parse().expect("valid multiaddress");
+        let ipv6_bind: Multiaddr = "/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress");
+        let wildcard_bind: Multiaddr = "/ip4/0.0.0.0/tcp/9000".parse().unwrap();
 
         let listen_addresses = Arc::new(RwLock::new(
-            [first_addr.clone(), second_addr.clone()].iter().cloned().collect(),
+            [specific_bind, wildcard_bind, ipv6_bind].into_iter().collect(),
         ));
         println!("{:?}", listen_addresses);
 
@@ -762,12 +816,14 @@ mod tests {
             public_addresses: PublicAddresses::new(local_peer_id),
         };
 
-        // local addresses
+        // Exact matches
+        assert!(handle
+            .is_local_address(&"/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress")));
         assert!(handle.is_local_address(
             &"/ip6/::1/tcp/8888".parse::<Multiaddr>().expect("valid multiaddress")
         ));
-        assert!(handle
-            .is_local_address(&"/ip4/127.0.0.1/tcp/8888".parse().expect("valid multiaddress")));
+
+        // Peer ID stripping
         assert!(handle.is_local_address(
             &"/ip6/::1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
                 .parse()
@@ -778,7 +834,6 @@ mod tests {
                 .parse()
                 .expect("valid multiaddress")
         ));
-
         // same address but different peer id
         assert!(handle.is_local_address(
             &"/ip6/::1/tcp/8888/p2p/12D3KooWPGxxxQiBEBZ52RY31Z2chn4xsDrGCMouZ88izJrak2T1"
@@ -791,10 +846,29 @@ mod tests {
                 .expect("valid multiaddress")
         ));
 
-        // different address
+        // Port collision protection: we listen on 0.0.0.0:9000 and should match any loopback
+        // address on port 9000.
+        assert!(
+            handle.is_local_address(&"/ip4/127.0.0.1/tcp/9000".parse().unwrap()),
+            "Loopback input should satisfy Wildcard (0.0.0.0) listener"
+        );
+        // 8.8.8.8 is a different IP.
+        assert!(
+            !handle.is_local_address(&"/ip4/8.8.8.8/tcp/9000".parse().unwrap()),
+            "Remote IP with same port should NOT be considered local against Wildcard listener"
+        );
+
+        // Port mismatches
+        assert!(
+            !handle.is_local_address(&"/ip4/127.0.0.1/tcp/1234".parse().unwrap()),
+            "Same IP but different port should fail"
+        );
+        assert!(
+            !handle.is_local_address(&"/ip4/0.0.0.0/tcp/1234".parse().unwrap()),
+            "Wildcard IP but different port should fail"
+        );
         assert!(!handle
             .is_local_address(&"/ip4/127.0.0.1/tcp/9999".parse().expect("valid multiaddress")));
-        // different address
         assert!(!handle
             .is_local_address(&"/ip4/127.0.0.1/tcp/7777".parse().expect("valid multiaddress")));
     }
