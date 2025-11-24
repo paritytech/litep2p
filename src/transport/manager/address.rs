@@ -22,14 +22,18 @@ use crate::{
     error::{DialError, NegotiationError},
     PeerId,
 };
+use std::time::{Duration, Instant};
 
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 
-use std::collections::{hash_map::Entry, HashMap, HashSet};
+use std::collections::{hash_map::Entry, HashMap};
 
 /// Maximum number of addresses tracked for a peer.
 const MAX_ADDRESSES: usize = 64;
+
+/// Duration for which a bad address is kept in the known bad list.
+const BAD_ADDRESS_EXPIRATION: Duration = Duration::from_secs(15 * 60); // 15 Minutes
 
 /// Scores for address records.
 pub mod scores {
@@ -154,9 +158,9 @@ impl Ord for AddressRecord {
 pub struct AddressStore {
     /// Addresses available.
     pub addresses: HashMap<Multiaddr, AddressRecord>,
-    /// A list of known bad addresses. These are addresses that we have dialed
-    /// in the past and failed with an unrecoverable error.
-    pub known_bad_addresses: HashSet<Multiaddr>,
+    /// A list of known bad addresses mapped to the time they were marked bad.
+    /// These addresses are ignored until the expiration duration passes.
+    pub known_bad_addresses: HashMap<Multiaddr, Instant>,
     /// Maximum capacity of the address store.
     max_capacity: usize,
 }
@@ -206,7 +210,7 @@ impl AddressStore {
     pub fn new() -> Self {
         Self {
             addresses: HashMap::with_capacity(MAX_ADDRESSES),
-            known_bad_addresses: HashSet::with_capacity(MAX_ADDRESSES),
+            known_bad_addresses: HashMap::with_capacity(MAX_ADDRESSES),
             max_capacity: MAX_ADDRESSES,
         }
     }
@@ -217,7 +221,6 @@ impl AddressStore {
             DialError::AddressError(_) => scores::ADDRESS_FAILURE,
             DialError::NegotiationError(NegotiationError::PeerIdMismatch(_, _)) =>
                 scores::ADDRESS_FAILURE,
-
             _ => scores::CONNECTION_FAILURE,
         }
     }
@@ -228,10 +231,12 @@ impl AddressStore {
     }
 
     /// Insert the address record into [`AddressStore`] with the provided score.
-    ///
-    /// If the address is not in the store, it will be inserted.
-    /// Otherwise, the score and connection ID will be updated.
     pub fn insert(&mut self, record: AddressRecord) {
+        // Check if this address is currently in the known bad list
+        if self.is_known_bad(&record.address) {
+            return;
+        }
+
         if record.score == scores::ADDRESS_FAILURE {
             self.unrecoverable_address(record.address);
             return;
@@ -242,13 +247,6 @@ impl AddressStore {
             return;
         }
 
-        // The eviction algorithm favours addresses with higher scores.
-        //
-        // This algorithm has the following implications:
-        //  - it keeps the best addresses in the store.
-        //  - if the store is at capacity, the worst address will be evicted.
-        //  - an address that is not dialed yet (with score zero) will be preferred over an address
-        //  that already failed (with negative score).
         if self.addresses.len() >= self.max_capacity {
             let min_record = self
                 .addresses
@@ -257,28 +255,47 @@ impl AddressStore {
                 .cloned()
                 .expect("There is at least one element checked above; qed");
 
-            // The lowest score is better than the new record.
             if record.score < min_record.score {
                 return;
             }
             self.addresses.remove(min_record.address());
         }
 
-        // Insert the record.
         self.addresses.insert(record.address.clone(), record);
     }
 
     /// Mark an address as unrecoverable.
     ///
-    /// This will remove the address from the store and add it to the known bad addresses.
-    /// This guarantees that the address will not be re-added to the store.
+    /// This will remove the address from the store and add it to the known bad addresses
+    /// with a timestamp.
     fn unrecoverable_address(&mut self, address: Multiaddr) {
         self.addresses.remove(&address);
+
+        // Free up capacity if addresses expired.
+        self.known_bad_addresses
+            .retain(|_, time| time.elapsed() < BAD_ADDRESS_EXPIRATION);
 
         if self.known_bad_addresses.len() >= self.max_capacity {
             return;
         }
-        self.known_bad_addresses.insert(address);
+
+        self.known_bad_addresses.insert(address, Instant::now());
+    }
+
+    /// Checks if an address is marked as bad and not expired.
+    ///
+    /// If it is found but expired, it removes it and returns false.
+    pub fn is_known_bad(&mut self, address: &Multiaddr) -> bool {
+        match self.known_bad_addresses.get(address) {
+            Some(&timestamp) if timestamp.elapsed() >= BAD_ADDRESS_EXPIRATION => {
+                // Expired: Remove it so it can be re-added later
+                self.known_bad_addresses.remove(address);
+
+                false
+            }
+            Some(_) => true,
+            None => false,
+        }
     }
 
     /// Return the available addresses sorted by score.
