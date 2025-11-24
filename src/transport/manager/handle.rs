@@ -40,6 +40,7 @@ use tokio::sync::mpsc::{error::TrySendError, Sender};
 
 use std::{
     collections::{HashMap, HashSet},
+    net::IpAddr,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -164,14 +165,66 @@ impl TransportManagerHandle {
         }
     }
 
+    /// Helper to extract IP and Port from a Multiaddr
+    fn extract_ip_port(&self, addr: &Multiaddr) -> Option<(IpAddr, u16)> {
+        let mut iter = addr.iter();
+        let ip = match iter.next() {
+            Some(Protocol::Ip4(i)) => IpAddr::V4(i),
+            Some(Protocol::Ip6(i)) => IpAddr::V6(i),
+            _ => return None,
+        };
+
+        let port = match iter.next() {
+            Some(Protocol::Tcp(p)) | Some(Protocol::Udp(p)) => p,
+            _ => return None,
+        };
+
+        Some((ip, port))
+    }
+
     /// Check if the address is a local listen address and if so, discard it.
     fn is_local_address(&self, address: &Multiaddr) -> bool {
+        // Strip the peer ID if present.
         let address: Multiaddr = address
             .iter()
             .take_while(|protocol| !std::matches!(protocol, Protocol::P2p(_)))
             .collect();
 
-        self.listen_addresses.read().contains(&address)
+        // Check for the exact match.
+        let listen_addresses = self.listen_addresses.read();
+        if listen_addresses.contains(&address) {
+            return true;
+        }
+
+        let Some((ip, port)) = self.extract_ip_port(&address) else {
+            return false;
+        };
+
+        for listen_address in listen_addresses.iter() {
+            let Some((listen_ip, listen_port)) = self.extract_ip_port(listen_address) else {
+                continue;
+            };
+
+            if port == listen_port {
+                // Exact IP match.
+                if listen_ip == ip {
+                    return true;
+                }
+
+                // Check if the listener is binding to any (0.0.0.0) interface
+                // and the incoming is a loopback address.
+                if listen_ip.is_unspecified() && ip.is_loopback() {
+                    return true;
+                }
+
+                // Check for ipv4/ipv6 loopback equivalence.
+                if listen_ip.is_loopback() && ip.is_loopback() {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Add one or more known addresses for peer.
