@@ -46,7 +46,7 @@ pub mod scores {
     /// Score for providing an invalid address.
     ///
     /// This address can never be reached.
-    pub const ADDRESS_FAILURE: i32 = i32::MIN;
+    pub const UNRECOVERABLE_FAILURES: i32 = i32::MIN;
 }
 
 #[allow(clippy::derived_hash_with_manual_eq)]
@@ -218,9 +218,9 @@ impl AddressStore {
     /// Get the score for a given error.
     pub fn error_score(error: &DialError) -> i32 {
         match error {
-            DialError::AddressError(_) => scores::ADDRESS_FAILURE,
+            DialError::AddressError(_) => scores::UNRECOVERABLE_FAILURES,
             DialError::NegotiationError(NegotiationError::PeerIdMismatch(_, _)) =>
-                scores::ADDRESS_FAILURE,
+                scores::UNRECOVERABLE_FAILURES,
             _ => scores::CONNECTION_FAILURE,
         }
     }
@@ -237,7 +237,7 @@ impl AddressStore {
             return;
         }
 
-        if record.score == scores::ADDRESS_FAILURE {
+        if record.score == scores::UNRECOVERABLE_FAILURES {
             self.unrecoverable_address(record.address);
             return;
         }
