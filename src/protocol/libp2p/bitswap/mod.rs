@@ -164,13 +164,55 @@ impl Bitswap {
                 let want_type = match entry.want_type {
                     0 => WantType::Block,
                     1 => WantType::Have,
-                    _ => return None,
+                    _ => {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            "Unhandled `WantList` type: {}",
+                            entry.want_type
+                        );
+                        return None;
+                    }
                 };
 
-                (cid.version() == cid::Version::V1
-                    && cid.hash().code() == u64::from(Code::Blake2b256)
-                    && cid.hash().size() == 32)
-                    .then_some((cid, want_type))
+                // Check supported CID versions.
+                match cid.version() {
+                    Version::V0 => {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            "Unsupported CID version {:?} for cid=: {cid}",
+                            cid.version()
+                        );
+                        return None;
+                    }
+                    Version::V1 => (/* Ok */),
+                }
+
+                // Check supported multihash length (only 32).
+                let size = cid.hash().size();
+                if size != 32 {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        "Unsupported multihash size: {size} for cid: {cid}, supports only 32!"
+                    );
+                    return None;
+                }
+
+                // Check supported multihash a.k.a. hashing algorithm.
+                let code = cid.hash().code();
+                if code != u64::from(Code::Blake2b256)
+                    && code != u64::from(Code::Sha2_256)
+                    && code != u64::from(Code::Keccak256)
+                {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        "Unsupported multihash algorithm: {code} for cid: {cid}, \
+                         supports only Blake2b256, Sha2_256 and Keccak256!"
+                    );
+                    return None;
+                }
+
+                // All checks passed, pass the cid.
+                Some((cid, want_type))
             })
             .collect::<Vec<_>>();
 
