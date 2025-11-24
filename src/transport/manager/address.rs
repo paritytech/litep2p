@@ -536,7 +536,7 @@ mod tests {
     fn evict_on_capacity() {
         let mut store = AddressStore {
             addresses: HashMap::new(),
-            known_bad_addresses: HashSet::new(),
+            known_bad_addresses: HashMap::new(),
             max_capacity: 2,
         };
 
@@ -568,5 +568,151 @@ mod tests {
         assert_eq!(store.addresses.len(), 2);
         assert!(store.addresses.contains_key(first_record.address()));
         assert!(store.addresses.contains_key(fourth_record.address()));
+    }
+
+    #[test]
+    fn test_mark_address_as_bad() {
+        let mut store = AddressStore::new();
+        let mut rng = rand::thread_rng();
+        let mut record = tcp_address_record(&mut rng);
+        let addr = record.address().clone();
+        record.score = scores::UNRECOVERABLE_FAILURES;
+
+        store.insert(record);
+
+        assert!(
+            store.addresses.is_empty(),
+            "Address should not be in active list"
+        );
+        assert!(
+            store.known_bad_addresses.contains_key(&addr),
+            "Address should be in bad list"
+        );
+        assert!(store.is_known_bad(&addr), "Helper should return true");
+    }
+
+    #[test]
+    fn test_bad_address_expires() {
+        let mut store = AddressStore::new();
+        let mut rng = rand::thread_rng();
+        let record = tcp_address_record(&mut rng);
+        let addr = record.address().clone();
+
+        // 1. Manually simulate a bad address added 20 minutes ago
+        let past_time = Instant::now() - Duration::from_secs(20 * 60);
+        store.known_bad_addresses.insert(addr.clone(), past_time);
+
+        // 2. Verify is_known_bad returns false (it should lazily clean it up)
+        assert_eq!(
+            store.is_known_bad(&addr),
+            false,
+            "Address should be expired"
+        );
+
+        // 3. Verify it was actually removed from the map
+        assert!(
+            store.known_bad_addresses.is_empty(),
+            "Expired address should be removed from map"
+        );
+    }
+
+    #[test]
+    fn test_bad_address_does_not_expire_early() {
+        let mut store = AddressStore::new();
+        let mut rng = rand::thread_rng();
+        let record = tcp_address_record(&mut rng);
+        let addr = record.address().clone();
+
+        // 1. Simulate a bad address added 5 minutes ago (Expiration is 15m)
+        let recent_time = Instant::now() - Duration::from_secs(5 * 60);
+        store.known_bad_addresses.insert(addr.clone(), recent_time);
+
+        // 2. Verify it is still considered bad
+        assert_eq!(store.is_known_bad(&addr), true);
+        assert!(!store.known_bad_addresses.is_empty());
+    }
+
+    #[test]
+    fn test_insert_allows_expired_bad_address() {
+        let mut store = AddressStore::new();
+        let mut rng = rand::thread_rng();
+        let record = tcp_address_record(&mut rng);
+        let addr = record.address().clone();
+
+        // 1. Manually inject an expired ban
+        let past_time = Instant::now() - Duration::from_secs(20 * 60);
+        store.known_bad_addresses.insert(addr.clone(), past_time);
+
+        // 2. Try to insert the address again with a neutral score
+        let mut new_rec = record.clone();
+        new_rec.update_score(0);
+        store.insert(new_rec);
+
+        // 3. It should be accepted into the active addresses because the ban expired
+        assert!(store.addresses.contains_key(&addr));
+        assert!(!store.known_bad_addresses.contains_key(&addr));
+    }
+
+    #[test]
+    fn test_insert_rejects_active_bad_address() {
+        let mut store = AddressStore::new();
+        let mut rng = rand::thread_rng();
+        let record = tcp_address_record(&mut rng);
+        let addr = record.address().clone();
+
+        // 1. Manually inject an active ban (only 1 min old)
+        let recent_time = Instant::now() - Duration::from_secs(60);
+        store.known_bad_addresses.insert(addr.clone(), recent_time);
+
+        // 2. Try to insert the address again
+        let mut new_rec = record.clone();
+        new_rec.update_score(0);
+        store.insert(new_rec);
+
+        // 3. It should be ignored
+        assert!(!store.addresses.contains_key(&addr));
+        assert!(store.known_bad_addresses.contains_key(&addr));
+    }
+
+    #[test]
+    fn test_cleanup_happens_on_new_ban() {
+        // Test that adding a NEW bad address cleans up OLD ones if we are at capacity
+        // or just generally cleans up before checking capacity.
+        let mut rng = rand::thread_rng();
+
+        let mut store = AddressStore::new();
+        // Shrink capacity for test
+        store.max_capacity = 2;
+
+        let addr_expired = tcp_address_record(&mut rng).address().clone();
+        let addr_active = tcp_address_record(&mut rng).address().clone();
+        let addr_new_bad = tcp_address_record(&mut rng).address().clone();
+
+        // Setup: One expired, one active
+        store.known_bad_addresses.insert(
+            addr_expired.clone(),
+            Instant::now() - Duration::from_secs(30 * 60),
+        );
+        store.known_bad_addresses.insert(addr_active.clone(), Instant::now());
+
+        // Verify setup
+        assert_eq!(store.known_bad_addresses.len(), 2);
+
+        // Action: Insert a record that triggers a ban
+        let rec = AddressRecord::from_raw_multiaddr_with_score(
+            addr_new_bad.clone(),
+            scores::UNRECOVERABLE_FAILURES,
+        );
+        store.insert(rec);
+
+        // Assertions:
+        // 1. The expired one should be gone
+        assert!(!store.known_bad_addresses.contains_key(&addr_expired));
+        // 2. The active one should stay
+        assert!(store.known_bad_addresses.contains_key(&addr_active));
+        // 3. The new one should be added
+        assert!(store.known_bad_addresses.contains_key(&addr_new_bad));
+        // 4. Total length should be 2 (active + new)
+        assert_eq!(store.known_bad_addresses.len(), 2);
     }
 }
