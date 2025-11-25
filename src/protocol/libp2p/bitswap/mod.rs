@@ -165,7 +165,7 @@ impl Bitswap {
                     0 => WantType::Block,
                     1 => WantType::Have,
                     _ => {
-                        tracing::warn!(
+                        tracing::debug!(
                             target: LOG_TARGET,
                             "Unhandled `WantList` type: {}",
                             entry.want_type
@@ -175,16 +175,13 @@ impl Bitswap {
                 };
 
                 // Check supported CID versions.
-                match cid.version() {
-                    Version::V0 => {
-                        tracing::warn!(
-                            target: LOG_TARGET,
-                            "Unsupported CID version {:?} for cid=: {cid}",
-                            cid.version()
-                        );
-                        return None;
-                    }
-                    Version::V1 => (/* Ok */),
+                if let Version::V0 = cid.version() {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        "Unsupported CID version {:?} for cid=: {cid}",
+                        cid.version()
+                    );
+                    return None;
                 }
 
                 // Check supported multihash length (only 32).
