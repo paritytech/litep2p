@@ -164,7 +164,14 @@ impl Bitswap {
                 let want_type = match entry.want_type {
                     0 => WantType::Block,
                     1 => WantType::Have,
-                    _ => return None,
+                    _ => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            "Unhandled `WantList` type: {}",
+                            entry.want_type
+                        );
+                        return None;
+                    }
                 };
 
                 Some((cid, want_type))
