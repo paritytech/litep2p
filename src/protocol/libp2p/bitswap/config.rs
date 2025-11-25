@@ -47,6 +47,9 @@ pub struct Config {
 
     /// RX channel for receiving commands from the user.
     pub(super) cmd_rx: Receiver<BitswapCommand>,
+
+    /// Supported multihash codes for CID validation.
+    pub(super) supported_hash_codes: std::collections::HashSet<u64>,
 }
 
 impl Config {
@@ -61,8 +64,32 @@ impl Config {
                 event_tx,
                 protocol: ProtocolName::from(PROTOCOL_NAME),
                 codec: ProtocolCodec::UnsignedVarint(Some(MAX_PAYLOAD_SIZE)),
+                supported_hash_codes: default_hash_codes(),
             },
             BitswapHandle::new(event_rx, cmd_tx),
         )
     }
+
+    /// Set supported multihash codes for bitswap CID validation.
+    /// # Example
+    ///
+    /// ```rust
+    /// let (config, handle) = Config::new()
+    ///     .with_supported_hash_codes([Code::Blake2b256, Code::Sha2_256]);
+    /// ```
+    pub fn with_supported_hash_codes(mut self, codes: impl IntoIterator<Item = multihash::Code>) -> Self {
+        self.supported_hash_codes = codes.into_iter().map(u64::from).collect();
+        self
+    }
+}
+
+/// Default set of supported hash codes.
+fn default_hash_codes() -> std::collections::HashSet<u64> {
+    [
+        u64::from(multihash::Code::Blake2b256),
+        u64::from(multihash::Code::Sha2_256),
+        u64::from(multihash::Code::Keccak256),
+    ]
+    .into_iter()
+    .collect()
 }

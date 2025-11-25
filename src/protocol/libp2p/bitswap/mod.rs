@@ -29,7 +29,6 @@ use crate::{
 };
 
 use cid::Version;
-use multihash::Code;
 use prost::Message;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::{StreamExt, StreamMap};
@@ -112,6 +111,9 @@ pub(crate) struct Bitswap {
 
     /// Inbound substreams.
     inbound: StreamMap<PeerId, Substream>,
+
+    /// Supported multihash codes for CID validation.
+    supported_hash_codes: std::collections::HashSet<u64>,
 }
 
 impl Bitswap {
@@ -121,6 +123,7 @@ impl Bitswap {
             service,
             cmd_rx: config.cmd_rx,
             event_tx: config.event_tx,
+            supported_hash_codes: config.supported_hash_codes,
             pending_outbound: HashMap::new(),
             inbound: StreamMap::new(),
         }
@@ -196,14 +199,10 @@ impl Bitswap {
 
                 // Check supported multihash a.k.a. hashing algorithm.
                 let code = cid.hash().code();
-                if code != u64::from(Code::Blake2b256)
-                    && code != u64::from(Code::Sha2_256)
-                    && code != u64::from(Code::Keccak256)
-                {
+                if !self.supported_hash_codes.contains(&code) {
                     tracing::warn!(
                         target: LOG_TARGET,
-                        "Unsupported multihash algorithm: {code} for cid: {cid}, \
-                         supports only Blake2b256, Sha2_256 and Keccak256!"
+                        "Unsupported multihash code: {code} for cid: {cid}"
                     );
                     return None;
                 }
