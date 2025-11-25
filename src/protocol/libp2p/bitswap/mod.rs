@@ -167,10 +167,7 @@ impl Bitswap {
                     _ => return None,
                 };
 
-                (cid.version() == cid::Version::V1
-                    && cid.hash().code() == u64::from(Code::Blake2b256)
-                    && cid.hash().size() == 32)
-                    .then_some((cid, want_type))
+                Some((cid, want_type))
             })
             .collect::<Vec<_>>();
 
