@@ -64,7 +64,7 @@ impl Config {
                 event_tx,
                 protocol: ProtocolName::from(PROTOCOL_NAME),
                 codec: ProtocolCodec::UnsignedVarint(Some(MAX_PAYLOAD_SIZE)),
-                supported_hash_codes: default_hash_codes(),
+                supported_hash_codes: std::collections::HashSet::from([u64::from(multihash::Code::Blake2b256)]);
             },
             BitswapHandle::new(event_rx, cmd_tx),
         )
