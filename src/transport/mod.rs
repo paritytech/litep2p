@@ -154,7 +154,7 @@ pub(crate) enum TransportEvent {
     },
 
     /// Failed to dial remote peer.
-    ///  The addresses are only forwarded to the protocol if it was registered with `DialFailureAddresses::Required`.
+    /// The addresses are only forwarded to the protocol if it was registered with `DialFailureAddresses::Required`.
     DialFailure {
         /// Connection ID.
         connection_id: ConnectionId,
