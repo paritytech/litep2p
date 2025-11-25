@@ -1213,7 +1213,7 @@ impl TransportManager {
                                                     "dial failure, notify protocol",
                                                 );
 
-                                                let addresses = context.dial_failure_addresses(&[address.clone()]);
+                                                let addresses = context.dial_failure_addresses(std::slice::from_ref(&address));
 
                                                 match context.tx.try_send(InnerTransportEvent::DialFailure { peer, addresses: addresses.clone() }) {
                                                     Ok(()) => {}
@@ -1666,12 +1666,14 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            DialFailureAddresses::NotRequired
         );
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            DialFailureAddresses::NotRequired
         );
     }
 
@@ -1686,6 +1688,7 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            DialFailureAddresses::NotRequired,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/2"),
@@ -1695,6 +1698,7 @@ mod tests {
             ],
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            DialFailureAddresses::NotRequired,
         );
     }
 
@@ -1712,6 +1716,7 @@ mod tests {
             ],
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            DialFailureAddresses::NotRequired,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/2"),
@@ -1721,6 +1726,7 @@ mod tests {
             ],
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            DialFailureAddresses::NotRequired,
         );
     }
 

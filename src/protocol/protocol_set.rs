@@ -438,6 +438,7 @@ mod tests {
     use super::*;
     use crate::mock::substream::MockSubstream;
     use std::collections::HashSet;
+    use crate::transport::manager::DialFailureAddresses;
 
     #[tokio::test]
     async fn fallback_is_provided() {
@@ -457,6 +458,7 @@ mod tests {
                         ProtocolName::from("/notif/1/fallback/1"),
                         ProtocolName::from("/notif/1/fallback/2"),
                     ],
+                    dial_failure_mode: DialFailureAddresses::NotRequired,
                 },
             )]),
         );
@@ -504,6 +506,7 @@ mod tests {
                         ProtocolName::from("/notif/1/fallback/1"),
                         ProtocolName::from("/notif/1/fallback/2"),
                     ],
+                    dial_failure_mode: DialFailureAddresses::NotRequired,
                 },
             )]),
         );
@@ -551,6 +554,7 @@ mod tests {
                         ProtocolName::from("/notif/1/fallback/1"),
                         ProtocolName::from("/notif/1/fallback/2"),
                     ],
+                    dial_failure_mode: DialFailureAddresses::NotRequired,
                 },
             )]),
         );
