@@ -81,7 +81,7 @@ impl Config {
         mut self,
         codes: impl IntoIterator<Item = multihash::Code>,
     ) -> Self {
-        self.supported_hash_codes = codes.into_iter().map(u64::from).collect();
+        self.supported_hash_codes.extend(codes.into_iter().map(u64::from));
         self
     }
 }
