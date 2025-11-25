@@ -179,7 +179,7 @@ impl Bitswap {
 
                 // Check supported CID versions.
                 if let Version::V0 = cid.version() {
-                    tracing::warn!(
+                    tracing::trace!(
                         target: LOG_TARGET,
                         "Unsupported CID version {:?} for cid=: {cid}",
                         cid.version()
@@ -190,7 +190,7 @@ impl Bitswap {
                 // Check supported multihash length (only 32).
                 let size = cid.hash().size();
                 if size != 32 {
-                    tracing::warn!(
+                    tracing::debug!(
                         target: LOG_TARGET,
                         "Unsupported multihash size: {size} for cid: {cid}, supports only 32!"
                     );
@@ -200,7 +200,7 @@ impl Bitswap {
                 // Check supported multihash a.k.a. hashing algorithm.
                 let code = cid.hash().code();
                 if !self.supported_hash_codes.contains(&code) {
-                    tracing::warn!(
+                    tracing::debug!(
                         target: LOG_TARGET,
                         "Unsupported multihash code: {code} for cid: {cid}"
                     );
