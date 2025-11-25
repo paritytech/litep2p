@@ -166,7 +166,7 @@ impl TransportManagerHandle {
     }
 
     /// Helper to extract IP and Port from a Multiaddr
-    fn extract_ip_port(&self, addr: &Multiaddr) -> Option<(IpAddr, u16)> {
+    fn extract_ip_port(addr: &Multiaddr) -> Option<(IpAddr, u16)> {
         let mut iter = addr.iter();
         let ip = match iter.next() {
             Some(Protocol::Ip4(i)) => IpAddr::V4(i),
