@@ -26,8 +26,9 @@ use crate::{
 use bytes::{Buf, BufMut, BytesMut};
 use futures::{Future, Stream};
 use parking_lot::Mutex;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{channel, OwnedPermit, Receiver, Sender};
 
+use futures::future::BoxFuture;
 use std::{
     pin::Pin,
     sync::Arc,
@@ -72,6 +73,11 @@ pub struct Substream {
 
     /// RX channel for receiving messages from `peer`.
     rx: Receiver<Event>,
+
+    /// Future that resolves when a permit to send on `tx` is available.
+    permit_fut: Option<
+        BoxFuture<'static, Result<OwnedPermit<Event>, tokio::sync::mpsc::error::SendError<()>>>,
+    >,
 }
 
 impl Substream {
@@ -92,6 +98,7 @@ impl Substream {
                 tx: outbound_tx,
                 rx: inbound_rx,
                 read_buffer: BytesMut::new(),
+                permit_fut: None,
             },
             handle,
         )
@@ -190,7 +197,7 @@ impl tokio::io::AsyncRead for Substream {
 
 impl tokio::io::AsyncWrite for Substream {
     fn poll_write(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
@@ -198,21 +205,32 @@ impl tokio::io::AsyncWrite for Substream {
             return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
         }
 
-        // TODO: try to coalesce multiple calls to `poll_write()` into single `Event::Message`
+        loop {
+            if self.permit_fut.is_none() {
+                let tx = self.tx.clone();
+                // We use reserve_owned so the future owns the handle and doesn't borrow `self`
+                self.permit_fut = Some(Box::pin(async move { tx.reserve_owned().await }));
+            }
 
-        let num_bytes = std::cmp::min(MAX_FRAME_SIZE, buf.len());
-        let future = self.tx.reserve();
-        futures::pin_mut!(future);
+            match self.permit_fut.as_mut().unwrap().as_mut().poll(cx) {
+                Poll::Pending => return Poll::Pending, // Future stays alive in `self`!
+                Poll::Ready(result) => {
+                    self.permit_fut = None;
 
-        let permit = match futures::ready!(future.poll(cx)) {
-            Err(_) => return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
-            Ok(permit) => permit,
-        };
+                    let permit = match result {
+                        Ok(p) => p,
+                        Err(_) => return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
+                    };
 
-        let frame = buf[..num_bytes].to_vec();
-        permit.send(Event::Message(frame));
+                    let num_bytes = std::cmp::min(MAX_FRAME_SIZE, buf.len());
+                    let frame = buf[..num_bytes].to_vec();
 
-        Poll::Ready(Ok(num_bytes))
+                    permit.send(Event::Message(frame));
+
+                    return Poll::Ready(Ok(num_bytes));
+                }
+            }
+        }
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
