@@ -29,8 +29,8 @@ use crate::{
 };
 
 use cid::Version;
-use prost::Message;
 pub use multihash::Code as MultihashCode;
+use prost::Message;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::{StreamExt, StreamMap};
 
