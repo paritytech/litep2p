@@ -85,14 +85,3 @@ impl Config {
         self
     }
 }
-
-/// Default set of supported hash codes.
-fn default_hash_codes() -> std::collections::HashSet<u64> {
-    [
-        u64::from(multihash::Code::Blake2b256),
-        u64::from(multihash::Code::Sha2_256),
-        u64::from(multihash::Code::Keccak256),
-    ]
-    .into_iter()
-    .collect()
-}
