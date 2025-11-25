@@ -29,6 +29,7 @@ use crate::{
 };
 
 use cid::Version;
+use multihash::Code;
 use prost::Message;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::{StreamExt, StreamMap};
@@ -111,9 +112,6 @@ pub(crate) struct Bitswap {
 
     /// Inbound substreams.
     inbound: StreamMap<PeerId, Substream>,
-
-    /// Supported multihash codes for CID validation.
-    supported_hash_codes: std::collections::HashSet<u64>,
 }
 
 impl Bitswap {
@@ -123,7 +121,6 @@ impl Bitswap {
             service,
             cmd_rx: config.cmd_rx,
             event_tx: config.event_tx,
-            supported_hash_codes: config.supported_hash_codes,
             pending_outbound: HashMap::new(),
             inbound: StreamMap::new(),
         }
@@ -167,48 +164,13 @@ impl Bitswap {
                 let want_type = match entry.want_type {
                     0 => WantType::Block,
                     1 => WantType::Have,
-                    _ => {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            "Unhandled `WantList` type: {}",
-                            entry.want_type
-                        );
-                        return None;
-                    }
+                    _ => return None,
                 };
 
-                // Check supported CID versions.
-                if let Version::V0 = cid.version() {
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        "Unsupported CID version {:?} for cid=: {cid}",
-                        cid.version()
-                    );
-                    return None;
-                }
-
-                // Check supported multihash length (only 32).
-                let size = cid.hash().size();
-                if size != 32 {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        "Unsupported multihash size: {size} for cid: {cid}, supports only 32!"
-                    );
-                    return None;
-                }
-
-                // Check supported multihash a.k.a. hashing algorithm.
-                let code = cid.hash().code();
-                if !self.supported_hash_codes.contains(&code) {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        "Unsupported multihash code: {code} for cid: {cid}"
-                    );
-                    return None;
-                }
-
-                // All checks passed, pass the cid.
-                Some((cid, want_type))
+                (cid.version() == cid::Version::V1
+                    && cid.hash().code() == u64::from(Code::Blake2b256)
+                    && cid.hash().size() == 32)
+                    .then_some((cid, want_type))
             })
             .collect::<Vec<_>>();
 
