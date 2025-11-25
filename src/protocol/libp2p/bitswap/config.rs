@@ -77,7 +77,10 @@ impl Config {
     /// let (config, handle) = Config::new()
     ///     .with_supported_hash_codes([Code::Blake2b256, Code::Sha2_256]);
     /// ```
-    pub fn with_supported_hash_codes(mut self, codes: impl IntoIterator<Item = multihash::Code>) -> Self {
+    pub fn with_supported_hash_codes(
+        mut self,
+        codes: impl IntoIterator<Item = multihash::Code>,
+    ) -> Self {
         self.supported_hash_codes = codes.into_iter().map(u64::from).collect();
         self
     }
