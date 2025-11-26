@@ -33,7 +33,7 @@ use crate::{
     types::protocol::ProtocolName,
 };
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use futures::prelude::*;
 use std::{
     convert::TryFrom as _,
@@ -369,9 +369,11 @@ impl WebRtcDialerState {
             error::NegotiationError::ParseError(ParseError::InvalidData)
         })?;
 
-        let payload = tail[..len].to_vec();
-
-        let message = Message::decode(payload.into());
+        let len_size = remaining.len() - tail.len();
+        let bytes = Bytes::from(payload);
+        let payload = bytes.slice(len_size..len_size + len);
+        let remaining = bytes.slice(len_size + len..);
+        let message = Message::decode(payload);
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -396,7 +398,7 @@ impl WebRtcDialerState {
             Err(_) => return Err(error::NegotiationError::ParseError(ParseError::InvalidData)),
         };
 
-        match drain_trailing_protocols(tail, len) {
+        match drain_trailing_protocols(remaining) {
             Ok(protos) => protocols.extend(protos),
             Err(error) => return Err(error),
         }
@@ -439,18 +441,16 @@ impl WebRtcDialerState {
 }
 
 fn drain_trailing_protocols(
-    tail: &[u8],
-    len: usize,
+    mut remaining: Bytes,
 ) -> Result<Vec<Protocol>, error::NegotiationError> {
     let mut protocols = vec![];
-    let mut remaining = &tail[len..];
 
     loop {
         if remaining.is_empty() {
             break;
         }
 
-        let (len, tail) = unsigned_varint::decode::usize(remaining).map_err(|error| {
+        let (len, tail) = unsigned_varint::decode::usize(&remaining).map_err(|error| {
             tracing::debug!(
                     target: LOG_TARGET,
                     ?error,
@@ -471,9 +471,10 @@ fn drain_trailing_protocols(
             return Err(error::NegotiationError::ParseError(ParseError::InvalidData));
         }
 
-        let payload = tail[..len].to_vec();
+        let len_size = remaining.len() - tail.len();
+        let payload = remaining.slice(len_size..len_size + len);
 
-        match Message::decode(payload.into()) {
+        match Message::decode(payload) {
             Ok(Message::Protocol(protocol)) => protocols.push(protocol),
             Err(error) => {
                 tracing::debug!(
@@ -487,7 +488,7 @@ fn drain_trailing_protocols(
             _ => return Err(error::NegotiationError::StateMismatch),
         }
 
-        remaining = &tail[len..];
+        remaining = remaining.slice(len_size + len..);
     }
 
     Ok(protocols)
