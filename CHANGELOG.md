@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [0.12.2] - 2025-11-26
+
+This release allows all Bitswap CIDs (v1) to pass regardless of the used hash. It also enhances local address checks in the transport manager.
+
+### Changed
+
+- Allow all the Bitswap CIDs (v1) to pass regardless of used hash  ([#482](https://github.com/paritytech/litep2p/pull/482))
+- transport/manager: Enhance local address checks  ([#480](https://github.com/paritytech/litep2p/pull/480))
+
+
 ## [0.12.1] - 2025-11-21
 
 This release adds support for connecting to multiple Kademlia DHT networks. The change is backward-compatible, no client code modifications should be needed compared to v0.12.0.
