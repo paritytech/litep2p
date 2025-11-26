@@ -25,9 +25,10 @@ use crate::{
     codec::unsigned_varint::UnsignedVarint,
     error::{self, Error},
     multistream_select::{
+        drain_trailing_protocols,
         protocol::{
             webrtc_encode_multistream_message, HeaderLine, Message, MessageIO, Protocol,
-            ProtocolError,
+            ProtocolError, PROTO_MULTISTREAM_1_0,
         },
         Negotiated, NegotiationError,
     },
@@ -349,30 +350,14 @@ pub enum ListenerSelectResult {
 /// response and the negotiated protocol. If parsing fails or no match is found, return an error.
 pub fn webrtc_listener_negotiate<'a>(
     supported_protocols: &'a mut impl Iterator<Item = &'a ProtocolName>,
-    payload: Bytes,
+    mut payload: Bytes,
 ) -> crate::Result<ListenerSelectResult> {
-    let payload = if payload.len() > 2 && payload[0..payload.len() - 2] != b"\n\n"[..] {
-        let mut buf = BytesMut::from(payload);
-        buf.extend_from_slice(b"\n");
-        buf.freeze()
-    } else {
-        payload
-    };
-
-    let Message::Protocols(protocols) = Message::decode(payload).map_err(|_| Error::InvalidData)?
-    else {
-        return Err(Error::NegotiationError(
-            error::NegotiationError::MultistreamSelectError(NegotiationError::Failed),
-        ));
-    };
+    let protocols = drain_trailing_protocols(payload)?;
+    let mut protocol_iter = protocols.into_iter();
 
     // skip the multistream-select header because it's not part of user protocols but verify it's
     // present
-    let mut protocol_iter = protocols.into_iter();
-    let header =
-        Protocol::try_from(&b"/multistream/1.0.0"[..]).expect("valid multitstream-select header");
-
-    if protocol_iter.next() != Some(header) {
+    if protocol_iter.next() != Some(PROTO_MULTISTREAM_1_0) {
         return Err(Error::NegotiationError(
             error::NegotiationError::MultistreamSelectError(NegotiationError::Failed),
         ));
@@ -410,6 +395,8 @@ pub fn webrtc_listener_negotiate<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error;
+    use bytes::BufMut;
 
     #[test]
     fn webrtc_listener_negotiate_works() {
@@ -445,6 +432,21 @@ mod tests {
             ProtocolName::from("/13371338/proto/3"),
             ProtocolName::from("/13371338/proto/4"),
         ];
+        // The invalid message is really two multistream-select messages inside one `WebRtcMessage`:
+        // 1. the multistream-select header
+        // 2. an "ls response" message (that does not contain another header)
+        //
+        // This is invalid for two reasons:
+        // 1. It is malformed. Either the header is followed by one or more `Message::Protocol`
+        //    instances or the header is part of the "ls response".
+        // 2. This sequence of messages is not spec compliant. A listener receives one of the
+        //    following on an inbound substream:
+        //      - a multistream-select header followed by a `Message::Protocol` instance
+        //      - a multistream-select header followed by an "ls" message (<length prefix><ls><\n>)
+        //
+        // `webrtc_listener_negotiate()` should reject this invalid message. The error can either be
+        // `InvalidData` because the message is malformed or `StateMismatch` because the message is
+        // not expected at this point in the protocol.
         let message = webrtc_encode_multistream_message(std::iter::once(Message::Protocols(vec![
             Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
             Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
@@ -453,7 +455,13 @@ mod tests {
         .freeze();
 
         match webrtc_listener_negotiate(&mut local_protocols.iter(), message) {
-            Err(error) => assert!(std::matches!(error, Error::InvalidData)),
+            Err(error) => assert!(std::matches!(
+                error,
+                // something has gone off the rails here...
+                Error::NegotiationError(error::NegotiationError::ParseError(
+                    error::ParseError::InvalidData
+                )),
+            )),
             _ => panic!("invalid event"),
         }
     }
@@ -474,7 +482,12 @@ mod tests {
         message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
 
         match webrtc_listener_negotiate(&mut local_protocols.iter(), bytes.freeze()) {
-            Err(error) => assert!(std::matches!(error, Error::InvalidData)),
+            Err(error) => assert!(std::matches!(
+                error,
+                Error::NegotiationError(error::NegotiationError::ParseError(
+                    error::ParseError::InvalidData
+                )),
+            )),
             event => panic!("invalid event: {event:?}"),
         }
     }
@@ -491,14 +504,23 @@ mod tests {
 
         // header line missing
         let mut bytes = BytesMut::with_capacity(256);
-        let message = Message::Protocols(vec![
-            Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
-            Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
-        ]);
-        message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
+        vec![&b"/13371338/proto/1"[..], &b"/sup/proto/1"[..]]
+            .into_iter()
+            .for_each(|proto| {
+                bytes.put_u8((proto.len() + 1) as u8);
+
+                Message::Protocol(Protocol::try_from(proto).unwrap())
+                    .encode(&mut bytes)
+                    .unwrap();
+            });
 
         match webrtc_listener_negotiate(&mut local_protocols.iter(), bytes.freeze()) {
-            Err(error) => assert!(std::matches!(error, Error::InvalidData)),
+            Err(error) => assert!(std::matches!(
+                error,
+                Error::NegotiationError(error::NegotiationError::MultistreamSelectError(
+                    NegotiationError::Failed
+                ))
+            )),
             event => panic!("invalid event: {event:?}"),
         }
     }
