@@ -28,17 +28,15 @@ use crate::{
     PeerId,
 };
 
-use cid::Version;
+use cid::{Cid, Version};
 use prost::Message;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::{StreamExt, StreamMap};
 
-use std::{collections::HashMap, time::Duration};
-
-pub use cid::Cid;
 pub use config::Config;
 pub use handle::{BitswapCommand, BitswapEvent, BitswapHandle, ResponseType};
 pub use schema::bitswap::{wantlist::WantType, BlockPresenceType};
+use std::{collections::HashMap, time::Duration};
 
 mod config;
 mod handle;
