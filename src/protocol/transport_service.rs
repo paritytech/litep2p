@@ -339,10 +339,11 @@ impl TransportService {
         tracing::debug!(
             target: LOG_TARGET,
             ?peer,
-            protocol = %self.protocol,
             ?endpoint,
             ?connection_id,
-            "connection established",
+            protocol = %self.protocol,
+            current_state = ?self.connections.get(&peer),
+            "on connection established",
         );
 
         match self.connections.get_mut(&peer) {
@@ -353,6 +354,7 @@ impl TransportService {
                         ?peer,
                         ?connection_id,
                         ?endpoint,
+                        protocol = %self.protocol,
                         "ignoring third connection",
                     );
                     None
@@ -360,12 +362,30 @@ impl TransportService {
                 None => {
                     self.keep_alive_tracker.on_connection_established(peer, connection_id);
 
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?endpoint,
+                        ?connection_id,
+                        protocol = %self.protocol,
+                        "secondary connection established",
+                    );
+
                     context.secondary = Some(handle);
 
                     None
                 }
             },
             None => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?endpoint,
+                    ?connection_id,
+                    protocol = %self.protocol,
+                    "primary connection established",
+                );
+
                 self.connections.insert(peer, ConnectionContext::new(handle));
 
                 self.keep_alive_tracker.on_connection_established(peer, connection_id);
@@ -381,6 +401,15 @@ impl TransportService {
         peer: PeerId,
         connection_id: ConnectionId,
     ) -> Option<TransportEvent> {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            ?connection_id,
+            protocol = %self.protocol,
+            current_state = ?self.connections.get(&peer),
+            "on connection closed",
+        );
+
         self.keep_alive_tracker.on_connection_closed(peer, connection_id);
 
         let Some(context) = self.connections.get_mut(&peer) else {
@@ -388,6 +417,7 @@ impl TransportService {
                 target: LOG_TARGET,
                 ?peer,
                 ?connection_id,
+                protocol = %self.protocol,
                 "connection closed to a non-existent peer",
             );
 
@@ -398,7 +428,13 @@ impl TransportService {
         // if the primary connection was closed, check if there exist a secondary connection
         // and if it does, convert the secondary connection a primary connection
         if context.primary.connection_id() == &connection_id {
-            tracing::trace!(target: LOG_TARGET, ?peer, ?connection_id, "primary connection closed");
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?peer,
+                ?connection_id,
+                protocol = %self.protocol,
+                "primary connection closed"
+            );
 
             match context.secondary.take() {
                 None => {
@@ -410,6 +446,7 @@ impl TransportService {
                         target: LOG_TARGET,
                         ?peer,
                         ?connection_id,
+                        protocol = %self.protocol,
                         "switch to secondary connection",
                     );
 
@@ -425,6 +462,7 @@ impl TransportService {
                     target: LOG_TARGET,
                     ?peer,
                     ?connection_id,
+                    protocol = %self.protocol,
                     "secondary connection closed",
                 );
 
@@ -436,6 +474,7 @@ impl TransportService {
                     ?peer,
                     ?connection_id,
                     ?connection_state,
+                    protocol = %self.protocol,
                     "connection closed but it doesn't exist",
                 );
 
@@ -448,6 +487,13 @@ impl TransportService {
     ///
     /// Call fails if `Litep2p` doesn't have a known address for the peer.
     pub fn dial(&mut self, peer: &PeerId) -> Result<(), ImmediateDialError> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            protocol = %self.protocol,
+            "Dial peer requested",
+        );
+
         self.transport_handle.dial(peer)
     }
 
@@ -460,6 +506,13 @@ impl TransportService {
     /// since `Litep2p` internally keeps track of all peer addresses it has learned through user
     /// calling this function, Kademlia peer discoveries and `Identify` responses.
     pub fn dial_address(&mut self, address: Multiaddr) -> Result<(), ImmediateDialError> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?address,
+            protocol = %self.protocol,
+            "Dial address requested",
+        );
+
         self.transport_handle.dial_address(address)
     }
 
