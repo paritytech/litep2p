@@ -29,6 +29,9 @@ pub mod multiaddr {
 pub mod multihash {
     pub use multihash::{Code, Error, Multihash, MultihashDigest};
 }
+pub mod cid {
+    pub use cid::{Cid, CidGeneric, Error, Result, Version};
+}
 
 pub mod protocol;
 
