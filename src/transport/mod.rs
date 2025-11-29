@@ -20,7 +20,7 @@
 
 //! Transport protocol implementations provided by [`Litep2p`](`crate::Litep2p`).
 
-use crate::{error::DialError, transport::manager::TransportHandle, types::ConnectionId, PeerId};
+use crate::{error::DialError, types::ConnectionId, PeerId};
 
 use futures::Stream;
 use hickory_resolver::TokioResolver;
@@ -42,7 +42,10 @@ pub(crate) mod dummy;
 
 pub(crate) mod manager;
 
-pub use manager::limits::{ConnectionLimitsConfig, ConnectionLimitsError};
+pub use manager::{
+    limits::{ConnectionLimitsConfig, ConnectionLimitsError},
+    TransportHandle,
+};
 
 /// Timeout for opening a connection.
 pub(crate) const CONNECTION_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -119,7 +122,7 @@ impl Endpoint {
 
 /// Transport event.
 #[derive(Debug)]
-pub(crate) enum TransportEvent {
+pub enum TransportEvent {
     /// Fully negotiated connection established to remote peer.
     ConnectionEstablished {
         /// Peer ID.
@@ -175,7 +178,7 @@ pub(crate) enum TransportEvent {
     },
 }
 
-pub(crate) trait TransportBuilder {
+pub trait TransportBuilder {
     type Config: Debug;
     type Transport: Transport;
 
@@ -189,7 +192,7 @@ pub(crate) trait TransportBuilder {
         Self: Sized;
 }
 
-pub(crate) trait Transport: Stream + Unpin + Send {
+pub trait Transport: Stream + Unpin + Send {
     /// Dial `address` and negotiate connection.
     fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()>;
 
