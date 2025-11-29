@@ -54,6 +54,8 @@ pub const MSG_MULTISTREAM_1_0: &[u8] = b"/multistream/1.0.0\n";
 const MSG_PROTOCOL_NA: &[u8] = b"na\n";
 /// The encoded form of a multistream-select 'ls' message.
 const MSG_LS: &[u8] = b"ls\n";
+/// A Protocol instance for the `/multistream/1.0.0` header line.
+pub const PROTO_MULTISTREAM_1_0: Protocol = Protocol(Bytes::from_static(b"/multistream/1.0.0"));
 /// Logging target.
 const LOG_TARGET: &str = "litep2p::multistream-select";
 
@@ -230,7 +232,7 @@ impl Message {
 ///
 /// # Note
 ///
-/// This is implementation is not compliant with the multistream-select protocol spec.
+/// This implementation may not be compliant with the multistream-select protocol spec.
 /// The only purpose of this was to get the `multistream-select` protocol working with smoldot.
 pub fn webrtc_encode_multistream_message(
     messages: impl IntoIterator<Item = Message>,
@@ -248,9 +250,6 @@ pub fn webrtc_encode_multistream_message(
         let mut proto_bytes = UnsignedVarint::encode(proto_bytes)?;
         header.append(&mut proto_bytes);
     }
-
-    // For the `Message::Protocols` to be interpreted correctly, it must be followed by a newline.
-    header.push(b'\n');
 
     Ok(BytesMut::from(&header[..]))
 }

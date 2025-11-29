@@ -75,6 +75,7 @@ mod listener_select;
 mod negotiated;
 mod protocol;
 
+use crate::error::{self, ParseError};
 pub use crate::multistream_select::{
     dialer_select::{dialer_select_proto, DialerSelectFuture, HandshakeResult, WebRtcDialerState},
     listener_select::{
@@ -82,8 +83,12 @@ pub use crate::multistream_select::{
         ListenerSelectResult,
     },
     negotiated::{Negotiated, NegotiatedComplete, NegotiationError},
-    protocol::{HeaderLine, Message, Protocol, ProtocolError},
+    protocol::{HeaderLine, Message, Protocol, ProtocolError, PROTO_MULTISTREAM_1_0},
 };
+
+use bytes::Bytes;
+
+const LOG_TARGET: &str = "litep2p::multistream-select";
 
 /// Supported multistream-select versions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,4 +136,64 @@ impl Default for Version {
     fn default() -> Self {
         Version::V1
     }
+}
+
+// This function is only used in the WebRTC transport. It expects one or more multistream-select
+// messages in `remaining` and returns a list of protocols that were decoded from them.
+fn drain_trailing_protocols(
+    mut remaining: Bytes,
+) -> Result<Vec<Protocol>, error::NegotiationError> {
+    let mut protocols = vec![];
+
+    loop {
+        if remaining.is_empty() {
+            break;
+        }
+
+        let (len, tail) = unsigned_varint::decode::usize(&remaining).map_err(|error| {
+            tracing::debug!(
+                    target: LOG_TARGET,
+                    ?error,
+                    message = ?remaining,
+                    "Failed to decode length-prefix in multistream message");
+            error::NegotiationError::ParseError(ParseError::InvalidData)
+        })?;
+
+        if len > tail.len() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                message = ?tail,
+                length_prefix = len,
+                actual_length = tail.len(),
+                "Truncated multistream message",
+            );
+
+            return Err(error::NegotiationError::ParseError(ParseError::InvalidData));
+        }
+
+        let len_size = remaining.len() - tail.len();
+        let payload = remaining.slice(len_size..len_size + len);
+        let res = Message::decode(payload);
+
+        match res {
+            Ok(Message::Header(HeaderLine::V1)) => protocols.push(PROTO_MULTISTREAM_1_0),
+            Ok(Message::Protocol(protocol)) => protocols.push(protocol),
+            Ok(Message::Protocols(_)) =>
+                return Err(error::NegotiationError::ParseError(ParseError::InvalidData)),
+            Err(error) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?error,
+                    message = ?tail[..len],
+                    "Failed to decode multistream message",
+                );
+                return Err(error::NegotiationError::ParseError(ParseError::InvalidData));
+            }
+            _ => return Err(error::NegotiationError::StateMismatch),
+        }
+
+        remaining = remaining.slice(len_size + len..);
+    }
+
+    Ok(protocols)
 }
