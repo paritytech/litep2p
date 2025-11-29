@@ -607,23 +607,24 @@ impl Stream for WebSocketTransport {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
-            return match event {
+            match event {
                 None => {
                     tracing::error!(
                         target: LOG_TARGET,
                         "Websocket listener terminated, ignore if the node is stopping",
                     );
 
-                    Poll::Ready(None)
+                    return Poll::Ready(None);
                 }
                 Some(Err(error)) => {
                     tracing::error!(
                         target: LOG_TARGET,
                         ?error,
-                        "Websocket listener terminated with error",
+                        "One of the Websocket listeners terminated with error. Please ensure your network interface is working correctly. The listener will be removed from service.",
                     );
 
-                    Poll::Ready(None)
+                    // Ensure the task is polled again to continue processing other listeners.
+                    cx.waker().wake_by_ref();
                 }
                 Some(Ok((connection, address))) => {
                     let connection_id = self.context.next_connection_id();
@@ -642,11 +643,11 @@ impl Stream for WebSocketTransport {
                         },
                     );
 
-                    Poll::Ready(Some(TransportEvent::PendingInboundConnection {
+                    return Poll::Ready(Some(TransportEvent::PendingInboundConnection {
                         connection_id,
-                    }))
+                    }));
                 }
-            };
+            }
         }
 
         while let Poll::Ready(Some(result)) = self.pending_raw_connections.poll_next_unpin(cx) {
