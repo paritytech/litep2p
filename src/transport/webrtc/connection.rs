@@ -382,6 +382,7 @@ impl WebRtcConnection {
             target: LOG_TARGET,
             peer = ?self.peer,
             ?channel_id,
+            data_len = ?data.len(),
             "handle opening outbound substream",
         );
 
@@ -396,7 +397,7 @@ impl WebRtcConnection {
                 target: LOG_TARGET,
                 peer = ?self.peer,
                 ?channel_id,
-                "multisteam-select handshake not ready",
+                "multistream-select handshake not ready",
             );
 
             self.channels.insert(
