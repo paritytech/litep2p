@@ -743,20 +743,6 @@ impl WebRtcConnection {
 
                         continue;
                     }
-                    Event::ChannelBufferedAmountLow(channel_id) => {
-                        if let Some(ChannelState::Closing) = self.channels.get(&channel_id) {
-                            tracing::trace!(
-                                target: LOG_TARGET,
-                                peer = ?self.peer,
-                                ?channel_id,
-                                "buffer drained, closing channel",
-                            );
-                            self.rtc.direct_api().close_data_channel(channel_id);
-                            self.handles.remove(&channel_id);
-                        }
-
-                        continue;
-                    }
                     event => {
                         tracing::debug!(
                             target: LOG_TARGET,
