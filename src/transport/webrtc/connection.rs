@@ -199,6 +199,8 @@ pub struct WebRtcConnection {
 
     /// Substream handles.
     handles: SubstreamHandleSet,
+    /// Max message size
+    max_message_size: usize
 }
 
 impl WebRtcConnection {
@@ -212,6 +214,7 @@ impl WebRtcConnection {
         protocol_set: ProtocolSet,
         endpoint: Endpoint,
         dgram_rx: Receiver<Vec<u8>>,
+        max_message_size: usize
     ) -> Self {
         Self {
             rtc,
@@ -225,6 +228,7 @@ impl WebRtcConnection {
             pending_outbound: HashMap::new(),
             channels: HashMap::new(),
             handles: SubstreamHandleSet::new(),
+            max_message_size
         }
     }
 
@@ -318,7 +322,7 @@ impl WebRtcConnection {
             "handle opening inbound substream",
         );
 
-        let payload = WebRtcMessage::decode(&data)?.payload.ok_or(Error::InvalidData)?;
+        let payload = WebRtcMessage::decode(&data, self.max_message_size)?.payload.ok_or(Error::InvalidData)?;
         let (response, negotiated) = match webrtc_listener_negotiate(
             &mut self.protocol_set.protocols().iter(),
             payload.into(),
@@ -385,7 +389,7 @@ impl WebRtcConnection {
             "handle opening outbound substream",
         );
 
-        let rtc_message = WebRtcMessage::decode(&data)
+        let rtc_message = WebRtcMessage::decode(&data, self.max_message_size)
             .map_err(|err| SubstreamError::NegotiationError(err.into()))?;
         let message = rtc_message.payload.ok_or(SubstreamError::NegotiationError(
             ParseError::InvalidData.into(),
@@ -445,7 +449,7 @@ impl WebRtcConnection {
         channel_id: ChannelId,
         data: Vec<u8>,
     ) -> crate::Result<()> {
-        let message = WebRtcMessage::decode(&data)?;
+        let message = WebRtcMessage::decode(&data, self.max_message_size)?;
 
         tracing::trace!(
             target: LOG_TARGET,
