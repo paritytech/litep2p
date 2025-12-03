@@ -341,12 +341,13 @@ impl Transport for TcpTransport {
             .await
             .map_err(|error| (connection_id, error))?;
 
-            TcpConnection::open_connection(
+            TcpConnection::negotiate_connection(
+                stream,
+                peer,
                 connection_id,
                 keypair,
-                stream,
+                Role::Dialer,
                 socket_address,
-                peer,
                 yamux_config,
                 max_read_ahead_factor,
                 max_write_buffer_size,
@@ -530,6 +531,7 @@ impl Transport for TcpTransport {
                     yamux_config,
                     max_read_ahead_factor,
                     max_write_buffer_size,
+                    connection_open_timeout,
                     substream_open_timeout,
                 )
                 .await
