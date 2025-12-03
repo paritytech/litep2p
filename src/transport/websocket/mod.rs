@@ -21,7 +21,6 @@
 //! WebSocket transport.
 
 use crate::{
-    config::Role,
     error::{AddressError, Error, NegotiationError},
     transport::{
         common::listener::{DialAddresses, GetSocketAddr, SocketListener, WebSocketAddress},
@@ -485,7 +484,6 @@ impl Transport for WebSocketTransport {
             .map(|address| {
                 let yamux_config = self.config.yamux_config.clone();
                 let keypair = self.context.keypair.clone();
-                let (ws_address, peer) = Self::multiaddr_into_url(address.clone())?;
                 let connection_open_timeout = self.config.connection_open_timeout;
                 let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
                 let max_write_buffer_size = self.config.noise_write_buffer_size;
@@ -506,6 +504,8 @@ impl Transport for WebSocketTransport {
                     .map_err(|error| (address, error))?;
 
                     let open_address = address.clone();
+                    let (ws_address, peer) = Self::multiaddr_into_url(address.clone())
+                        .map_err(|error| (address.clone(), error.into()))?;
 
                     WebSocketConnection::open_connection(
                         connection_id,
