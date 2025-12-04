@@ -113,6 +113,15 @@ pub(super) struct NegotiatedConnection {
     control: crate::yamux::Control,
 }
 
+impl std::fmt::Debug for NegotiatedConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NegotiatedConnection")
+            .field("peer", &self.peer)
+            .field("endpoint", &self.endpoint)
+            .finish()
+    }
+}
+
 impl NegotiatedConnection {
     /// Get `ConnectionId` of the negotiated connection.
     pub fn connection_id(&self) -> ConnectionId {
