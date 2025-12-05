@@ -205,30 +205,28 @@ impl tokio::io::AsyncWrite for Substream {
             return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
         }
 
-        loop {
-            if self.permit_fut.is_none() {
-                let tx = self.tx.clone();
-                // We use reserve_owned so the future owns the handle and doesn't borrow `self`
-                self.permit_fut = Some(Box::pin(async move { tx.reserve_owned().await }));
-            }
+        if self.permit_fut.is_none() {
+            let tx = self.tx.clone();
+            // We use reserve_owned so the future owns the handle and doesn't borrow `self`
+            self.permit_fut = Some(Box::pin(async move { tx.reserve_owned().await }));
+        }
 
-            match self.permit_fut.as_mut().unwrap().as_mut().poll(cx) {
-                Poll::Pending => return Poll::Pending, // Future stays alive in `self`!
-                Poll::Ready(result) => {
-                    self.permit_fut = None;
+        match self.permit_fut.as_mut().unwrap().as_mut().poll(cx) {
+            Poll::Pending => return Poll::Pending, // Future stays alive in `self`!
+            Poll::Ready(result) => {
+                self.permit_fut = None;
 
-                    let permit = match result {
-                        Ok(p) => p,
-                        Err(_) => return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
-                    };
+                let permit = match result {
+                    Ok(p) => p,
+                    Err(_) => return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
+                };
 
-                    let num_bytes = std::cmp::min(MAX_FRAME_SIZE, buf.len());
-                    let frame = buf[..num_bytes].to_vec();
+                let num_bytes = std::cmp::min(MAX_FRAME_SIZE, buf.len());
+                let frame = buf[..num_bytes].to_vec();
 
-                    permit.send(Event::Message(frame));
+                permit.send(Event::Message(frame));
 
-                    return Poll::Ready(Ok(num_bytes));
-                }
+                Poll::Ready(Ok(num_bytes))
             }
         }
     }
