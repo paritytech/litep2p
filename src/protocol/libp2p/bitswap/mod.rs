@@ -28,18 +28,15 @@ use crate::{
     PeerId,
 };
 
-use cid::Version;
-use multihash::Code;
+use cid::{Cid, Version};
 use prost::Message;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::{StreamExt, StreamMap};
 
-use std::{collections::HashMap, time::Duration};
-
-pub use cid::Cid;
 pub use config::Config;
 pub use handle::{BitswapCommand, BitswapEvent, BitswapHandle, ResponseType};
 pub use schema::bitswap::{wantlist::WantType, BlockPresenceType};
+use std::{collections::HashMap, time::Duration};
 
 mod config;
 mod handle;
@@ -167,10 +164,7 @@ impl Bitswap {
                     _ => return None,
                 };
 
-                (cid.version() == cid::Version::V1
-                    && cid.hash().code() == u64::from(Code::Blake2b256)
-                    && cid.hash().size() == 32)
-                    .then_some((cid, want_type))
+                Some((cid, want_type))
             })
             .collect::<Vec<_>>();
 

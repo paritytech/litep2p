@@ -3,7 +3,7 @@ name = "litep2p"
 description = "Peer-to-peer networking library"
 repository = "https://github.com/paritytech/litep2p"
 license = "MIT"
-version = "0.12.1"
+version = "0.12.2"
 edition = "2021"
 
 # cargo-machete does not detect serde_millis usage, so we ignore the warning
