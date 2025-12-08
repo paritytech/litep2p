@@ -147,9 +147,7 @@ impl Stream for SubstreamHandle {
     type Item = Event;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let item = self.rx.poll_recv(cx);
-        cx.waker().wake_by_ref();
-        item
+        self.rx.poll_recv(cx)
     }
 }
 
