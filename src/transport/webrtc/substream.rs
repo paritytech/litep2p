@@ -473,4 +473,47 @@ mod tests {
         )
         .await;
     }
+
+    #[tokio::test]
+    async fn backpressure_released_wakes_blocked_writer() {
+        use tokio::time::{sleep, timeout, Duration};
+
+        let (mut substream, mut handle) = Substream::new();
+
+        // Fill the channel to capacity, same pattern as `backpressure_works`.
+        for _ in 0..128 {
+            substream.write_all(&vec![0u8; 2 * MAX_FRAME_SIZE]).await.unwrap();
+        }
+
+        // Spawn a writer task that will try to write once more. This should initially block
+        // because the channel is full and rely on the AtomicWaker to be woken later.
+        let writer = tokio::spawn(async move {
+            substream
+                .write_all(&vec![1u8; MAX_FRAME_SIZE])
+                .await
+                .expect("write should eventually succeed");
+        });
+
+        // Give the writer a short moment to reach the blocked (Pending) state.
+        sleep(Duration::from_millis(10)).await;
+        assert!(
+            !writer.is_finished(),
+            "writer should be blocked by backpressure"
+        );
+
+        // Now consume a single message from the receiving side. This will:
+        //  - free capacity in the channel
+        //  - call `write_waker.wake()` from `poll_next`
+        //
+        // That wake must cause the blocked writer to be polled again and complete its write.
+        let _ = handle.next().await.expect("expected at least one outbound message");
+
+        // The writer should now complete in a timely fashion, proving that:
+        //  - registering the waker before `try_reserve` works (no lost wakeup)
+        //  - the wake from `poll_next` correctly unblocks the writer.
+        timeout(Duration::from_secs(1), writer)
+            .await
+            .expect("writer task did not complete after capacity was freed")
+            .expect("writer task panicked");
+    }
 }
