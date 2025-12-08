@@ -24,9 +24,10 @@ use crate::{
 };
 
 use bytes::{Buf, BufMut, BytesMut};
-use futures::{task::AtomicWaker, Future, Stream};
+use futures::Stream;
 use parking_lot::Mutex;
-use tokio::sync::mpsc::{channel, error::TrySendError, Receiver, Sender};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio_util::sync::PollSender;
 
 use std::{
     pin::Pin,
@@ -67,14 +68,12 @@ pub struct Substream {
     /// Read buffer.
     read_buffer: BytesMut,
 
-    /// TX channel for sending messages to `peer`.
-    tx: Sender<Event>,
+    /// TX channel for sending messages to `peer`, wrapped in a [`PollSender`]
+    /// so that backpressure is driven by the caller's waker.
+    tx: PollSender<Event>,
 
     /// RX channel for receiving messages from `peer`.
     rx: Receiver<Event>,
-
-    /// Shared waker to notify when capacity on a previously full `tx` channel is available.
-    write_waker: Arc<AtomicWaker>,
 }
 
 impl Substream {
@@ -83,22 +82,19 @@ impl Substream {
         let (outbound_tx, outbound_rx) = channel(256);
         let (inbound_tx, inbound_rx) = channel(256);
         let state = Arc::new(Mutex::new(State::Open));
-        let waker = Arc::new(AtomicWaker::new());
 
         let handle = SubstreamHandle {
             tx: inbound_tx,
             rx: outbound_rx,
             state: Arc::clone(&state),
-            write_waker: Arc::clone(&waker),
         };
 
         (
             Self {
                 state,
-                tx: outbound_tx,
+                tx: PollSender::new(outbound_tx),
                 rx: inbound_rx,
                 read_buffer: BytesMut::new(),
-                write_waker: waker,
             },
             handle,
         )
@@ -109,14 +105,11 @@ impl Substream {
 pub struct SubstreamHandle {
     state: Arc<Mutex<State>>,
 
-    /// TX channel for sending messages to `peer`.
+    /// TX channel for sending inbound messages from `peer` to the associated `Substream`.
     tx: Sender<Event>,
 
-    /// RX channel for receiving messages from `peer`.
+    /// RX channel for receiving outbound messages to `peer` from the associated `Substream`.
     rx: Receiver<Event>,
-
-    /// Shared waker to notify when capacity on a previously full `rx` channel is available.
-    write_waker: Arc<AtomicWaker>,
 }
 
 impl SubstreamHandle {
@@ -155,7 +148,7 @@ impl Stream for SubstreamHandle {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let item = self.rx.poll_recv(cx);
-        self.write_waker.wake();
+        cx.waker().wake_by_ref();
         item
     }
 }
@@ -202,7 +195,7 @@ impl tokio::io::AsyncRead for Substream {
 
 impl tokio::io::AsyncWrite for Substream {
     fn poll_write(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
@@ -210,24 +203,18 @@ impl tokio::io::AsyncWrite for Substream {
             return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
         }
 
-        // Register in case channel is full. Do it before checking to avoid lost wakeups.
-        self.write_waker.register(cx.waker());
-
-        let permit = match self.tx.try_reserve() {
-            Ok(permit) => permit,
-            Err(err) =>
-                return match err {
-                    TrySendError::Full(_) => Poll::Pending,
-                    TrySendError::Closed(_) =>
-                        Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
-                },
+        match futures::ready!(self.tx.poll_reserve(cx)) {
+            Ok(()) => {}
+            Err(_) => return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
         };
 
         let num_bytes = std::cmp::min(MAX_FRAME_SIZE, buf.len());
         let frame = buf[..num_bytes].to_vec();
-        permit.send(Event::Message(frame));
 
-        Poll::Ready(Ok(num_bytes))
+        match self.tx.send_item(Event::Message(frame)) {
+            Ok(()) => Poll::Ready(Ok(num_bytes)),
+            Err(_) => Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
+        }
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
@@ -235,19 +222,18 @@ impl tokio::io::AsyncWrite for Substream {
     }
 
     fn poll_shutdown(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        let future = self.tx.reserve();
-        futures::pin_mut!(future);
-
-        let permit = match futures::ready!(future.poll(cx)) {
+        match futures::ready!(self.tx.poll_reserve(cx)) {
+            Ok(()) => {}
             Err(_) => return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
-            Ok(permit) => permit,
         };
-        permit.send(Event::Close);
 
-        Poll::Ready(Ok(()))
+        match self.tx.send_item(Event::Close) {
+            Ok(()) => Poll::Ready(Ok(())),
+            Err(_) => Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
+        }
     }
 }
 
