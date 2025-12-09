@@ -21,7 +21,6 @@
 //! WebSocket transport.
 
 use crate::{
-    config::Role,
     error::{AddressError, Error, NegotiationError},
     transport::{
         common::listener::{DialAddresses, GetSocketAddr, SocketListener, WebSocketAddress},
@@ -81,9 +80,8 @@ struct PendingInboundConnection {
 enum RawConnectionResult {
     /// The first successful connection.
     Connected {
-        connection_id: ConnectionId,
-        address: Multiaddr,
-        stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+        negotiated: NegotiatedConnection,
+        errors: Vec<(Multiaddr, DialError)>,
     },
 
     /// All connection attempts failed.
@@ -124,7 +122,7 @@ pub(crate) struct WebSocketTransport {
     pending_raw_connections: FuturesStream<BoxFuture<'static, RawConnectionResult>>,
 
     /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
-    opened_raw: HashMap<ConnectionId, (WebSocketStream<MaybeTlsStream<TcpStream>>, Multiaddr)>,
+    opened: HashMap<ConnectionId, NegotiatedConnection>,
 
     /// Cancel raw connections futures.
     ///
@@ -331,7 +329,7 @@ impl TransportBuilder for WebSocketTransport {
                 config,
                 context,
                 dial_addresses,
-                opened_raw: HashMap::new(),
+                opened: HashMap::new(),
                 pending_open: HashMap::new(),
                 pending_dials: HashMap::new(),
                 pending_inbound_connections: HashMap::new(),
@@ -480,16 +478,22 @@ impl Transport for WebSocketTransport {
         addresses: Vec<Multiaddr>,
     ) -> crate::Result<()> {
         let num_addresses = addresses.len();
+
         let mut futures: FuturesUnordered<_> = addresses
             .into_iter()
             .map(|address| {
+                let yamux_config = self.config.yamux_config.clone();
+                let keypair = self.context.keypair.clone();
                 let connection_open_timeout = self.config.connection_open_timeout;
+                let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
+                let max_write_buffer_size = self.config.noise_write_buffer_size;
+                let substream_open_timeout = self.config.substream_open_timeout;
                 let dial_addresses = self.dial_addresses.clone();
                 let nodelay = self.config.nodelay;
                 let resolver = self.resolver.clone();
 
                 async move {
-                    WebSocketTransport::dial_peer(
+                    let (address, stream) = WebSocketTransport::dial_peer(
                         address.clone(),
                         dial_addresses,
                         connection_open_timeout,
@@ -497,7 +501,26 @@ impl Transport for WebSocketTransport {
                         resolver,
                     )
                     .await
-                    .map_err(|error| (address, error))
+                    .map_err(|error| (address, error))?;
+
+                    let open_address = address.clone();
+                    let (ws_address, peer) = Self::multiaddr_into_url(address.clone())
+                        .map_err(|error| (address.clone(), error.into()))?;
+
+                    WebSocketConnection::open_connection(
+                        connection_id,
+                        keypair,
+                        stream,
+                        address,
+                        peer,
+                        ws_address,
+                        yamux_config,
+                        max_read_ahead_factor,
+                        max_write_buffer_size,
+                        substream_open_timeout,
+                    )
+                    .await
+                    .map_err(|error| (open_address, error.into()))
                 }
             })
             .collect();
@@ -507,12 +530,7 @@ impl Transport for WebSocketTransport {
             let mut errors = Vec::with_capacity(num_addresses);
             while let Some(result) = futures.next().await {
                 match result {
-                    Ok((address, stream)) =>
-                        return RawConnectionResult::Connected {
-                            connection_id,
-                            address,
-                            stream,
-                        },
+                    Ok(negotiated) => return RawConnectionResult::Connected { negotiated, errors },
                     Err(error) => {
                         tracing::debug!(
                             target: LOG_TARGET,
@@ -540,55 +558,12 @@ impl Transport for WebSocketTransport {
     }
 
     fn negotiate(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
-        let (stream, address) = self
-            .opened_raw
+        let negotiated = self
+            .opened
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
 
-        let peer = match address.iter().find(|protocol| std::matches!(protocol, Protocol::P2p(_))) {
-            Some(Protocol::P2p(multihash)) => PeerId::from_multihash(multihash)?,
-            _ => return Err(Error::InvalidState),
-        };
-        let yamux_config = self.config.yamux_config.clone();
-        let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
-        let max_write_buffer_size = self.config.noise_write_buffer_size;
-        let connection_open_timeout = self.config.connection_open_timeout;
-        let substream_open_timeout = self.config.substream_open_timeout;
-        let keypair = self.context.keypair.clone();
-
-        tracing::trace!(
-            target: LOG_TARGET,
-            ?peer,
-            ?connection_id,
-            ?address,
-            "negotiate connection",
-        );
-
-        self.pending_dials.insert(connection_id, address.clone());
-        self.pending_connections.push(Box::pin(async move {
-            match tokio::time::timeout(connection_open_timeout, async move {
-                WebSocketConnection::negotiate_connection(
-                    stream,
-                    Some(peer),
-                    Role::Dialer,
-                    address,
-                    connection_id,
-                    keypair,
-                    yamux_config,
-                    max_read_ahead_factor,
-                    max_write_buffer_size,
-                    substream_open_timeout,
-                )
-                .await
-                .map_err(|error| (connection_id, error.into()))
-            })
-            .await
-            {
-                Err(_) => Err((connection_id, DialError::Timeout)),
-                Ok(Err(error)) => Err(error),
-                Ok(Ok(connection)) => Ok(connection),
-            }
-        }));
+        self.pending_connections.push(Box::pin(async move { Ok(negotiated) }));
 
         Ok(())
     }
@@ -653,23 +628,24 @@ impl Stream for WebSocketTransport {
             tracing::trace!(target: LOG_TARGET, ?result, "raw connection result");
 
             match result {
-                RawConnectionResult::Connected {
-                    connection_id,
-                    address,
-                    stream,
-                } => {
-                    let Some(handle) = self.cancel_futures.remove(&connection_id) else {
+                RawConnectionResult::Connected { negotiated, errors } => {
+                    let Some(handle) = self.cancel_futures.remove(&negotiated.connection_id())
+                    else {
                         tracing::warn!(
                             target: LOG_TARGET,
-                            ?connection_id,
-                            ?address,
+                            connection_id = ?negotiated.connection_id(),
+                            address = ?negotiated.endpoint().address(),
+                            ?errors,
                             "raw connection without a cancel handle",
                         );
                         continue;
                     };
 
                     if !handle.is_aborted() {
-                        self.opened_raw.insert(connection_id, (stream, address.clone()));
+                        let connection_id = negotiated.connection_id();
+                        let address = negotiated.endpoint().address().clone();
+
+                        self.opened.insert(connection_id, negotiated);
 
                         return Poll::Ready(Some(TransportEvent::ConnectionOpened {
                             connection_id,
