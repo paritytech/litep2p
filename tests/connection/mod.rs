@@ -41,6 +41,8 @@ use tokio::net::TcpListener;
 use tokio::net::UdpSocket;
 
 use crate::common::{add_transport, Transport};
+
+#[cfg(feature = "websocket")]
 use std::collections::HashSet;
 
 #[cfg(test)]
