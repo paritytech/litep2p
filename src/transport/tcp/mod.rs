@@ -119,7 +119,7 @@ pub(crate) struct TcpTransport {
     pending_raw_connections: FuturesStream<BoxFuture<'static, RawConnectionResult>>,
 
     /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
-    opened_raw: HashMap<ConnectionId, NegotiatedConnection>,
+    opened: HashMap<ConnectionId, NegotiatedConnection>,
 
     /// Cancel raw connections futures.
     ///
@@ -298,7 +298,7 @@ impl TransportBuilder for TcpTransport {
                 config,
                 context,
                 dial_addresses,
-                opened_raw: HashMap::new(),
+                opened: HashMap::new(),
                 pending_open: HashMap::new(),
                 pending_dials: HashMap::new(),
                 pending_inbound_connections: HashMap::new(),
@@ -514,7 +514,7 @@ impl Transport for TcpTransport {
 
     fn negotiate(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
         let negotiated = self
-            .opened_raw
+            .opened
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
 
@@ -600,7 +600,7 @@ impl Stream for TcpTransport {
                         let connection_id = negotiated.connection_id();
                         let address = negotiated.endpoint().address().clone();
 
-                        self.opened_raw.insert(connection_id, negotiated);
+                        self.opened.insert(connection_id, negotiated);
 
                         return Poll::Ready(Some(TransportEvent::ConnectionOpened {
                             connection_id,
