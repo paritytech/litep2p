@@ -681,7 +681,7 @@ mod tests {
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
         transport::manager::{ProtocolContext, SupportedTransport, TransportManagerBuilder},
-        types::{multihash::Multihash, protocol::ProtocolName},
+        types::protocol::ProtocolName,
         BandwidthSink, PeerId,
     };
     use multiaddr::Protocol;

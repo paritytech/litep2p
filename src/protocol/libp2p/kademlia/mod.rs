@@ -1420,7 +1420,7 @@ mod tests {
             manager::{TransportManager, TransportManagerBuilder},
             KEEP_ALIVE_TIMEOUT,
         },
-        types::{multihash::Multihash, protocol::ProtocolName},
+        types::protocol::ProtocolName,
         ConnectionId,
     };
     use multiaddr::Protocol;

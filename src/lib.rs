@@ -528,7 +528,7 @@ mod tests {
     use crate::{
         config::ConfigBuilder,
         protocol::{libp2p::ping, notification::Config as NotificationConfig},
-        types::{multihash::Multihash, protocol::ProtocolName},
+        types::protocol::ProtocolName,
         Litep2p, Litep2pEvent, PeerId,
     };
     use multiaddr::{Multiaddr, Protocol};

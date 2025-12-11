@@ -403,7 +403,6 @@ mod tests {
     };
 
     use super::*;
-    use crate::types::multihash::Multihash;
     use parking_lot::lock_api::RwLock;
     use tokio::sync::mpsc::{channel, Receiver};
 

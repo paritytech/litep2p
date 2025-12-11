@@ -29,7 +29,6 @@ use litep2p::{
 };
 
 use futures::StreamExt;
-use litep2p::types::multihash::Multihash;
 use multiaddr::{Multiaddr, Protocol};
 use tokio::sync::oneshot;
 
@@ -94,9 +93,9 @@ async fn protocol_dial_invalid_dns_address() {
             "address.that.doesnt.exist.hopefully.pls".to_string(),
         )))
         .with(Protocol::Tcp(8888))
-        .with(Protocol::P2p(
-            Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
-        ));
+        .with(Protocol::P2p(multiaddr::multihash::Multihash::from(
+            PeerId::random(),
+        )));
 
     let (custom_protocol, rx) = CustomProtocol::new(address);
     let custom_protocol = Box::new(custom_protocol);

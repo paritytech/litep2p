@@ -1415,10 +1415,7 @@ impl TransportManager {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        transport::manager::{address::AddressStore, peer_state::SecondaryOrDialing},
-        types::multihash::Multihash,
-    };
+    use crate::transport::manager::{address::AddressStore, peer_state::SecondaryOrDialing};
     use limits::ConnectionLimitsConfig;
 
     use super::*;
