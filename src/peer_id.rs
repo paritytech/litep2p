@@ -299,6 +299,7 @@ impl FromStr for PeerId {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{crypto::ed25519::Keypair, types::multihash::Multihash, PeerId};
     use multiaddr::{Multiaddr, Protocol};
 
@@ -319,7 +320,10 @@ mod tests {
             align_of::<multiaddr::multihash::Multihash>(),
             "Multihash types must have the same alignment"
         );
+    }
 
+    #[test]
+    fn transmute_peer_id_wth_identity_code() {
         // Test that the transmute actually works correctly by creating a peer ID
         // and verifying we can get the same bytes through both types
         let peer_id = PeerId::random();
@@ -331,6 +335,91 @@ mod tests {
         assert_eq!(
             bytes_new, bytes_old,
             "Transmuted Multihash must preserve data"
+        );
+    }
+
+    #[test]
+    fn transmute_peer_id_with_sha256_code() {
+        // Test that the transmute works correctly with non-zero multihash code.
+        let payload = b"1337";
+        let multihash = Code::Sha2_256.digest(payload);
+        let peer_id = PeerId::try_from(multihash).expect("sha256 is supported by `PeerId`");
+        let bytes_new: Vec<u8> =
+            AsRef::<crate::types::multihash::Multihash>::as_ref(&peer_id).to_bytes();
+        let bytes_old: Vec<u8> =
+            AsRef::<multiaddr::multihash::Multihash>::as_ref(&peer_id).to_bytes();
+
+        assert_eq!(
+            bytes_new, bytes_old,
+            "Transmuted Multihash must preserve data"
+        );
+    }
+
+    #[test]
+    fn multihash_sha256_conversion() {
+        // Test conversion for both Identity and SHA-256 hashed peer IDs
+        // Ed25519 keys are 32 bytes, which when protobuf-encoded are < 42 bytes, so they use
+        // Identity
+
+        // Test with Ed25519 key (should use Identity hash, code 0x00)
+        let keypair = Keypair::generate();
+        let peer_id = keypair.public().to_peer_id();
+
+        let multihash: &crate::types::multihash::Multihash = peer_id.as_ref();
+        let hash_code = multihash.code();
+
+        // Ed25519 uses Identity (0x00), but verify conversion works for whatever code is used
+        assert!(
+            hash_code == 0x00 || hash_code == 0x12,
+            "Should use either Identity (0x00) or SHA-256 (0x12), got: 0x{:x}",
+            hash_code
+        );
+
+        // Test conversion to old multihash type
+        let old_multihash = multiaddr::multihash::Multihash::from(peer_id);
+        assert_eq!(
+            old_multihash.code(),
+            hash_code,
+            "Converted multihash should preserve hash code"
+        );
+
+        // Verify bytes are preserved
+        let bytes_new = multihash.to_bytes();
+        let bytes_old = old_multihash.to_bytes();
+        assert_eq!(bytes_new, bytes_old, "Multihash bytes must be preserved");
+
+        // Test conversion back from old multihash type
+        let peer_id_back = PeerId::try_from(old_multihash).unwrap();
+        assert_eq!(
+            peer_id, peer_id_back,
+            "Round-trip conversion must preserve PeerId"
+        );
+
+        // Test with a manually created SHA-256 peer ID
+        // Create a large key by using a 50-byte buffer which exceeds MAX_INLINE_KEY_LENGTH (42)
+        let large_key = vec![0x42u8; 50];
+        let peer_id_sha256 = PeerId::from_public_key_protobuf(&large_key);
+
+        let multihash_sha256: &crate::types::multihash::Multihash = peer_id_sha256.as_ref();
+        assert_eq!(
+            multihash_sha256.code(),
+            0x12,
+            "Large key should use SHA-256 hash"
+        );
+
+        // Test SHA-256 conversion
+        let old_multihash_sha256 = multiaddr::multihash::Multihash::from(peer_id_sha256);
+        assert_eq!(
+            old_multihash_sha256.code(),
+            0x12,
+            "Converted SHA-256 multihash should preserve code"
+        );
+
+        let bytes_new_sha256 = multihash_sha256.to_bytes();
+        let bytes_old_sha256 = old_multihash_sha256.to_bytes();
+        assert_eq!(
+            bytes_new_sha256, bytes_old_sha256,
+            "SHA-256 multihash bytes must be preserved"
         );
     }
 
