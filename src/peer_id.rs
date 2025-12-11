@@ -21,10 +21,12 @@
 
 #![allow(clippy::wrong_self_convention)]
 
-use crate::crypto::PublicKey;
+use crate::{
+    crypto::PublicKey,
+    types::multihash::{Code, Multihash, MultihashDigest},
+};
 
 use multiaddr::{Multiaddr, Protocol};
-use multihash::{Code, Error, Multihash, MultihashDigest};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -64,21 +66,25 @@ impl PeerId {
 
     /// Builds a `PeerId` from a public key in protobuf encoding.
     pub fn from_public_key_protobuf(key_enc: &[u8]) -> PeerId {
-        let hash_algorithm = if key_enc.len() <= MAX_INLINE_KEY_LENGTH {
-            Code::Identity
+        let multihash = if key_enc.len() <= MAX_INLINE_KEY_LENGTH {
+            // Use Identity hash (code 0x00) for small keys
+            Multihash::wrap(0x00, key_enc).expect("Key size is within bounds")
         } else {
-            Code::Sha2_256
+            // Use SHA-256 for larger keys
+            Code::Sha2_256.digest(key_enc)
         };
-
-        let multihash = hash_algorithm.digest(key_enc);
 
         PeerId { multihash }
     }
 
     /// Parses a `PeerId` from bytes.
-    pub fn from_bytes(data: &[u8]) -> Result<PeerId, Error> {
-        PeerId::from_multihash(Multihash::from_bytes(data)?)
-            .map_err(|mh| Error::UnsupportedCode(mh.code()))
+    pub fn from_bytes(data: &[u8]) -> Result<PeerId, crate::types::multihash::Error> {
+        let multihash = Multihash::from_bytes(data)?;
+        PeerId::from_multihash(multihash).map_err(|_mh| {
+            // Since we can't construct a multihash::Error for unsupported code,
+            // create an error by trying to parse invalid data
+            Multihash::from_bytes(&[0xFF, 0xFF, 0xFF]).unwrap_err()
+        })
     }
 
     /// Tries to turn a `Multihash` into a `PeerId`.
@@ -87,12 +93,22 @@ impl PeerId {
     /// or the hash value does not satisfy the constraints for a hashed
     /// peer ID, it is returned as an `Err`.
     pub fn from_multihash(multihash: Multihash) -> Result<PeerId, Multihash> {
-        match Code::try_from(multihash.code()) {
-            Ok(Code::Sha2_256) => Ok(PeerId { multihash }),
-            Ok(Code::Identity) if multihash.digest().len() <= MAX_INLINE_KEY_LENGTH =>
-                Ok(PeerId { multihash }),
+        match multihash.code() {
+            // SHA-256
+            0x12 => Ok(PeerId { multihash }),
+            // Identity hash
+            0x00 if multihash.digest().len() <= MAX_INLINE_KEY_LENGTH => Ok(PeerId { multihash }),
             _ => Err(multihash),
         }
+    }
+
+    /// Helper method to convert from multiaddr's old multihash type
+    pub(crate) fn from_multiaddr_multihash(
+        hash: multiaddr::multihash::Multihash,
+    ) -> Result<PeerId, multiaddr::multihash::Multihash> {
+        let bytes = hash.to_bytes();
+        let new_multihash = Multihash::from_bytes(&bytes).map_err(|_| hash)?;
+        PeerId::from_multihash(new_multihash).map_err(|_| hash)
     }
 
     /// Tries to extract a [`PeerId`] from the given [`Multiaddr`].
@@ -101,7 +117,7 @@ impl PeerId {
     /// will return the encapsulated [`PeerId`], otherwise it will return `None`.
     pub fn try_from_multiaddr(address: &Multiaddr) -> Option<PeerId> {
         address.iter().last().and_then(|p| match p {
-            Protocol::P2p(hash) => PeerId::from_multihash(hash).ok(),
+            Protocol::P2p(hash) => PeerId::from_multiaddr_multihash(hash).ok(),
             _ => None,
         })
     }
@@ -112,8 +128,7 @@ impl PeerId {
     pub fn random() -> PeerId {
         let peer_id = rand::thread_rng().gen::<[u8; 32]>();
         PeerId {
-            multihash: Multihash::wrap(Code::Identity.into(), &peer_id)
-                .expect("The digest size is never too large"),
+            multihash: Multihash::wrap(0x00, &peer_id).expect("The digest size is never too large"),
         }
     }
 
@@ -132,10 +147,13 @@ impl PeerId {
     /// Returns `None` if this `PeerId`s hash algorithm is not supported when encoding the
     /// given public key, otherwise `Some` boolean as the result of an equality check.
     pub fn is_public_key(&self, public_key: &PublicKey) -> Option<bool> {
-        let alg = Code::try_from(self.multihash.code())
-            .expect("Internal multihash is always a valid `Code`");
         let enc = public_key.to_protobuf_encoding();
-        Some(alg.digest(&enc) == self.multihash)
+        let expected_multihash = if enc.len() <= MAX_INLINE_KEY_LENGTH {
+            Multihash::wrap(0x00, &enc).ok()?
+        } else {
+            Code::Sha2_256.digest(&enc)
+        };
+        Some(expected_multihash == self.multihash)
     }
 }
 
@@ -173,9 +191,33 @@ impl AsRef<Multihash> for PeerId {
     }
 }
 
+impl AsRef<multiaddr::multihash::Multihash> for PeerId {
+    fn as_ref(&self) -> &multiaddr::multihash::Multihash {
+        // SAFETY: Both Multihash types have the same memory layout (they're both Multihash<64>)
+        // We can safely transmute between them for read-only operations
+        unsafe { std::mem::transmute(&self.multihash) }
+    }
+}
+
 impl From<PeerId> for Multihash {
     fn from(peer_id: PeerId) -> Self {
         peer_id.multihash
+    }
+}
+
+impl From<PeerId> for multiaddr::multihash::Multihash {
+    fn from(peer_id: PeerId) -> Self {
+        // Convert by serializing to bytes and deserializing with the old version
+        multiaddr::multihash::Multihash::from_bytes(&peer_id.multihash.to_bytes())
+            .expect("Valid multihash conversion")
+    }
+}
+
+impl TryFrom<multiaddr::multihash::Multihash> for PeerId {
+    type Error = multiaddr::multihash::Multihash;
+
+    fn try_from(multihash: multiaddr::multihash::Multihash) -> Result<Self, Self::Error> {
+        PeerId::from_multiaddr_multihash(multihash)
     }
 }
 
@@ -257,9 +299,8 @@ impl FromStr for PeerId {
 
 #[cfg(test)]
 mod tests {
-    use crate::{crypto::ed25519::Keypair, PeerId};
+    use crate::{crypto::ed25519::Keypair, types::multihash::Multihash, PeerId};
     use multiaddr::{Multiaddr, Protocol};
-    use multihash::Multihash;
 
     #[test]
     fn peer_id_is_public_key() {

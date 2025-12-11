@@ -34,8 +34,8 @@ use litep2p::{
 use litep2p::transport::websocket::config::Config as WebSocketConfig;
 
 use futures::{channel, StreamExt};
+use litep2p::types::multihash::Multihash;
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 use tokio::time::sleep;
 
 #[cfg(feature = "quic")]

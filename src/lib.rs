@@ -528,11 +528,10 @@ mod tests {
     use crate::{
         config::ConfigBuilder,
         protocol::{libp2p::ping, notification::Config as NotificationConfig},
-        types::protocol::ProtocolName,
+        types::{multihash::Multihash, protocol::ProtocolName},
         Litep2p, Litep2pEvent, PeerId,
     };
     use multiaddr::{Multiaddr, Protocol};
-    use multihash::Multihash;
     use std::net::Ipv4Addr;
 
     #[tokio::test]

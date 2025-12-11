@@ -265,7 +265,8 @@ impl TransportManagerHandle {
                 peer_addresses.insert(address);
             } else {
                 // Add the provided peer ID to the address.
-                let address = address.with(Protocol::P2p(multihash::Multihash::from(*peer)));
+                let address =
+                    address.with(Protocol::P2p(multiaddr::multihash::Multihash::from(*peer)));
                 peer_addresses.insert(address);
             }
         }
@@ -402,7 +403,7 @@ mod tests {
     };
 
     use super::*;
-    use multihash::Multihash;
+    use crate::types::multihash::Multihash;
     use parking_lot::lock_api::RwLock;
     use tokio::sync::mpsc::{channel, Receiver};
 

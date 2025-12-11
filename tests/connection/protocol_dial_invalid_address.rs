@@ -29,8 +29,8 @@ use litep2p::{
 };
 
 use futures::StreamExt;
+use litep2p::types::multihash::Multihash;
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 use tokio::sync::oneshot;
 
 #[derive(Debug)]

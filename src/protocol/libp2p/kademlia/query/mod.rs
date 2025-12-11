@@ -900,7 +900,7 @@ impl QueryEngine {
 
 #[cfg(test)]
 mod tests {
-    use multihash::{Code, Multihash};
+    use crate::types::multihash::{Code, Multihash};
 
     use super::*;
     use crate::protocol::libp2p::kademlia::types::ConnectionType;

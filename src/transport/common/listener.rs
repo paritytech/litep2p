@@ -428,8 +428,15 @@ fn multiaddr_to_socket_address(
     }
 
     let maybe_peer = match iter.next() {
-        Some(Protocol::P2p(multihash)) =>
-            Some(PeerId::from_multihash(multihash).map_err(AddressError::InvalidPeerId)?),
+        Some(Protocol::P2p(multihash)) => Some(
+            PeerId::from_multiaddr_multihash(multihash).map_err(|old_hash| {
+                // Convert old multihash to new multihash for the error
+                let bytes = old_hash.to_bytes();
+                let new_hash = crate::types::multihash::Multihash::from_bytes(&bytes)
+                    .expect("Valid multihash conversion");
+                AddressError::InvalidPeerId(new_hash)
+            })?,
+        ),
         None => None,
         protocol => {
             tracing::error!(

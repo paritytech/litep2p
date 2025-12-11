@@ -39,10 +39,10 @@ use crate::{
 };
 
 use address::{scores, AddressStore};
+
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
@@ -488,7 +488,7 @@ impl TransportManager {
 
         listen_addresses.insert(address.clone());
         listen_addresses.insert(address.with(Protocol::P2p(
-            Multihash::from_bytes(&self.local_peer_id.to_bytes()).unwrap(),
+            multiaddr::multihash::Multihash::from(self.local_peer_id),
         )));
     }
 
@@ -719,7 +719,7 @@ impl TransportManager {
         // Extract the peer ID at this point to give `NegotiationError::PeerIdMismatch` a chance to
         // propagate.
         let peer_id = match address.iter().last() {
-            Some(Protocol::P2p(hash)) => PeerId::from_multihash(hash).ok(),
+            Some(Protocol::P2p(hash)) => PeerId::from_multiaddr_multihash(hash).ok(),
             _ => None,
         };
         let Some(peer_id) = peer_id else {
@@ -1166,7 +1166,7 @@ impl TransportManager {
 
                             if let Ok(()) = self.on_dial_failure(connection_id) {
                                 match address.iter().last() {
-                                    Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
+                                    Some(Protocol::P2p(hash)) => match PeerId::from_multiaddr_multihash(hash) {
                                         Ok(peer) => {
                                             tracing::trace!(
                                                 target: LOG_TARGET,
@@ -1415,10 +1415,11 @@ impl TransportManager {
 
 #[cfg(test)]
 mod tests {
-    use crate::transport::manager::{address::AddressStore, peer_state::SecondaryOrDialing};
+    use crate::{
+        transport::manager::{address::AddressStore, peer_state::SecondaryOrDialing},
+        types::multihash::Multihash,
+    };
     use limits::ConnectionLimitsConfig;
-
-    use multihash::Multihash;
 
     use super::*;
     use crate::{

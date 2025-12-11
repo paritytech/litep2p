@@ -1420,11 +1420,10 @@ mod tests {
             manager::{TransportManager, TransportManagerBuilder},
             KEEP_ALIVE_TIMEOUT,
         },
-        types::protocol::ProtocolName,
+        types::{multihash::Multihash, protocol::ProtocolName},
         ConnectionId,
     };
     use multiaddr::Protocol;
-    use multihash::Multihash;
     use std::str::FromStr;
     use tokio::sync::mpsc::channel;
 

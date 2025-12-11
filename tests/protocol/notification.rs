@@ -36,8 +36,8 @@ use litep2p::transport::websocket::config::Config as WebSocketConfig;
 
 use bytes::BytesMut;
 use futures::StreamExt;
+use litep2p::types::multihash::Multihash;
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 
 #[cfg(feature = "quic")]
 use std::net::Ipv4Addr;

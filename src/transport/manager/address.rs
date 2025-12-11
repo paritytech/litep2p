@@ -21,7 +21,6 @@
 use crate::{error::DialError, PeerId};
 
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 
 use std::collections::{hash_map::Entry, HashMap};
 
@@ -63,9 +62,7 @@ impl AddressRecord {
     /// append the provided `PeerId` to the address.
     pub fn new(peer: &PeerId, address: Multiaddr, score: i32) -> Self {
         let address = if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
-            address.with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).expect("valid peer id"),
-            ))
+            address.with(Protocol::P2p(multiaddr::multihash::Multihash::from(*peer)))
         } else {
             address
         };

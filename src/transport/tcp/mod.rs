@@ -681,11 +681,10 @@ mod tests {
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
         transport::manager::{ProtocolContext, SupportedTransport, TransportManagerBuilder},
-        types::protocol::ProtocolName,
+        types::{multihash::Multihash, protocol::ProtocolName},
         BandwidthSink, PeerId,
     };
     use multiaddr::Protocol;
-    use multihash::Multihash;
     use std::sync::Arc;
     use tokio::sync::mpsc::channel;
 

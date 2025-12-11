@@ -33,8 +33,8 @@ use litep2p::transport::websocket::config::Config as WebSocketConfig;
 use litep2p::{error::AddressError, transport::quic::config::Config as QuicConfig};
 
 use futures::{Stream, StreamExt};
+use litep2p::types::multihash::Multihash;
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use tokio::net::TcpListener;
 #[cfg(feature = "quic")]
