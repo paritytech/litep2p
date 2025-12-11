@@ -356,7 +356,8 @@ impl WebSocketConnection {
 
         let address = match role {
             Role::Dialer => address,
-            Role::Listener => address.with(Protocol::P2p(Multihash::from(peer))),
+            Role::Listener =>
+                address.with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer))),
         };
 
         Ok(NegotiatedConnection {

@@ -648,9 +648,7 @@ mod tests {
         let address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(255, 254, 253, 252)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
 
         let mut litep2p = Litep2p::new(config).unwrap();
         litep2p.dial_address(address.clone()).await.unwrap();

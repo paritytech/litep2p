@@ -303,6 +303,38 @@ mod tests {
     use multiaddr::{Multiaddr, Protocol};
 
     #[test]
+    fn multihash_layout_compatibility() {
+        // Verify that both Multihash types have the same memory layout
+        // This is critical for the safety of the transmute in AsRef implementation
+        use std::mem::{align_of, size_of};
+
+        assert_eq!(
+            size_of::<crate::types::multihash::Multihash>(),
+            size_of::<multiaddr::multihash::Multihash>(),
+            "Multihash types must have the same size"
+        );
+
+        assert_eq!(
+            align_of::<crate::types::multihash::Multihash>(),
+            align_of::<multiaddr::multihash::Multihash>(),
+            "Multihash types must have the same alignment"
+        );
+
+        // Test that the transmute actually works correctly by creating a peer ID
+        // and verifying we can get the same bytes through both types
+        let peer_id = PeerId::random();
+        let bytes_new: Vec<u8> =
+            AsRef::<crate::types::multihash::Multihash>::as_ref(&peer_id).to_bytes();
+        let bytes_old: Vec<u8> =
+            AsRef::<multiaddr::multihash::Multihash>::as_ref(&peer_id).to_bytes();
+
+        assert_eq!(
+            bytes_new, bytes_old,
+            "Transmuted Multihash must preserve data"
+        );
+    }
+
+    #[test]
     fn peer_id_is_public_key() {
         let key = Keypair::generate().public();
         let peer_id = key.to_peer_id();
@@ -338,7 +370,7 @@ mod tests {
         let address = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
             .with(Protocol::Tcp(address.port()))
-            .with(Protocol::P2p(Multihash::from(peer)));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
 
         assert_eq!(peer, PeerId::try_from_multiaddr(&address).unwrap());
     }

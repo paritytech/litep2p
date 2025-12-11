@@ -912,7 +912,7 @@ mod tests {
         peer_id[1] = second;
 
         PeerId::from_bytes(
-            &Multihash::wrap(Code::Identity.into(), &peer_id)
+            &Multihash::wrap(0x00, &peer_id)
                 .expect("The digest size is never too large")
                 .to_bytes(),
         )
