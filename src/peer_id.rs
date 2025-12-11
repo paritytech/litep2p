@@ -24,12 +24,12 @@
 use crate::{
     crypto::PublicKey,
     types::multihash::{Code, Multihash, MultihashDigest},
+    Error,
 };
 
 use multiaddr::{Multiaddr, Protocol};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 use std::{convert::TryFrom, fmt, str::FromStr};
 
@@ -78,13 +78,9 @@ impl PeerId {
     }
 
     /// Parses a `PeerId` from bytes.
-    pub fn from_bytes(data: &[u8]) -> Result<PeerId, crate::types::multihash::Error> {
-        let multihash = Multihash::from_bytes(data)?;
-        PeerId::from_multihash(multihash).map_err(|_mh| {
-            // Since we can't construct a multihash::Error for unsupported code,
-            // create an error by trying to parse invalid data
-            Multihash::from_bytes(&[0xFF, 0xFF, 0xFF]).unwrap_err()
-        })
+    pub fn from_bytes(data: &[u8]) -> Result<PeerId, Error> {
+        let multihash = Multihash::from_bytes(data).map_err(|_| Error::InvalidData)?;
+        PeerId::from_multihash(multihash).map_err(|_| Error::InvalidData)
     }
 
     /// Tries to turn a `Multihash` into a `PeerId`.
@@ -279,7 +275,7 @@ impl<'de> Deserialize<'de> for PeerId {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum ParseError {
     #[error("base-58 decode error: {0}")]
     B58(#[from] bs58::decode::Error),
