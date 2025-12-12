@@ -44,6 +44,15 @@ pub enum BitswapEvent {
         /// Requested CIDs.
         cids: Vec<(Cid, WantType)>,
     },
+
+    /// Bitswap response.
+    Response {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Response entries: vector of CIDs with either block data or block presence.
+        responses: Vec<ResponseType>,
+    },
 }
 
 /// Response type for received bitswap request.
@@ -73,6 +82,15 @@ pub enum ResponseType {
 #[derive(Debug)]
 #[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub enum BitswapCommand {
+    /// Send bitswap request.
+    SendRequest {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Requested CIDs.
+        cids: Vec<(Cid, WantType)>,
+    },
+
     /// Send bitswap response.
     SendResponse {
         /// Peer ID.
@@ -99,10 +117,8 @@ impl BitswapHandle {
     }
 
     /// Send `request` to `peer`.
-    ///
-    /// Not supported by the current implementation.
-    pub async fn send_request(&self, _peer: PeerId, _request: Vec<u8>) {
-        unimplemented!("bitswap requests are not supported");
+    pub async fn send_request(&self, peer: PeerId, cids: Vec<(Cid, WantType)>) {
+        let _ = self.cmd_tx.send(BitswapCommand::SendRequest { peer, cids }).await;
     }
 
     /// Send `response` to `peer`.
