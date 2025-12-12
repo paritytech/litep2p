@@ -176,14 +176,14 @@ impl OpeningWebRtcConnection {
             .rtc
             .direct_api()
             .remote_dtls_fingerprint()
-            .clone()
-            .expect("fingerprint to exist");
+            .expect("fingerprint to exist")
+            .clone();
         Self::fingerprint_to_bytes(&fingerprint)
     }
 
     /// Get local fingerprint as bytes.
     fn local_fingerprint(&mut self) -> Vec<u8> {
-        Self::fingerprint_to_bytes(&self.rtc.direct_api().local_dtls_fingerprint())
+        Self::fingerprint_to_bytes(self.rtc.direct_api().local_dtls_fingerprint())
     }
 
     /// Convert `Fingerprint` to bytes.
@@ -268,8 +268,8 @@ impl OpeningWebRtcConnection {
             .rtc
             .direct_api()
             .remote_dtls_fingerprint()
-            .clone()
             .expect("fingerprint to exist")
+            .clone()
             .bytes;
 
         const MULTIHASH_SHA256_CODE: u64 = 0x12;
