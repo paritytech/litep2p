@@ -39,7 +39,10 @@ use tokio_stream::{StreamExt, StreamMap};
 pub use config::Config;
 pub use handle::{BitswapCommand, BitswapEvent, BitswapHandle, ResponseType};
 pub use schema::bitswap::{wantlist::WantType, BlockPresenceType};
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{hash_map::Entry, HashMap, HashSet},
+    time::Duration,
+};
 
 mod config;
 mod handle;
@@ -134,14 +137,17 @@ pub(crate) struct Bitswap {
     /// RX channel for receiving commands from `BitswapHandle`.
     cmd_rx: Receiver<BitswapCommand>,
 
-    /// Pending outbound substreams.
-    pending_outbound: HashMap<SubstreamId, SubstreamAction>,
+    /// Pending outbound actions.
+    pending_outbound: HashMap<PeerId, Vec<SubstreamAction>>,
 
     /// Inbound substreams.
     inbound: StreamMap<PeerId, Substream>,
 
+    /// Outbound substreams.
+    outbound: HashMap<PeerId, Substream>,
+
     /// Peers waiting for dial.
-    pending_dials: HashMap<PeerId, Vec<SubstreamAction>>,
+    pending_dials: HashSet<PeerId>,
 }
 
 impl Bitswap {
@@ -153,7 +159,8 @@ impl Bitswap {
             event_tx: config.event_tx,
             pending_outbound: HashMap::new(),
             inbound: StreamMap::new(),
-            pending_dials: HashMap::new(),
+            outbound: HashMap::new(),
+            pending_dials: HashSet::new(),
         }
     }
 
@@ -294,135 +301,113 @@ impl Bitswap {
         substream_id: SubstreamId,
         mut substream: Substream,
     ) {
-        let Some(action) = self.pending_outbound.remove(&substream_id) else {
+        let Some(actions) = self.pending_outbound.remove(&peer) else {
             tracing::warn!(target: LOG_TARGET, ?peer, ?substream_id, "pending outbound entry doesn't exist");
             return;
         };
 
-        match action {
-            SubstreamAction::SendRequest(cids) => {
-                let request = schema::bitswap::Message {
-                    wantlist: Some(schema::bitswap::Wantlist {
-                        entries: cids
-                            .into_iter()
-                            .map(|(cid, want_type)| schema::bitswap::wantlist::Entry {
-                                block: cid.to_bytes(),
-                                priority: 1,
-                                cancel: false,
-                                want_type: want_type as i32,
-                                send_dont_have: false,
-                            })
-                            .collect(),
-                        full: false,
-                    }),
-                    ..Default::default()
-                };
-
-                let message = request.encode_to_vec().into();
-                let _ = tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await;
-
-                // Keep the substream open to receive the response.
-                self.inbound.insert(peer, substream);
-            }
-            SubstreamAction::SendResponse(entries) => {
-                let mut response = schema::bitswap::Message {
-                    // `wantlist` field must always be present. This is what the official Kubo IPFS
-                    // implementation does.
-                    wantlist: Some(Default::default()),
-                    ..Default::default()
-                };
-
-                for entry in entries {
-                    match entry {
-                        ResponseType::Block { cid, block } => {
-                            let prefix = Prefix {
-                                version: cid.version(),
-                                codec: cid.codec(),
-                                multihash_type: cid.hash().code(),
-                                multihash_len: cid.hash().size(),
-                            }
-                            .to_bytes();
-
-                            response.payload.push(schema::bitswap::Block {
-                                prefix,
-                                data: block,
-                            });
-                        }
-                        ResponseType::Presence { cid, presence } => {
-                            response.block_presences.push(schema::bitswap::BlockPresence {
-                                cid: cid.to_bytes(),
-                                r#type: presence as i32,
-                            });
-                        }
+        for action in actions {
+            match action {
+                SubstreamAction::SendRequest(cids) => {
+                    if send_request(&mut substream, cids).await.is_err() {
+                        // Drop the substream and all actions in case of sending error.
+                        tracing::debug!(target: LOG_TARGET, ?peer, "bitswap request failed");
+                        return;
                     }
                 }
-
-                let message = response.encode_to_vec().into();
-                let _ = tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await;
-
-                substream.close().await;
+                SubstreamAction::SendResponse(entries) => {
+                    if send_response(&mut substream, entries).await.is_err() {
+                        // Drop the substream and all actions in case of sending error.
+                        tracing::debug!(target: LOG_TARGET, ?peer, "bitswap response failed");
+                        return;
+                    }
+                }
             }
         }
+
+        self.outbound.insert(peer, substream);
     }
 
     /// Handle connection established event.
     fn on_connection_established(&mut self, peer: PeerId) {
-        // If we have pending actions for this peer, open substreams.
-        if let Some(actions) = self.pending_dials.remove(&peer) {
-            for action in actions {
-                match self.service.open_substream(peer) {
-                    Ok(substream_id) => {
-                        self.pending_outbound.insert(substream_id, action);
-                    }
-                    Err(error) => {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?error,
-                            "failed to open substream after connection established",
-                        );
-                    }
+        // If we have pending actions for this peer, open a substream.
+        if self.pending_dials.remove(&peer) {
+            if let Err(error) = self.service.open_substream(peer) {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?error,
+                    "failed to open substream after connection established",
+                );
+                // Drop all pending actions; they are not going to be handled anyway, and we need
+                // the entry to be empty to properly open subsequent substreams.
+                self.pending_outbound.remove(&peer);
+            }
+        }
+    }
+
+    /// Open substream or dial a peer.
+    fn open_substream_or_dial(&mut self, peer: PeerId) {
+        if let Err(error) = self.service.open_substream(peer) {
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?peer,
+                ?error,
+                "failed to open substream, dialing peer",
+            );
+
+            // Failed to open substream, try to dial the peer.
+            match self.service.dial(&peer) {
+                Ok(()) => {
+                    // Store the peer to open a substream once it is connected.
+                    self.pending_dials.insert(peer);
+                }
+                Err(error) => {
+                    tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to dial peer");
                 }
             }
         }
     }
 
     /// Handle bitswap request.
-    fn on_bitswap_request(&mut self, peer: PeerId, cids: Vec<(Cid, WantType)>) {
-        match self.service.open_substream(peer) {
-            Ok(substream_id) => {
-                self.pending_outbound.insert(substream_id, SubstreamAction::SendRequest(cids));
+    async fn on_bitswap_request(&mut self, peer: PeerId, cids: Vec<(Cid, WantType)>) {
+        // Try to send request over existing substream first.
+        if let Entry::Occupied(mut entry) = self.outbound.entry(peer) {
+            if send_request(entry.get_mut(), cids.clone()).await.is_ok() {
+                return;
+            } else {
+                entry.remove();
             }
-            Err(error) => {
-                tracing::trace!(target: LOG_TARGET, ?peer, ?error, "failed to open substream, dialing peer");
+        }
 
-                // Failed to open substream, try to dial the peer.
-                match self.service.dial(&peer) {
-                    Ok(()) => {
-                        // Store the action to be performed when the peer is connected.
-                        self.pending_dials
-                            .entry(peer)
-                            .or_default()
-                            .push(SubstreamAction::SendRequest(cids));
-                    }
-                    Err(error) => {
-                        tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to dial peer");
-                    }
-                }
-            }
+        // Store pending actions for later and open substream if not requested already.
+        let pending_actions = self.pending_outbound.entry(peer).or_default();
+        let no_pending_substream = pending_actions.is_empty();
+        pending_actions.push(SubstreamAction::SendRequest(cids));
+
+        if no_pending_substream {
+            self.open_substream_or_dial(peer);
         }
     }
 
     /// Handle bitswap response.
-    fn on_bitswap_response(&mut self, peer: PeerId, responses: Vec<ResponseType>) {
-        match self.service.open_substream(peer) {
-            Err(error) => {
-                tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to open substream to peer")
+    async fn on_bitswap_response(&mut self, peer: PeerId, responses: Vec<ResponseType>) {
+        // Try to send response over existing substream first.
+        if let Entry::Occupied(mut entry) = self.outbound.entry(peer) {
+            if send_response(entry.get_mut(), responses.clone()).await.is_ok() {
+                return;
+            } else {
+                entry.remove();
             }
-            Ok(substream_id) => {
-                self.pending_outbound
-                    .insert(substream_id, SubstreamAction::SendResponse(responses));
-            }
+        }
+
+        // Store pending actions for later and open substream if not requested already.
+        let pending_actions = self.pending_outbound.entry(peer).or_default();
+        let no_pending_substream = pending_actions.is_empty();
+        pending_actions.push(SubstreamAction::SendResponse(responses));
+
+        if no_pending_substream {
+            self.open_substream_or_dial(peer);
         }
     }
 
@@ -451,10 +436,10 @@ impl Bitswap {
                 },
                 command = self.cmd_rx.recv() => match command {
                     Some(BitswapCommand::SendRequest { peer, cids }) => {
-                        self.on_bitswap_request(peer, cids);
+                        self.on_bitswap_request(peer, cids).await;
                     }
                     Some(BitswapCommand::SendResponse { peer, responses }) => {
-                        self.on_bitswap_response(peer, responses);
+                        self.on_bitswap_response(peer, responses).await;
                     }
                     None => return,
                 },
@@ -482,5 +467,72 @@ impl Bitswap {
                 }
             }
         }
+    }
+}
+
+async fn send_request(substream: &mut Substream, cids: Vec<(Cid, WantType)>) -> Result<(), ()> {
+    let request = schema::bitswap::Message {
+        wantlist: Some(schema::bitswap::Wantlist {
+            entries: cids
+                .into_iter()
+                .map(|(cid, want_type)| schema::bitswap::wantlist::Entry {
+                    block: cid.to_bytes(),
+                    priority: 1,
+                    cancel: false,
+                    want_type: want_type as i32,
+                    send_dont_have: false,
+                })
+                .collect(),
+            full: false,
+        }),
+        ..Default::default()
+    };
+
+    let message = request.encode_to_vec().into();
+    if let Ok(Ok(())) = tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
+        Ok(())
+    } else {
+        Err(())
+    }
+}
+
+async fn send_response(substream: &mut Substream, entries: Vec<ResponseType>) -> Result<(), ()> {
+    let mut response = schema::bitswap::Message {
+        // `wantlist` field must always be present. This is what the official Kubo
+        // IPFS implementation does.
+        wantlist: Some(Default::default()),
+        ..Default::default()
+    };
+
+    for entry in entries {
+        match entry {
+            ResponseType::Block { cid, block } => {
+                let prefix = Prefix {
+                    version: cid.version(),
+                    codec: cid.codec(),
+                    multihash_type: cid.hash().code(),
+                    multihash_len: cid.hash().size(),
+                }
+                .to_bytes();
+
+                response.payload.push(schema::bitswap::Block {
+                    prefix,
+                    data: block,
+                });
+            }
+            ResponseType::Presence { cid, presence } => {
+                response.block_presences.push(schema::bitswap::BlockPresence {
+                    cid: cid.to_bytes(),
+                    r#type: presence as i32,
+                });
+            }
+        }
+    }
+
+    let message = response.encode_to_vec().into();
+    if let Ok(Ok(())) = tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
+        Ok(())
+    } else {
+        Err(())
     }
 }

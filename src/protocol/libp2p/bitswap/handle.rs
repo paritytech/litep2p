@@ -56,7 +56,7 @@ pub enum BitswapEvent {
 }
 
 /// Response type for received bitswap request.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub enum ResponseType {
     /// Block.
