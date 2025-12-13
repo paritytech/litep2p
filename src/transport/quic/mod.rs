@@ -590,10 +590,9 @@ mod tests {
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
         transport::manager::{ProtocolContext, TransportHandle},
-        types::protocol::ProtocolName,
+        types::{multihash::Multihash, protocol::ProtocolName},
         BandwidthSink,
     };
-    use multihash::Multihash;
     use tokio::sync::mpsc::channel;
 
     #[tokio::test]

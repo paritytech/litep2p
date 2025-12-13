@@ -34,7 +34,6 @@ use crate::{
 };
 
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 
 /// Number of k-buckets.
 const NUM_BUCKETS: usize = 256;
@@ -195,7 +194,7 @@ impl RoutingTable {
                 if std::matches!(last, Some(Protocol::P2p(_))) {
                     Some(address)
                 } else {
-                    Some(address.with(Protocol::P2p(Multihash::from_bytes(&peer.to_bytes()).ok()?)))
+                    Some(address.with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer))))
                 }
             })
             .collect();

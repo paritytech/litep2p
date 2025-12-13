@@ -39,10 +39,10 @@ use crate::{
 };
 
 use address::{scores, AddressStore};
+
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
@@ -488,7 +488,7 @@ impl TransportManager {
 
         listen_addresses.insert(address.clone());
         listen_addresses.insert(address.with(Protocol::P2p(
-            Multihash::from_bytes(&self.local_peer_id.to_bytes()).unwrap(),
+            multiaddr::multihash::Multihash::from(self.local_peer_id),
         )));
     }
 
@@ -719,7 +719,7 @@ impl TransportManager {
         // Extract the peer ID at this point to give `NegotiationError::PeerIdMismatch` a chance to
         // propagate.
         let peer_id = match address.iter().last() {
-            Some(Protocol::P2p(hash)) => PeerId::from_multihash(hash).ok(),
+            Some(Protocol::P2p(hash)) => PeerId::from_multiaddr_multihash(hash).ok(),
             _ => None,
         };
         let Some(peer_id) = peer_id else {
@@ -1166,7 +1166,7 @@ impl TransportManager {
 
                             if let Ok(()) = self.on_dial_failure(connection_id) {
                                 match address.iter().last() {
-                                    Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
+                                    Some(Protocol::P2p(hash)) => match PeerId::from_multiaddr_multihash(hash) {
                                         Ok(peer) => {
                                             tracing::trace!(
                                                 target: LOG_TARGET,
@@ -1418,8 +1418,6 @@ mod tests {
     use crate::transport::manager::{address::AddressStore, peer_state::SecondaryOrDialing};
     use limits::ConnectionLimitsConfig;
 
-    use multihash::Multihash;
-
     use super::*;
     use crate::{
         crypto::ed25519::Keypair,
@@ -1439,9 +1437,7 @@ mod tests {
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8888 + connection_id))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
         let connection_id = ConnectionId::from(connection_id as usize);
 
         (dial_address, connection_id)
@@ -1738,9 +1734,9 @@ mod tests {
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Udp(8888))
             .with(Protocol::QuicV1)
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(
+                PeerId::random(),
+            )));
 
         assert!(std::matches!(
             manager.dial_address(address).await,
@@ -1759,9 +1755,7 @@ mod tests {
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
 
         let transport = Box::new({
             let mut transport = DummyTransport::new();
@@ -1818,9 +1812,7 @@ mod tests {
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
 
         assert!(manager.dial_address(dial_address.clone()).await.is_ok());
         assert_eq!(manager.pending_connections.len(), 1);
@@ -1846,9 +1838,7 @@ mod tests {
                 Multiaddr::empty()
                     .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
                     .with(Protocol::Tcp(8888))
-                    .with(Protocol::P2p(
-                        Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-                    ))
+                    .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer),))
             )
             .await
             .is_ok());
@@ -1859,9 +1849,7 @@ mod tests {
                 Multiaddr::empty()
                     .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
                     .with(Protocol::Tcp(8888))
-                    .with(Protocol::P2p(
-                        Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-                    ))
+                    .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer),))
             )
             .await
             .is_ok());
@@ -1922,18 +1910,18 @@ mod tests {
         let address = Multiaddr::empty()
             .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(
+                PeerId::random(),
+            )));
         assert!(handle.supported_transport(&address));
 
         // ipv4
         let address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(
+                PeerId::random(),
+            )));
         assert!(handle.supported_transport(&address));
 
         // quic
@@ -1941,9 +1929,9 @@ mod tests {
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Udp(8888))
             .with(Protocol::QuicV1)
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(
+                PeerId::random(),
+            )));
         #[cfg(feature = "quic")]
         assert!(handle.supported_transport(&address));
         #[cfg(not(feature = "quic"))]
@@ -1980,15 +1968,11 @@ mod tests {
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
         let connect_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 173)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
         assert!(manager.dial_address(dial_address.clone()).await.is_ok());
         assert_eq!(manager.pending_connections.len(), 1);
 
@@ -2041,15 +2025,11 @@ mod tests {
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
         let connect_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 173)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
         assert!(manager.dial_address(dial_address.clone()).await.is_ok());
         assert_eq!(manager.pending_connections.len(), 1);
 
@@ -2122,15 +2102,11 @@ mod tests {
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
         let connect_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 173)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
         assert!(manager.dial_address(dial_address.clone()).await.is_ok());
         assert_eq!(manager.pending_connections.len(), 1);
 
@@ -2200,21 +2176,15 @@ mod tests {
         let address1 = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
         let address2 = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 173)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
         let address3 = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 10, 64)))
             .with(Protocol::Tcp(9999))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
 
         // remote peer connected to local node
         let established_result = manager
@@ -2303,15 +2273,11 @@ mod tests {
         let address1 = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
         let address2 = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 173)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
 
         // remote peer connected to local node
         let established_result = manager
@@ -2393,15 +2359,11 @@ mod tests {
         let address1 = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
         let address2 = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 173)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
 
         // remote peer connected to local node
         let emit_event = manager
@@ -2496,15 +2458,11 @@ mod tests {
         let address1 = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
         let address2 = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 173)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
 
         // remote peer connected to local node
         let emit_event = manager
@@ -2594,21 +2552,15 @@ mod tests {
         let address1 = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
         let address2 = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 173)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
         let address3 = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 173)))
             .with(Protocol::Tcp(9999))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
 
         // remote peer connected to local node
         let emit_event = manager
@@ -2857,7 +2809,7 @@ mod tests {
                             address: Multiaddr::empty()
                                 .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                                 .with(Protocol::Tcp(8888))
-                                .with(Protocol::P2p(Multihash::from(peer))),
+                                .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer))),
                             connection_id: ConnectionId::from(0usize),
                         },
                         secondary: None,
@@ -2867,7 +2819,7 @@ mod tests {
                         vec![Multiaddr::empty()
                             .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                             .with(Protocol::Tcp(8888))
-                            .with(Protocol::P2p(Multihash::from(peer)))]
+                            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)))]
                         .into_iter(),
                     ),
                 },
@@ -2899,7 +2851,7 @@ mod tests {
                             address: Multiaddr::empty()
                                 .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                                 .with(Protocol::Tcp(8888))
-                                .with(Protocol::P2p(Multihash::from(peer))),
+                                .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer))),
                             connection_id: ConnectionId::from(0usize),
                         },
                     },
@@ -2908,7 +2860,7 @@ mod tests {
                         vec![Multiaddr::empty()
                             .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                             .with(Protocol::Tcp(8888))
-                            .with(Protocol::P2p(Multihash::from(peer)))]
+                            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)))]
                         .into_iter(),
                     ),
                 },
@@ -2932,7 +2884,7 @@ mod tests {
                         Multiaddr::empty()
                             .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                             .with(Protocol::Tcp(8888))
-                            .with(Protocol::P2p(Multihash::from(peer)))
+                            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)))
                     );
                 }
                 state => panic!("invalid state: {state:?}"),
@@ -2957,7 +2909,7 @@ mod tests {
                             Multiaddr::empty()
                                 .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                                 .with(Protocol::Tcp(8888))
-                                .with(Protocol::P2p(Multihash::from(peer))),
+                                .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer))),
                             ConnectionId::from(0),
                         )),
                     },
@@ -2983,7 +2935,9 @@ mod tests {
 
         // transport doesn't start with ip/dns
         {
-            let address = Multiaddr::empty().with(Protocol::P2p(Multihash::from(PeerId::random())));
+            let address = Multiaddr::empty().with(Protocol::P2p(
+                multiaddr::multihash::Multihash::from(PeerId::random()),
+            ));
             match manager.dial_address(address.clone()).await {
                 Err(Error::TransportNotSupported(dial_address)) => {
                     assert_eq!(dial_address, address);
@@ -2998,7 +2952,9 @@ mod tests {
                 .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                 .with(Protocol::Udp(8888))
                 .with(Protocol::Utp)
-                .with(Protocol::P2p(Multihash::from(PeerId::random())));
+                .with(Protocol::P2p(multiaddr::multihash::Multihash::from(
+                    PeerId::random(),
+                )));
             match manager.dial_address(address.clone()).await {
                 Err(Error::TransportNotSupported(dial_address)) => {
                     assert_eq!(dial_address, address);
@@ -3012,7 +2968,9 @@ mod tests {
             let address = Multiaddr::empty()
                 .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                 .with(Protocol::Sctp(8888))
-                .with(Protocol::P2p(Multihash::from(PeerId::random())));
+                .with(Protocol::P2p(multiaddr::multihash::Multihash::from(
+                    PeerId::random(),
+                )));
             match manager.dial_address(address.clone()).await {
                 Err(Error::TransportNotSupported(dial_address)) => {
                     assert_eq!(dial_address, address);
@@ -3027,7 +2985,9 @@ mod tests {
                 .with(Protocol::Ip4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
                 .with(Protocol::Tcp(8888))
                 .with(Protocol::Utp)
-                .with(Protocol::P2p(Multihash::from(PeerId::random())));
+                .with(Protocol::P2p(multiaddr::multihash::Multihash::from(
+                    PeerId::random(),
+                )));
             match manager.dial_address(address.clone()).await {
                 Err(Error::TransportNotSupported(dial_address)) => {
                     assert_eq!(dial_address, address);
@@ -3092,9 +3052,7 @@ mod tests {
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
 
         let connection_id = ConnectionId::random();
         let transport = Box::new({
@@ -3111,7 +3069,7 @@ mod tests {
             vec![Multiaddr::empty()
                 .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 5)))
                 .with(Protocol::Tcp(8888))
-                .with(Protocol::P2p(Multihash::from(peer)))]
+                .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)))]
             .into_iter(),
         );
 
@@ -3172,9 +3130,7 @@ mod tests {
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
 
         let connection_id = ConnectionId::random();
         let transport = Box::new({
@@ -3191,7 +3147,7 @@ mod tests {
             vec![Multiaddr::empty()
                 .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
                 .with(Protocol::Tcp(8888))
-                .with(Protocol::P2p(Multihash::from(peer)))]
+                .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)))]
             .into_iter(),
         );
 
@@ -3467,9 +3423,7 @@ mod tests {
             let dial_address = Multiaddr::empty()
                 .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
                 .with(Protocol::Tcp(8888 + connection_id))
-                .with(Protocol::P2p(
-                    Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-                ));
+                .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
             let connection_id = ConnectionId::from(connection_id as usize);
 
             (dial_address, connection_id)
@@ -3608,9 +3562,7 @@ mod tests {
         let dial_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
 
         let connection_id = ConnectionId::from(0);
         let transport = Box::new({
@@ -3646,9 +3598,7 @@ mod tests {
         let second_address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8889))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
 
         // Second dial attempt with different address.
         manager.dial_address(second_address.clone()).await.unwrap();
@@ -3691,9 +3641,7 @@ mod tests {
         let dial_address_tcp = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
         let transport = Box::new({
             let mut transport = DummyTransport::new();
             transport.inject_event(TransportEvent::OpenFailure {
@@ -3708,7 +3656,7 @@ mod tests {
             vec![Multiaddr::empty()
                 .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 5)))
                 .with(Protocol::Tcp(8888))
-                .with(Protocol::P2p(Multihash::from(peer)))]
+                .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)))]
             .into_iter(),
         );
 
@@ -3717,9 +3665,7 @@ mod tests {
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Tcp(8889))
             .with(Protocol::Ws(Cow::Borrowed("/")))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
 
         let transport = Box::new({
             let mut transport = DummyTransport::new();
@@ -3736,9 +3682,7 @@ mod tests {
                 .with(Protocol::Ip4(Ipv4Addr::new(192, 168, 1, 5)))
                 .with(Protocol::Tcp(8889))
                 .with(Protocol::Ws(Cow::Borrowed("/")))
-                .with(Protocol::P2p(
-                    Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-                ))]
+                .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)))]
             .into_iter(),
         );
 

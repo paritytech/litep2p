@@ -32,9 +32,10 @@ use crate::{
     PeerId,
 };
 
+use crate::types::multihash::Multihash;
+
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 use s2n_quic::{
     client::Connect,
     connection::{Connection, Error as ConnectionError},
