@@ -52,6 +52,10 @@ async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
     let mut litep2p1_connected = false;
     let mut litep2p2_connected = false;
 
+    // Disarm the first tick to avoid immediate timeouts.
+    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5));
+    ticker.tick().await;
+
     loop {
         tokio::select! {
             event = litep2p1.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() {
@@ -59,6 +63,9 @@ async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
             },
             event = litep2p2.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() {
                 litep2p2_connected = true;
+            },
+            _ = ticker.tick() => {
+                panic!("peers failed to connect within timeout");
             }
         }
 

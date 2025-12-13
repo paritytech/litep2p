@@ -1447,67 +1447,70 @@ mod tests {
         (dial_address, connection_id)
     }
 
-    #[cfg(feature = "websocket")]
-    struct MockTransport {
-        rx: tokio::sync::mpsc::Receiver<TransportEvent>,
-    }
-
-    #[cfg(feature = "websocket")]
-    impl MockTransport {
-        fn new(rx: tokio::sync::mpsc::Receiver<TransportEvent>) -> Self {
-            Self { rx }
-        }
-    }
-
-    #[cfg(feature = "websocket")]
-    impl Transport for MockTransport {
-        fn dial(&mut self, _connection_id: ConnectionId, _address: Multiaddr) -> crate::Result<()> {
-            Ok(())
-        }
-
-        fn accept(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
-            Ok(())
-        }
-
-        fn accept_pending(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
-            Ok(())
-        }
-
-        fn reject_pending(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
-            Ok(())
-        }
-
-        fn reject(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
-            Ok(())
-        }
-
-        fn open(
-            &mut self,
-            _connection_id: ConnectionId,
-            _addresses: Vec<Multiaddr>,
-        ) -> crate::Result<()> {
-            Ok(())
-        }
-
-        fn negotiate(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
-            Ok(())
-        }
-
-        fn cancel(&mut self, _connection_id: ConnectionId) {}
-    }
-
-    #[cfg(feature = "websocket")]
-    impl Stream for MockTransport {
-        type Item = TransportEvent;
-        fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-            self.rx.poll_recv(cx)
-        }
-    }
-
     #[tokio::test]
     #[cfg(feature = "websocket")]
     #[cfg(feature = "quic")]
     async fn transport_events() {
+        struct MockTransport {
+            rx: tokio::sync::mpsc::Receiver<TransportEvent>,
+        }
+
+        impl MockTransport {
+            fn new(rx: tokio::sync::mpsc::Receiver<TransportEvent>) -> Self {
+                Self { rx }
+            }
+        }
+
+        impl Transport for MockTransport {
+            fn dial(
+                &mut self,
+                _connection_id: ConnectionId,
+                _address: Multiaddr,
+            ) -> crate::Result<()> {
+                Ok(())
+            }
+
+            fn accept(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+                Ok(())
+            }
+
+            fn accept_pending(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+                Ok(())
+            }
+
+            fn reject_pending(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+                Ok(())
+            }
+
+            fn reject(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+                Ok(())
+            }
+
+            fn open(
+                &mut self,
+                _connection_id: ConnectionId,
+                _addresses: Vec<Multiaddr>,
+            ) -> crate::Result<()> {
+                Ok(())
+            }
+
+            fn negotiate(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+                Ok(())
+            }
+
+            fn cancel(&mut self, _connection_id: ConnectionId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                self.rx.poll_recv(cx)
+            }
+        }
+
         let mut transports = TransportContext::new();
 
         let (tx_tcp, rx) = tokio::sync::mpsc::channel(8);

@@ -123,6 +123,15 @@ pub struct NegotiatedConnection {
     substream_open_timeout: Duration,
 }
 
+impl std::fmt::Debug for NegotiatedConnection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NegotiatedConnection")
+            .field("peer", &self.peer)
+            .field("endpoint", &self.endpoint)
+            .finish()
+    }
+}
+
 impl NegotiatedConnection {
     /// Get `ConnectionId` of the negotiated connection.
     pub fn connection_id(&self) -> ConnectionId {

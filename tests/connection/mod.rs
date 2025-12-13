@@ -42,6 +42,9 @@ use tokio::net::UdpSocket;
 
 use crate::common::{add_transport, Transport};
 
+#[cfg(feature = "websocket")]
+use std::collections::HashSet;
+
 #[cfg(test)]
 mod protocol_dial_invalid_address;
 #[cfg(test)]
@@ -1476,5 +1479,96 @@ async fn simultaneous_dial_then_redial(transport1: Transport, transport2: Transp
 
     if let Err(_) = tokio::time::timeout(std::time::Duration::from_secs(10), future).await {
         panic!("failed to open notification stream")
+    }
+}
+
+#[cfg(feature = "websocket")]
+#[tokio::test]
+async fn check_multi_dial() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    fn build_litep2p() -> Litep2p {
+        let (ping_config1, _ping_event_stream1) = PingConfig::default();
+        let config = ConfigBuilder::new()
+            .with_keypair(Keypair::generate())
+            .with_libp2p_ping(ping_config1);
+
+        let tcp_transport = Transport::Tcp(TcpConfig {
+            reuse_port: false,
+            listen_addresses: vec!["/ip4/0.0.0.0/tcp/0".parse().unwrap()],
+            ..Default::default()
+        });
+        let websocket_transport = Transport::WebSocket(WebSocketConfig {
+            reuse_port: false,
+            listen_addresses: vec!["/ip4/0.0.0.0/tcp/0/ws".parse().unwrap()],
+            ..Default::default()
+        });
+
+        let config = add_transport(config, tcp_transport);
+        let litep2p_config = add_transport(config, websocket_transport).build();
+        Litep2p::new(litep2p_config).unwrap()
+    }
+
+    let mut litep2p1 = build_litep2p();
+    let mut litep2p2 = build_litep2p();
+
+    let mut litep2p_addresses = litep2p2.listen_addresses().cloned().collect::<Vec<_>>();
+    let peer = *litep2p2.local_peer_id();
+
+    tracing::debug!("litep2p2 addresses: {:?}", litep2p_addresses);
+
+    let random_peer = PeerId::random();
+    // Replace the PeerId in the multiaddrs with random PeerId to simulate invalid addresses.
+    litep2p_addresses.iter_mut().for_each(|addr| {
+        addr.pop();
+        addr.push(Protocol::P2p(Multihash::from(random_peer)));
+    });
+
+    let dialed_addresses: HashSet<_> = litep2p_addresses.clone().into_iter().collect();
+    tracing::debug!("dialed  addresses: {:?}", dialed_addresses);
+
+    // All addresses must be added.
+    let added = litep2p1.add_known_address(random_peer, litep2p_addresses.into_iter());
+    assert_eq!(added, dialed_addresses.len());
+
+    // Dial an unknown peer must return NoAddressAvailable error immediately.
+    let result = litep2p1.dial(&peer).await;
+    tracing::info!("dial result: {:?}", result);
+    match result {
+        Err(litep2p::Error::NoAddressAvailable(p)) if p == peer => {}
+        _ => panic!("unexpected dial result: {:?}", result),
+    }
+
+    // Dial the peer with invalid addresses.
+    assert!(litep2p1.dial(&random_peer).await.is_ok());
+
+    loop {
+        tokio::select! {
+            event = litep2p1.next_event() => {
+                tracing::info!("litep2p1 event: {:?}", event);
+                if let Some(Litep2pEvent::ListDialFailures { errors }) = event {
+                    assert_eq!(errors.len(), dialed_addresses.len());
+
+                    for (addr, error) in errors {
+                        assert!(dialed_addresses.contains(&addr));
+
+                        match error {
+                            litep2p::error::DialError::NegotiationError(litep2p::error::NegotiationError::PeerIdMismatch(expected, found)) if expected == random_peer && found == peer => {}
+                            _ => {
+                                panic!("unexpected dial error for address {}: {:?}", addr, error);
+                            }
+                        }
+                    }
+
+                    break;
+                }
+            }
+
+            event = litep2p2.next_event() => {
+                tracing::info!("litep2p2 event: {:?}", event);
+            }
+        }
     }
 }
