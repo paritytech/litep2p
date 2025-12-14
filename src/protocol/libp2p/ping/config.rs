@@ -18,11 +18,11 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::time::Duration;
 use crate::{
     codec::ProtocolCodec, protocol::libp2p::ping::PingEvent, types::protocol::ProtocolName,
     DEFAULT_CHANNEL_SIZE,
 };
+use std::time::Duration;
 
 use futures::Stream;
 use tokio::sync::mpsc::{channel, Sender};

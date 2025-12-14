@@ -27,13 +27,12 @@ use crate::{
     PeerId,
 };
 
-use futures::{SinkExt, StreamExt};
+use bytes::Bytes;
+use futures::{stream::SplitSink, SinkExt, StreamExt};
 use std::{
     collections::HashMap,
     time::{Duration, Instant},
 };
-use bytes::Bytes;
-use futures::stream::SplitSink;
 use tokio::sync::mpsc;
 use tokio_stream::StreamMap;
 

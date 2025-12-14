@@ -316,7 +316,7 @@ impl TransportService {
                 next_substream_id,
                 connections: HashMap::new(),
                 keep_alive_tracker,
-                counts_towards_keep_alive
+                counts_towards_keep_alive,
             },
             tx,
         )
@@ -515,7 +515,6 @@ impl TransportService {
             self.keep_alive_tracker.substream_activity(peer, connection_id);
             connection.try_upgrade();
         }
-
 
         connection
             .open_substream(
