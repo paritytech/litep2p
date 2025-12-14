@@ -110,8 +110,6 @@ pub struct OpeningWebRtcConnection {
 
     /// Local address.
     local_address: SocketAddr,
-    /// Max message size
-    max_message_size: usize,
 }
 
 /// Connection state.
@@ -153,7 +151,6 @@ impl OpeningWebRtcConnection {
         id_keypair: Keypair,
         peer_address: SocketAddr,
         local_address: SocketAddr,
-        max_message_size: usize
     ) -> OpeningWebRtcConnection {
         tracing::trace!(
             target: LOG_TARGET,
@@ -170,7 +167,6 @@ impl OpeningWebRtcConnection {
             id_keypair,
             peer_address,
             local_address,
-            max_message_size
         }
     }
 
@@ -257,7 +253,7 @@ impl OpeningWebRtcConnection {
             return Err(Error::InvalidState);
         };
 
-        let message = WebRtcMessage::decode(&data, self.max_message_size)?.payload.ok_or(Error::InvalidData)?;
+        let message = WebRtcMessage::decode(&data)?.payload.ok_or(Error::InvalidData)?;
         let remote_peer_id = context.get_remote_peer_id(&message)?;
 
         tracing::trace!(

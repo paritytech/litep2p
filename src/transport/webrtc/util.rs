@@ -23,6 +23,8 @@ use crate::{codec::unsigned_varint::UnsignedVarint, error::ParseError, transport
 use prost::Message;
 use tokio_util::codec::{Decoder, Encoder};
 
+const MAX_MESSAGE_SIZE: usize = 16 * 1024;
+
 /// WebRTC mesage.
 #[derive(Debug)]
 pub struct WebRtcMessage {
@@ -72,9 +74,9 @@ impl WebRtcMessage {
     }
 
     /// Decode payload into [`WebRtcMessage`].
-    pub fn decode(payload: &[u8], max_message_size: usize) -> Result<Self, ParseError> {
+    pub fn decode(payload: &[u8]) -> Result<Self, ParseError> {
         // TODO: https://github.com/paritytech/litep2p/issues/352 set correct size
-        let mut codec = UnsignedVarint::new(Some(max_message_size));
+        let mut codec = UnsignedVarint::new(Some(MAX_MESSAGE_SIZE));
         let mut data = bytes::BytesMut::from(payload);
         let result = codec
             .decode(&mut data)
@@ -95,12 +97,10 @@ impl WebRtcMessage {
 mod tests {
     use super::*;
 
-    const TEST_MAX_SIZE: usize = 512 * 1024;
-
     #[test]
     fn with_payload_no_flags() {
         let message = WebRtcMessage::encode("Hello, world!".as_bytes().to_vec());
-        let decoded = WebRtcMessage::decode(&message, TEST_MAX_SIZE).unwrap();
+        let decoded = WebRtcMessage::decode(&message).unwrap();
 
         assert_eq!(decoded.payload, Some("Hello, world!".as_bytes().to_vec()));
         assert_eq!(decoded.flags, None);
@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn with_payload_and_flags() {
         let message = WebRtcMessage::encode_with_flags("Hello, world!".as_bytes().to_vec(), 1i32);
-        let decoded = WebRtcMessage::decode(&message, TEST_MAX_SIZE).unwrap();
+        let decoded = WebRtcMessage::decode(&message).unwrap();
 
         assert_eq!(decoded.payload, Some("Hello, world!".as_bytes().to_vec()));
         assert_eq!(decoded.flags, Some(1i32));
@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn no_payload_with_flags() {
         let message = WebRtcMessage::encode_with_flags(vec![], 2i32);
-        let decoded = WebRtcMessage::decode(&message, TEST_MAX_SIZE).unwrap();
+        let decoded = WebRtcMessage::decode(&message).unwrap();
 
         assert_eq!(decoded.payload, None);
         assert_eq!(decoded.flags, Some(2i32));
