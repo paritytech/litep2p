@@ -101,7 +101,7 @@ impl Substream {
     }
 }
 
-/// Substream handle that is given to the transport backend.
+/// Substream handle that is given to the WebRTC transport backend.
 pub struct SubstreamHandle {
     state: Arc<Mutex<State>>,
 
