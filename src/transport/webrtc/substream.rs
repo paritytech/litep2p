@@ -19,7 +19,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    error::SubstreamError,
     transport::webrtc::{schema::webrtc::message::Flag, util::WebRtcMessage},
     Error,
 };
@@ -207,19 +206,11 @@ impl tokio::io::AsyncWrite for Substream {
             Err(_) => return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
         };
 
-        if buf.len() > MAX_FRAME_SIZE {
-            let err = std::io::Error::new(
-                std::io::ErrorKind::Other,
-                SubstreamError::FrameTooLarge(MAX_FRAME_SIZE),
-            );
-
-            return Poll::Ready(Err(err));
-        }
-
-        let frame = buf.to_vec();
+        let num_bytes = std::cmp::min(MAX_FRAME_SIZE, buf.len());
+        let frame = buf[..num_bytes].to_vec();
 
         match self.tx.send_item(Event::Message(frame)) {
-            Ok(()) => Poll::Ready(Ok(buf.len())),
+            Ok(()) => Poll::Ready(Ok(num_bytes)),
             Err(_) => Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
         }
     }
@@ -269,9 +260,7 @@ mod tests {
     async fn write_large_frame() {
         let (mut substream, mut handle) = Substream::new();
 
-        substream.write_all(&vec![0u8; MAX_FRAME_SIZE]).await.unwrap();
-        substream.write_all(&vec![0u8; MAX_FRAME_SIZE]).await.unwrap();
-        substream.write_all(&vec![0u8; 1]).await.unwrap();
+        substream.write_all(&vec![0u8; (2 * MAX_FRAME_SIZE) + 1]).await.unwrap();
 
         assert_eq!(
             handle.rx.recv().await,
@@ -455,7 +444,7 @@ mod tests {
 
         // use all available bandwidth which by default is `256 * MAX_FRAME_SIZE`,
         for _ in 0..128 {
-            substream.write_all(&vec![0u8; MAX_FRAME_SIZE]).await.unwrap();
+            substream.write_all(&vec![0u8; 2 * MAX_FRAME_SIZE]).await.unwrap();
         }
 
         // try to write one more byte but since all available bandwidth
@@ -476,8 +465,8 @@ mod tests {
         let (mut substream, mut handle) = Substream::new();
 
         // Fill the channel to capacity, same pattern as `backpressure_works`.
-        for _ in 0..256 {
-            substream.write_all(&vec![0u8; MAX_FRAME_SIZE]).await.unwrap();
+        for _ in 0..128 {
+            substream.write_all(&vec![0u8; 2 * MAX_FRAME_SIZE]).await.unwrap();
         }
 
         // Spawn a writer task that will try to write once more. This should initially block

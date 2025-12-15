@@ -204,8 +204,6 @@ pub enum SubstreamError {
     WriteFailure(Option<SubstreamId>),
     #[error("Negotiation error: `{0:?}`")]
     NegotiationError(#[from] NegotiationError),
-    #[error("Frame too large. Max size: `{0}`")]
-    FrameTooLarge(usize),
 }
 
 // Libp2p yamux does not implement PartialEq for ConnectionError.
