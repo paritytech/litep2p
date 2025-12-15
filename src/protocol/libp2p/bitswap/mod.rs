@@ -21,7 +21,7 @@
 //! [`/ipfs/bitswap/1.2.0`](https://github.com/ipfs/specs/blob/main/BITSWAP.md) implementation.
 
 use crate::{
-    error::Error,
+    error::{Error, ImmediateDialError},
     protocol::{Direction, TransportEvent, TransportService},
     substream::Substream,
     types::{
@@ -103,7 +103,10 @@ impl Prefix {
         let (version, rest) = unsigned_varint::decode::u64(prefix_bytes).ok()?;
         let (codec, rest) = unsigned_varint::decode::u64(rest).ok()?;
         let (multihash_type, rest) = unsigned_varint::decode::u64(rest).ok()?;
-        let (multihash_len, _rest) = unsigned_varint::decode::u64(rest).ok()?;
+        let (multihash_len, rest) = unsigned_varint::decode::u64(rest).ok()?;
+        if !rest.is_empty() {
+            return None;
+        }
 
         let version = Version::try_from(version).ok()?;
         let multihash_len = u8::try_from(multihash_len).ok()?;
@@ -362,6 +365,17 @@ impl Bitswap {
                     // Store the peer to open a substream once it is connected.
                     self.pending_dials.insert(peer);
                 }
+                Err(ImmediateDialError::AlreadyConnected) => {
+                    // By the time we tried to dial peer, it got connected.
+                    if let Err(error) = self.service.open_substream(peer) {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?error,
+                            "failed to open substream for a second time",
+                        );
+                    }
+                }
                 Err(error) => {
                     tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to dial peer");
                 }
@@ -380,12 +394,16 @@ impl Bitswap {
             }
         }
 
-        // Store pending actions for later and open substream if not requested already.
+        // Store pending actions for once the substream is opened.
         let pending_actions = self.pending_outbound.entry(peer).or_default();
-        let no_pending_substream = pending_actions.is_empty();
+        // If we inserted the default empty entry above, this means no pending substream
+        // was requested by previous calls to `on_bitswap_request`. We will request a substream
+        // in this case below.
+        let no_substream_pending = pending_actions.is_empty();
+
         pending_actions.push(SubstreamAction::SendRequest(cids));
 
-        if no_pending_substream {
+        if no_substream_pending {
             self.open_substream_or_dial(peer);
         }
     }
