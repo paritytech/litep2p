@@ -206,7 +206,6 @@ impl tokio::io::AsyncWrite for Substream {
             Err(_) => return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
         };
 
-        // TODO: https://github.com/paritytech/litep2p/issues/502 Don't silently truncate frames.
         let num_bytes = std::cmp::min(MAX_FRAME_SIZE, buf.len());
         let frame = buf[..num_bytes].to_vec();
 
