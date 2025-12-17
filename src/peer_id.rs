@@ -21,13 +21,15 @@
 
 #![allow(clippy::wrong_self_convention)]
 
-use crate::crypto::PublicKey;
+use crate::{
+    crypto::PublicKey,
+    types::multihash::{Code, Multihash, MultihashDigest},
+    Error,
+};
 
 use multiaddr::{Multiaddr, Protocol};
-use multihash::{Code, Error, Multihash, MultihashDigest};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 use std::{convert::TryFrom, fmt, str::FromStr};
 
@@ -64,21 +66,21 @@ impl PeerId {
 
     /// Builds a `PeerId` from a public key in protobuf encoding.
     pub fn from_public_key_protobuf(key_enc: &[u8]) -> PeerId {
-        let hash_algorithm = if key_enc.len() <= MAX_INLINE_KEY_LENGTH {
-            Code::Identity
+        let multihash = if key_enc.len() <= MAX_INLINE_KEY_LENGTH {
+            // Use Identity hash (code 0x00) for small keys
+            Multihash::wrap(0x00, key_enc).expect("Key size is within bounds")
         } else {
-            Code::Sha2_256
+            // Use SHA-256 for larger keys
+            Code::Sha2_256.digest(key_enc)
         };
-
-        let multihash = hash_algorithm.digest(key_enc);
 
         PeerId { multihash }
     }
 
     /// Parses a `PeerId` from bytes.
     pub fn from_bytes(data: &[u8]) -> Result<PeerId, Error> {
-        PeerId::from_multihash(Multihash::from_bytes(data)?)
-            .map_err(|mh| Error::UnsupportedCode(mh.code()))
+        let multihash = Multihash::from_bytes(data).map_err(|_| Error::InvalidData)?;
+        PeerId::from_multihash(multihash).map_err(|_| Error::InvalidData)
     }
 
     /// Tries to turn a `Multihash` into a `PeerId`.
@@ -87,12 +89,22 @@ impl PeerId {
     /// or the hash value does not satisfy the constraints for a hashed
     /// peer ID, it is returned as an `Err`.
     pub fn from_multihash(multihash: Multihash) -> Result<PeerId, Multihash> {
-        match Code::try_from(multihash.code()) {
-            Ok(Code::Sha2_256) => Ok(PeerId { multihash }),
-            Ok(Code::Identity) if multihash.digest().len() <= MAX_INLINE_KEY_LENGTH =>
-                Ok(PeerId { multihash }),
+        match multihash.code() {
+            // SHA-256
+            0x12 => Ok(PeerId { multihash }),
+            // Identity hash
+            0x00 if multihash.digest().len() <= MAX_INLINE_KEY_LENGTH => Ok(PeerId { multihash }),
             _ => Err(multihash),
         }
+    }
+
+    /// Helper method to convert from multiaddr's old multihash type
+    pub(crate) fn from_multiaddr_multihash(
+        hash: multiaddr::multihash::Multihash,
+    ) -> Result<PeerId, multiaddr::multihash::Multihash> {
+        let bytes = hash.to_bytes();
+        let new_multihash = Multihash::from_bytes(&bytes).map_err(|_| hash)?;
+        PeerId::from_multihash(new_multihash).map_err(|_| hash)
     }
 
     /// Tries to extract a [`PeerId`] from the given [`Multiaddr`].
@@ -101,7 +113,7 @@ impl PeerId {
     /// will return the encapsulated [`PeerId`], otherwise it will return `None`.
     pub fn try_from_multiaddr(address: &Multiaddr) -> Option<PeerId> {
         address.iter().last().and_then(|p| match p {
-            Protocol::P2p(hash) => PeerId::from_multihash(hash).ok(),
+            Protocol::P2p(hash) => PeerId::from_multiaddr_multihash(hash).ok(),
             _ => None,
         })
     }
@@ -112,8 +124,7 @@ impl PeerId {
     pub fn random() -> PeerId {
         let peer_id = rand::thread_rng().gen::<[u8; 32]>();
         PeerId {
-            multihash: Multihash::wrap(Code::Identity.into(), &peer_id)
-                .expect("The digest size is never too large"),
+            multihash: Multihash::wrap(0x00, &peer_id).expect("The digest size is never too large"),
         }
     }
 
@@ -132,10 +143,13 @@ impl PeerId {
     /// Returns `None` if this `PeerId`s hash algorithm is not supported when encoding the
     /// given public key, otherwise `Some` boolean as the result of an equality check.
     pub fn is_public_key(&self, public_key: &PublicKey) -> Option<bool> {
-        let alg = Code::try_from(self.multihash.code())
-            .expect("Internal multihash is always a valid `Code`");
         let enc = public_key.to_protobuf_encoding();
-        Some(alg.digest(&enc) == self.multihash)
+        let expected_multihash = if enc.len() <= MAX_INLINE_KEY_LENGTH {
+            Multihash::wrap(0x00, &enc).ok()?
+        } else {
+            Code::Sha2_256.digest(&enc)
+        };
+        Some(expected_multihash == self.multihash)
     }
 }
 
@@ -173,9 +187,33 @@ impl AsRef<Multihash> for PeerId {
     }
 }
 
+impl AsRef<multiaddr::multihash::Multihash> for PeerId {
+    fn as_ref(&self) -> &multiaddr::multihash::Multihash {
+        // SAFETY: Both Multihash types have the same memory layout (they're both Multihash<64>)
+        // We can safely transmute between them for read-only operations
+        unsafe { std::mem::transmute(&self.multihash) }
+    }
+}
+
 impl From<PeerId> for Multihash {
     fn from(peer_id: PeerId) -> Self {
         peer_id.multihash
+    }
+}
+
+impl From<PeerId> for multiaddr::multihash::Multihash {
+    fn from(peer_id: PeerId) -> Self {
+        // Convert by serializing to bytes and deserializing with the old version
+        multiaddr::multihash::Multihash::from_bytes(&peer_id.multihash.to_bytes())
+            .expect("Valid multihash conversion")
+    }
+}
+
+impl TryFrom<multiaddr::multihash::Multihash> for PeerId {
+    type Error = multiaddr::multihash::Multihash;
+
+    fn try_from(multihash: multiaddr::multihash::Multihash) -> Result<Self, Self::Error> {
+        PeerId::from_multiaddr_multihash(multihash)
     }
 }
 
@@ -237,7 +275,7 @@ impl<'de> Deserialize<'de> for PeerId {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum ParseError {
     #[error("base-58 decode error: {0}")]
     B58(#[from] bs58::decode::Error),
@@ -257,9 +295,129 @@ impl FromStr for PeerId {
 
 #[cfg(test)]
 mod tests {
-    use crate::{crypto::ed25519::Keypair, PeerId};
+    use super::*;
+    use crate::{crypto::ed25519::Keypair, types::multihash::Multihash, PeerId};
     use multiaddr::{Multiaddr, Protocol};
-    use multihash::Multihash;
+
+    #[test]
+    fn multihash_layout_compatibility() {
+        // Verify that both Multihash types have the same memory layout
+        // This is critical for the safety of the transmute in AsRef implementation
+        use std::mem::{align_of, size_of};
+
+        assert_eq!(
+            size_of::<crate::types::multihash::Multihash>(),
+            size_of::<multiaddr::multihash::Multihash>(),
+            "Multihash types must have the same size"
+        );
+
+        assert_eq!(
+            align_of::<crate::types::multihash::Multihash>(),
+            align_of::<multiaddr::multihash::Multihash>(),
+            "Multihash types must have the same alignment"
+        );
+    }
+
+    #[test]
+    fn transmute_peer_id_wth_identity_code() {
+        // Test that the transmute actually works correctly by creating a peer ID
+        // and verifying we can get the same bytes through both types
+        let peer_id = PeerId::random();
+        let bytes_new: Vec<u8> =
+            AsRef::<crate::types::multihash::Multihash>::as_ref(&peer_id).to_bytes();
+        let bytes_old: Vec<u8> =
+            AsRef::<multiaddr::multihash::Multihash>::as_ref(&peer_id).to_bytes();
+
+        assert_eq!(
+            bytes_new, bytes_old,
+            "Transmuted Multihash must preserve data"
+        );
+    }
+
+    #[test]
+    fn transmute_peer_id_with_sha256_code() {
+        // Test that the transmute works correctly with non-zero multihash code.
+        let payload = b"1337";
+        let multihash = Code::Sha2_256.digest(payload);
+        let peer_id = PeerId::try_from(multihash).expect("sha256 is supported by `PeerId`");
+        let bytes_new: Vec<u8> =
+            AsRef::<crate::types::multihash::Multihash>::as_ref(&peer_id).to_bytes();
+        let bytes_old: Vec<u8> =
+            AsRef::<multiaddr::multihash::Multihash>::as_ref(&peer_id).to_bytes();
+
+        assert_eq!(
+            bytes_new, bytes_old,
+            "Transmuted Multihash must preserve data"
+        );
+    }
+
+    #[test]
+    fn multihash_sha256_conversion() {
+        // Test conversion for both Identity and SHA-256 hashed peer IDs
+        // Ed25519 keys are 32 bytes, which when protobuf-encoded are < 42 bytes, so they use
+        // Identity
+
+        // Test with Ed25519 key (should use Identity hash, code 0x00)
+        let keypair = Keypair::generate();
+        let peer_id = keypair.public().to_peer_id();
+
+        let multihash: &crate::types::multihash::Multihash = peer_id.as_ref();
+        let hash_code = multihash.code();
+
+        // Ed25519 uses Identity (0x00), but verify conversion works for whatever code is used
+        assert!(
+            hash_code == 0x00 || hash_code == 0x12,
+            "Should use either Identity (0x00) or SHA-256 (0x12), got: 0x{:x}",
+            hash_code
+        );
+
+        // Test conversion to old multihash type
+        let old_multihash = multiaddr::multihash::Multihash::from(peer_id);
+        assert_eq!(
+            old_multihash.code(),
+            hash_code,
+            "Converted multihash should preserve hash code"
+        );
+
+        // Verify bytes are preserved
+        let bytes_new = multihash.to_bytes();
+        let bytes_old = old_multihash.to_bytes();
+        assert_eq!(bytes_new, bytes_old, "Multihash bytes must be preserved");
+
+        // Test conversion back from old multihash type
+        let peer_id_back = PeerId::try_from(old_multihash).unwrap();
+        assert_eq!(
+            peer_id, peer_id_back,
+            "Round-trip conversion must preserve PeerId"
+        );
+
+        // Test with a manually created SHA-256 peer ID
+        // Create a large key by using a 50-byte buffer which exceeds MAX_INLINE_KEY_LENGTH (42)
+        let large_key = vec![0x42u8; 50];
+        let peer_id_sha256 = PeerId::from_public_key_protobuf(&large_key);
+
+        let multihash_sha256: &crate::types::multihash::Multihash = peer_id_sha256.as_ref();
+        assert_eq!(
+            multihash_sha256.code(),
+            0x12,
+            "Large key should use SHA-256 hash"
+        );
+
+        // Test SHA-256 conversion
+        let old_multihash_sha256 = multiaddr::multihash::Multihash::from(peer_id_sha256);
+        assert_eq!(
+            old_multihash_sha256.code(),
+            0x12,
+            "Converted SHA-256 multihash should preserve code"
+        );
+
+        let bytes_new_sha256 = multihash_sha256.to_bytes();
+        let bytes_old_sha256 = old_multihash_sha256.to_bytes();
+        assert_eq!(
+            bytes_new_sha256, bytes_old_sha256,
+            "SHA-256 multihash bytes must be preserved"
+        );
+    }
 
     #[test]
     fn peer_id_is_public_key() {
@@ -297,7 +455,7 @@ mod tests {
         let address = Multiaddr::empty()
             .with(Protocol::from(address.ip()))
             .with(Protocol::Tcp(address.port()))
-            .with(Protocol::P2p(Multihash::from(peer)));
+            .with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer)));
 
         assert_eq!(peer, PeerId::try_from_multiaddr(&address).unwrap());
     }

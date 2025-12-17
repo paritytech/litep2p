@@ -37,7 +37,6 @@ use litep2p::transport::websocket::config::Config as WebSocketConfig;
 use bytes::BytesMut;
 use futures::StreamExt;
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 
 #[cfg(feature = "quic")]
 use std::net::Ipv4Addr;
@@ -3722,7 +3721,8 @@ async fn dial_failure(transport1: Transport, transport2: Transport) {
     let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer2 = *litep2p2.local_peer_id();
-    let known_address = known_address.with(Protocol::P2p(Multihash::from(peer2)));
+    let known_address =
+        known_address.with(Protocol::P2p(multiaddr::multihash::Multihash::from(peer2)));
 
     litep2p1.add_known_address(peer2, vec![known_address].into_iter());
 

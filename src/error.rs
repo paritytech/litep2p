@@ -26,12 +26,11 @@
 use crate::{
     protocol::Direction,
     transport::manager::limits::ConnectionLimitsError,
-    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
+    types::{multihash::Multihash, protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
 };
 
 use multiaddr::Multiaddr;
-use multihash::{Multihash, MultihashGeneric};
 
 use std::io::{self, ErrorKind};
 
@@ -425,8 +424,8 @@ pub enum DnsError {
     IpVersionMismatch,
 }
 
-impl From<MultihashGeneric<64>> for Error {
-    fn from(hash: MultihashGeneric<64>) -> Self {
+impl From<Multihash> for Error {
+    fn from(hash: Multihash) -> Self {
         Error::AddressError(AddressError::InvalidPeerId(hash))
     }
 }
@@ -497,8 +496,8 @@ impl From<ParseError> for Error {
     }
 }
 
-impl From<MultihashGeneric<64>> for AddressError {
-    fn from(hash: MultihashGeneric<64>) -> Self {
+impl From<Multihash> for AddressError {
+    fn from(hash: Multihash) -> Self {
         AddressError::InvalidPeerId(hash)
     }
 }
