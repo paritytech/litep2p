@@ -309,6 +309,8 @@ impl Bitswap {
             return;
         };
 
+        tracing::trace!(target: LOG_TARGET, ?peer, "handle outbound substream");
+
         for action in actions {
             match action {
                 SubstreamAction::SendRequest(cids) => {
@@ -335,6 +337,12 @@ impl Bitswap {
     fn on_connection_established(&mut self, peer: PeerId) {
         // If we have pending actions for this peer, open a substream.
         if self.pending_dials.remove(&peer) {
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?peer,
+                "open substream after connection established",
+            );
+
             if let Err(error) = self.service.open_substream(peer) {
                 tracing::debug!(
                     target: LOG_TARGET,
@@ -351,6 +359,8 @@ impl Bitswap {
 
     /// Open substream or dial a peer.
     fn open_substream_or_dial(&mut self, peer: PeerId) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "open substream");
+
         if let Err(error) = self.service.open_substream(peer) {
             tracing::trace!(
                 target: LOG_TARGET,
@@ -390,6 +400,11 @@ impl Bitswap {
             if send_request(entry.get_mut(), cids.clone()).await.is_ok() {
                 return;
             } else {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    "failed to send request over existing substream",
+                );
                 entry.remove();
             }
         }
@@ -415,6 +430,11 @@ impl Bitswap {
             if send_response(entry.get_mut(), responses.clone()).await.is_ok() {
                 return;
             } else {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    "failed to send response over existing substream",
+                );
                 entry.remove();
             }
         }
