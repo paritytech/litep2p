@@ -828,6 +828,7 @@ async fn set_new_handshake(transport1: Transport, transport2: Transport) {
         Transport::Quic(config) => config1.with_quic(config),
         #[cfg(feature = "websocket")]
         Transport::WebSocket(config) => config1.with_websocket(config),
+        Transport::Custom((name, transport)) => config1.with_custom_transport(name, transport),
     }
     .build();
 
@@ -3711,6 +3712,10 @@ async fn dial_failure(transport1: Transport, transport2: Transport) {
             .with(Protocol::QuicV1),
         #[cfg(feature = "websocket")]
         Transport::WebSocket(_) => Multiaddr::empty()
+            .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
+            .with(Protocol::Tcp(5))
+            .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string()))),
+        Transport::Custom(_) => Multiaddr::empty()
             .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
             .with(Protocol::Tcp(5))
             .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string()))),
