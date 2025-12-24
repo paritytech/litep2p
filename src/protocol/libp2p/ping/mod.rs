@@ -167,12 +167,12 @@ impl Ping {
                         // TODO: https://github.com/paritytech/litep2p/issues/134 generate random payload and verify it
                         let payload = vec![0u8; 32];
 
-                        self.ping_times.insert(*peer, Instant::now());
                         tracing::trace!(target: LOG_TARGET, ?peer, "sending ping");
 
                         if let Err(error) = sink.send(Bytes::from(payload)).await {
-                             tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to send ping");
-
+                            tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to send ping");
+                        } else {
+                            self.ping_times.insert(*peer, Instant::now());
                         }
                     }
                 }
