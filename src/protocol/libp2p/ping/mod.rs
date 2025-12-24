@@ -21,7 +21,6 @@
 //! [`/ipfs/ping/1.0.0`](https://github.com/libp2p/specs/blob/master/ping/ping.md) implementation.
 
 use crate::{
-    error::{Error, SubstreamError},
     protocol::{Direction, TransportEvent, TransportService},
     substream::Substream,
     PeerId,
@@ -43,7 +42,6 @@ mod config;
 
 /// Log target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::ping";
-const PING_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Events emitted by the ping protocol.
 #[derive(Debug)]
@@ -73,15 +71,11 @@ pub(crate) struct Ping {
     outbound_sinks: HashMap<PeerId, SplitSink<Substream, Bytes>>,
 
     /// Streams we read Pings from.
-    /// Keyed by a local counter to handle multiple streams per peer if necessary.
-    inbound_streams: StreamMap<usize, futures::stream::SplitStream<Substream>>,
+    /// Keyed by PeerId which enforces one stream per peer
+    inbound_streams: StreamMap<PeerId, futures::stream::SplitStream<Substream>>,
 
     /// Sinks we write Pongs to.
-    inbound_sinks: HashMap<usize, SplitSink<Substream, Bytes>>,
-
-    /// Counter for generating unique keys for inbound streams.
-    inbound_id_counter: usize,
-
+    inbound_sinks: HashMap<PeerId, SplitSink<Substream, Bytes>>,
     /// We need to track when we sent the ping to calculate the duration.
     ping_times: HashMap<PeerId, Instant>,
 
@@ -100,7 +94,6 @@ impl Ping {
             ping_times: HashMap::new(),
             inbound_streams: StreamMap::new(),
             inbound_sinks: HashMap::new(),
-            inbound_id_counter: 0,
         }
     }
 
@@ -119,6 +112,9 @@ impl Ping {
         self.outbound_streams.remove(&peer);
         self.outbound_sinks.remove(&peer);
         self.ping_times.remove(&peer);
+
+        self.inbound_streams.remove(&peer);
+        self.inbound_sinks.remove(&peer);
     }
 
     /// Handle outbound substream (We initiated)
@@ -136,11 +132,8 @@ impl Ping {
         tracing::trace!(target: LOG_TARGET, ?peer, "inbound ping substream registered");
         let (sink, stream) = substream.split();
 
-        let id = self.inbound_id_counter;
-        self.inbound_id_counter += 1;
-
-        self.inbound_streams.insert(id, stream);
-        self.inbound_sinks.insert(id, sink);
+        self.inbound_streams.insert(peer, stream);
+        self.inbound_sinks.insert(peer, sink);
     }
 
     /// Start [`Ping`] event loop.
@@ -171,6 +164,7 @@ impl Ping {
 
                 _ = interval.tick() => {
                     for (peer, sink) in self.outbound_sinks.iter_mut() {
+                        // TODO: https://github.com/paritytech/litep2p/issues/134 generate random payload and verify it
                         let payload = vec![0u8; 32];
 
                         self.ping_times.insert(*peer, Instant::now());
@@ -186,7 +180,7 @@ impl Ping {
                 // Handle Outbound Responses (Pong is expected here)
                 Some((peer, event)) = self.outbound_streams.next() => {
                     match event {
-                        Ok(payload) => {
+                        Ok(_payload) => {
                              if let Some(started) = self.ping_times.remove(&peer) {
 
                                  let elapsed = started.elapsed();
@@ -203,20 +197,32 @@ impl Ping {
                     }
                 }
 
-                // Handle Outbound Responses (Ping is expected here)
-                Some((id, event)) = self.inbound_streams.next() => {
+                // Handle Inbound Pings
+                Some((peer, event)) = self.inbound_streams.next() => {
                     match event {
                         Ok(payload) => {
-                             if let Some(sink) = self.inbound_sinks.get_mut(&id) {
-                                 tracing::trace!(target: LOG_TARGET, ?id, "sending pong");
+                             if let Some(sink) = self.inbound_sinks.get_mut(&peer) {
+                                 tracing::trace!(target: LOG_TARGET, ?peer, "sending pong");
                                  if let Err(error) = sink.send(payload.freeze()).await {
-                                     tracing::debug!(target: LOG_TARGET, ?id, ?error, "failed to send pong");
+                                     tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to send pong");
                                  }
+                             } else {
+                                 tracing::debug!(
+                                     target: LOG_TARGET,
+                                     ?peer,
+                                     "received ping from peer but no sink available to reply"
+                                 );
                              }
                         }
-                        Err(_) => {
-                            self.inbound_streams.remove(&id);
-                            self.inbound_sinks.remove(&id);
+                        Err(error) => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?error,
+                                "inbound ping substream error"
+                            );
+                            self.inbound_streams.remove(&peer);
+                            self.inbound_sinks.remove(&peer);
                         }
                     }
                 }
