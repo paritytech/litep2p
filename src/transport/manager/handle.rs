@@ -725,7 +725,10 @@ mod tests {
             peers.insert(
                 peer,
                 PeerContext {
-                    state: PeerState::Disconnected { dial_record: None },
+                    state: PeerState::Disconnected {
+                        dial_record: None,
+                        disconnected_at: std::time::Instant::now()
+                    },
                     addresses: AddressStore::new(),
                 },
             );
@@ -759,6 +762,7 @@ mod tests {
                                 .with(Protocol::P2p(Multihash::from(peer))),
                             ConnectionId::from(0),
                         )),
+                        disconnected_at: std::time::Instant::now()
                     },
 
                     addresses: AddressStore::from_iter(

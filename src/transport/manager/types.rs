@@ -52,7 +52,10 @@ pub struct PeerContext {
 impl Default for PeerContext {
     fn default() -> Self {
         Self {
-            state: PeerState::Disconnected { dial_record: None },
+            state: PeerState::Disconnected {
+                dial_record: None,
+                disconnected_at: std::time::Instant::now()
+            },
             addresses: AddressStore::new(),
         }
     }

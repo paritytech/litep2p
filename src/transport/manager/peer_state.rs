@@ -127,6 +127,8 @@ pub enum PeerState {
         /// [`crate::transport::manager::TransportManager`] must be prepared to handle the dial
         /// failure even after the connection has been closed.
         dial_record: Option<ConnectionRecord>,
+        // timestamp when the peer was disconnected.
+        disconnected_at: std::time::Instant,
     },
 }
 
@@ -161,9 +163,10 @@ impl PeerState {
             | Self::Opening { .. }
             | Self::Disconnected {
                 dial_record: Some(_),
+                ..
             } => StateDialResult::DialingInProgress,
 
-            Self::Disconnected { dial_record: None } => StateDialResult::Ok,
+            Self::Disconnected { dial_record: None, .. } => StateDialResult::Ok,
         }
     }
 
@@ -212,7 +215,10 @@ impl PeerState {
             // Clear the dial record if the connection ID matches.
             Self::Dialing { dial_record } =>
                 if dial_record.connection_id == connection_id {
-                    *self = Self::Disconnected { dial_record: None };
+                    *self = Self::Disconnected {
+                        dial_record: None,
+                        disconnected_at: std::time::Instant::now()
+                    };
                     return true;
                 },
 
@@ -230,9 +236,13 @@ impl PeerState {
 
             Self::Disconnected {
                 dial_record: Some(dial_record),
+                ..
             } =>
                 if dial_record.connection_id == connection_id {
-                    *self = Self::Disconnected { dial_record: None };
+                    *self = Self::Disconnected {
+                        dial_record: None,
+                        disconnected_at: std::time::Instant::now()
+                    };
                     return true;
                 },
 
@@ -277,6 +287,7 @@ impl PeerState {
             Self::Dialing { dial_record }
             | Self::Disconnected {
                 dial_record: Some(dial_record),
+                ..
             } =>
                 if dial_record.connection_id == connection.connection_id {
                     *self = Self::Connected {
@@ -292,7 +303,10 @@ impl PeerState {
                     return true;
                 },
 
-            Self::Disconnected { dial_record: None } => {
+            Self::Disconnected {
+                dial_record: None,
+                ..
+            } => {
                 *self = Self::Connected {
                     record: connection,
                     secondary: None,
@@ -347,12 +361,16 @@ impl PeerState {
                         Some(SecondaryOrDialing::Dialing(dial_record)) => {
                             *self = Self::Disconnected {
                                 dial_record: Some(dial_record.clone()),
+                                disconnected_at: std::time::Instant::now()
                             };
 
                             return true;
                         }
                         None => {
-                            *self = Self::Disconnected { dial_record: None };
+                            *self = Self::Disconnected {
+                                dial_record: None,
+                                disconnected_at: std::time::Instant::now(),
+                            };
 
                             return true;
                         }
@@ -387,7 +405,10 @@ impl PeerState {
                 transports.remove(&transport);
 
                 if transports.is_empty() {
-                    *self = Self::Disconnected { dial_record: None };
+                    *self = Self::Disconnected {
+                        dial_record: None,
+                        disconnected_at: std::time::Instant::now()
+                    };
                     return true;
                 }
 
@@ -494,7 +515,10 @@ mod tests {
 
     #[test]
     fn state_can_dial() {
-        let state = PeerState::Disconnected { dial_record: None };
+        let state = PeerState::Disconnected {
+            dial_record: None,
+            disconnected_at: std::time::Instant::now()
+        };
         assert_eq!(state.can_dial(), StateDialResult::Ok);
 
         let record = ConnectionRecord::new(
@@ -505,6 +529,7 @@ mod tests {
 
         let state = PeerState::Disconnected {
             dial_record: Some(record.clone()),
+            disconnected_at: std::time::Instant::now(),
         };
         assert_eq!(state.can_dial(), StateDialResult::DialingInProgress);
 
@@ -535,7 +560,10 @@ mod tests {
             ConnectionId::from(0),
         );
 
-        let mut state = PeerState::Disconnected { dial_record: None };
+        let mut state = PeerState::Disconnected {
+            dial_record: None,
+            disconnected_at: std::time::Instant::now()
+        };
         assert_eq!(
             state.dial_single_address(record.clone()),
             StateDialResult::Ok
@@ -550,7 +578,10 @@ mod tests {
 
     #[test]
     fn state_dial_addresses() {
-        let mut state = PeerState::Disconnected { dial_record: None };
+        let mut state = PeerState::Disconnected {
+            dial_record: None,
+            disconnected_at: std::time::Instant::now()
+        };
         assert_eq!(
             state.dial_addresses(
                 ConnectionId::from(0),
@@ -589,7 +620,10 @@ mod tests {
 
             // Check with the same connection ID.
             state.on_dial_failure(ConnectionId::from(0));
-            assert_eq!(state, PeerState::Disconnected { dial_record: None });
+            assert_eq!(state, PeerState::Disconnected {
+                dial_record: None,
+                disconnected_at: std::time::Instant::now()
+            });
         }
 
         // Check from the connected state without dialing state.
@@ -636,6 +670,7 @@ mod tests {
         {
             let mut state = PeerState::Disconnected {
                 dial_record: Some(record.clone()),
+                disconnected_at: std::time::Instant::now()
             };
             let previous_state = state.clone();
             // Check with different connection ID.
@@ -644,7 +679,10 @@ mod tests {
 
             // Check with the same connection ID.
             state.on_dial_failure(ConnectionId::from(0));
-            assert_eq!(state, PeerState::Disconnected { dial_record: None });
+            assert_eq!(state, PeerState::Disconnected {
+                dial_record: None,
+                disconnected_at: std::time::Instant::now()
+            });
         }
     }
 
@@ -726,6 +764,7 @@ mod tests {
         {
             let mut state = PeerState::Disconnected {
                 dial_record: Some(record.clone()),
+                disconnected_at: std::time::Instant::now()
             };
             assert!(state.on_connection_established(record.clone()));
             assert_eq!(
@@ -741,6 +780,7 @@ mod tests {
         {
             let mut state = PeerState::Disconnected {
                 dial_record: Some(record.clone()),
+                disconnected_at: std::time::Instant::now(),
             };
             assert!(state.on_connection_established(second_record.clone()));
             assert_eq!(
@@ -754,7 +794,10 @@ mod tests {
 
         // Disconnected without dial record.
         {
-            let mut state = PeerState::Disconnected { dial_record: None };
+            let mut state = PeerState::Disconnected {
+                dial_record: None,
+                disconnected_at: std::time::Instant::now()
+            };
             assert!(state.on_connection_established(record.clone()));
             assert_eq!(
                 state,
@@ -816,7 +859,10 @@ mod tests {
                 secondary: None,
             };
             assert!(state.on_connection_closed(ConnectionId::from(0)));
-            assert_eq!(state, PeerState::Disconnected { dial_record: None });
+            assert_eq!(state, PeerState::Disconnected {
+                dial_record: None,
+                disconnected_at: std::time::Instant::now(),
+            });
         }
 
         // Primary is closed with secondary promoted
@@ -846,7 +892,8 @@ mod tests {
             assert_eq!(
                 state,
                 PeerState::Disconnected {
-                    dial_record: Some(second_record.clone())
+                    dial_record: Some(second_record.clone()),
+                    disconnected_at: std::time::Instant::now()
                 }
             );
         }
@@ -862,7 +909,10 @@ mod tests {
 
         // This is the last protocol
         assert!(state.on_open_failure(SupportedTransport::Tcp));
-        assert_eq!(state, PeerState::Disconnected { dial_record: None });
+        assert_eq!(state, PeerState::Disconnected {
+            dial_record: None,
+            disconnected_at: std::time::Instant::now()
+        });
     }
 
     #[test]
@@ -890,7 +940,10 @@ mod tests {
             ConnectionId::from(0),
         );
 
-        let mut state = PeerState::Disconnected { dial_record: None };
+        let mut state = PeerState::Disconnected {
+            dial_record: None,
+            disconnected_at: std::time::Instant::now()
+        };
         // Dialing.
         assert_eq!(
             state.dial_single_address(record.clone()),
@@ -905,7 +958,10 @@ mod tests {
 
         // Dialing failed.
         state.on_dial_failure(ConnectionId::from(0));
-        assert_eq!(state, PeerState::Disconnected { dial_record: None });
+        assert_eq!(state, PeerState::Disconnected {
+            dial_record: None,
+            disconnected_at: std::time::Instant::now()
+        });
 
         // Opening.
         assert_eq!(
@@ -919,7 +975,10 @@ mod tests {
 
         // Open failure.
         assert!(state.on_open_failure(SupportedTransport::Tcp));
-        assert_eq!(state, PeerState::Disconnected { dial_record: None });
+        assert_eq!(state, PeerState::Disconnected {
+            dial_record: None,
+            disconnected_at: std::time::Instant::now()
+        });
 
         // Dial again.
         assert_eq!(

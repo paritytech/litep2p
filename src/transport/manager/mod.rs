@@ -73,6 +73,9 @@ pub(crate) mod handle;
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::transport-manager";
 
+/// Interval duration after which we remove the peer entry from the transport manager.
+const INTERVAL_DURATION: Duration = Duration::from_secs(60 * 60); // 60 minutes
+
 /// The connection established result.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum ConnectionEstablishedResult {
@@ -1026,7 +1029,10 @@ impl TransportManager {
                     ?err,
                     "failed to negotiate connection",
                 );
-                context.state = PeerState::Disconnected { dial_record: None };
+                context.state = PeerState::Disconnected {
+                    dial_record: None,
+                    disconnected_at: std::time::Instant::now()
+                };
                 Err(Error::InvalidState)
             }
         }
@@ -1087,10 +1093,43 @@ impl TransportManager {
         Ok(None)
     }
 
+    fn cleanup_disconnected_peers(&mut self) {
+        let mut peers = self.peers.write();
+        let cutoff = std::time::Instant::now() - INTERVAL_DURATION;
+
+        let before_count = peers.len();
+
+        peers.retain(|_peer_id, peer_context| {
+            match &peer_context.state {
+                // keep if in `Disconnected` state that is more recent than the cutoff
+                PeerState::Disconnected { disconnected_at, .. } => {
+                    *disconnected_at > cutoff
+                }
+                // keep all rest of states
+                _ => true,
+            }
+        });
+
+        let removed = before_count - peers.len();
+        if removed > 0 {
+            tracing::debug!(
+                target: LOG_TARGET,
+                removed,
+                "Cleaned up disconnected peers"
+            );
+        }
+    }
+
     /// Poll next event from [`crate::transport::manager::TransportManager`].
     pub async fn next(&mut self) -> Option<TransportEvent> {
+        let mut cleanup_interval = tokio::time::interval(INTERVAL_DURATION);
+
         loop {
             tokio::select! {
+                _ = cleanup_interval.tick() => {
+                    self.cleanup_disconnected_peers();
+                }
+
                 event = self.event_rx.recv() => {
                     let Some(event) = event else {
                         tracing::error!(
@@ -1895,7 +1934,10 @@ mod tests {
         manager.peers.write().insert(
             peer,
             PeerContext {
-                state: PeerState::Disconnected { dial_record: None },
+                state: PeerState::Disconnected {
+                    dial_record: None,
+                    disconnected_at: std::time::Instant::now()
+                },
                 addresses: AddressStore::new(),
             },
         );
