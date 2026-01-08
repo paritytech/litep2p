@@ -616,6 +616,30 @@ impl WebRtcConnection {
             .map(|_| ())
     }
 
+    /// Handle outbound data with flags.
+    fn on_outbound_data_with_flags(
+        &mut self,
+        channel_id: ChannelId,
+        data: Vec<u8>,
+        flags: i32,
+    ) -> crate::Result<()> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            peer = ?self.peer,
+            ?channel_id,
+            data_len = ?data.len(),
+            ?flags,
+            "send data with flags",
+        );
+
+        self.rtc
+            .channel(channel_id)
+            .ok_or(Error::ChannelDoesntExist)?
+            .write(true, WebRtcMessage::encode_with_flags(data, flags).as_ref())
+            .map_err(Error::WebRtc)
+            .map(|_| ())
+    }
+
     /// Open outbound substream.
     fn on_open_substream(
         &mut self,
@@ -788,7 +812,7 @@ impl WebRtcConnection {
                 },
                 event = self.handles.next() => match event {
                     None => unreachable!(),
-                    Some((channel_id, None | Some(SubstreamEvent::Close))) => {
+                    Some((channel_id, None)) => {
                         tracing::trace!(
                             target: LOG_TARGET,
                             peer = ?self.peer,
@@ -807,6 +831,16 @@ impl WebRtcConnection {
                                 ?channel_id,
                                 ?error,
                                 "failed to send data to remote peer",
+                            );
+                        }
+                    }
+                    Some((channel_id, Some(SubstreamEvent::MessageWithFlags { payload, flags }))) => {
+                        if let Err(error) = self.on_outbound_data_with_flags(channel_id, payload, flags) {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?channel_id,
+                                ?error,
+                                "failed to send data with flags to remote peer",
                             );
                         }
                     }

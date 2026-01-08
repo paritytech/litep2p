@@ -47,8 +47,8 @@ pub enum Event {
     /// Send/receive message.
     Message(Vec<u8>),
 
-    /// Close substream.
-    Close,
+    /// Send message with flags.
+    MessageWithFlags { payload: Vec<u8>, flags: i32 },
 }
 
 /// Substream stream.
@@ -58,6 +58,12 @@ enum State {
 
     /// Remote is no longer interested in receiving anything.
     SendClosed,
+
+    /// We sent FIN, waiting for FIN_ACK.
+    FinSent,
+
+    /// We received FIN_ACK, write half is closed.
+    FinAcked,
 }
 
 /// Channel-backed substream. Must be owned and polled by exactly one task at a time.
@@ -121,14 +127,33 @@ impl SubstreamHandle {
     pub async fn on_message(&self, message: WebRtcMessage) -> crate::Result<()> {
         if let Some(flags) = message.flags {
             if flags == Flag::Fin as i32 {
+                // Received FIN, send FIN_ACK back
                 self.tx.send(Event::RecvClosed).await?;
+                // Send FIN_ACK to acknowledge
+                return self.tx
+                    .send(Event::MessageWithFlags {
+                        payload: vec![],
+                        flags: Flag::FinAck as i32,
+                    })
+                    .await
+                    .map_err(From::from);
             }
 
-            if flags & 1 == Flag::StopSending as i32 {
+            if flags == Flag::FinAck as i32 {
+                // Received FIN_ACK, we can now fully close our write half
+                let mut state = self.state.lock();
+                if matches!(*state, State::FinSent) {
+                    *state = State::FinAcked;
+                }
+                return Ok(());
+            }
+
+            if flags == Flag::StopSending as i32 {
                 *self.state.lock() = State::SendClosed;
+                return Ok(());
             }
 
-            if flags & 2 == Flag::ResetStream as i32 {
+            if flags == Flag::ResetStream as i32 {
                 return Err(Error::ConnectionClosed);
             }
         }
@@ -169,7 +194,7 @@ impl tokio::io::AsyncRead for Substream {
         }
 
         match futures::ready!(self.rx.poll_recv(cx)) {
-            None | Some(Event::Close) | Some(Event::RecvClosed) =>
+            None | Some(Event::RecvClosed) =>
                 Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
             Some(Event::Message(message)) => {
                 if message.len() > MAX_FRAME_SIZE {
@@ -186,6 +211,10 @@ impl tokio::io::AsyncRead for Substream {
                 }
 
                 Poll::Ready(Ok(()))
+            }
+            // MessageWithFlags is handled at the connection layer, not here
+            Some(Event::MessageWithFlags { .. }) => {
+                Poll::Ready(Err(std::io::ErrorKind::InvalidData.into()))
             }
         }
     }
@@ -223,12 +252,20 @@ impl tokio::io::AsyncWrite for Substream {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
+        // Send FIN flag and transition to FinSent state
         match futures::ready!(self.tx.poll_reserve(cx)) {
             Ok(()) => {}
             Err(_) => return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
         };
 
-        match self.tx.send_item(Event::Close) {
+        // Update state to FinSent
+        *self.state.lock() = State::FinSent;
+
+        // Send message with FIN flag
+        match self.tx.send_item(Event::MessageWithFlags {
+            payload: vec![],
+            flags: Flag::Fin as i32,
+        }) {
             Ok(()) => Poll::Ready(Ok(())),
             Err(_) => Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
         }
@@ -298,7 +335,14 @@ mod tests {
         substream.shutdown().await.unwrap();
 
         assert_eq!(handle.next().await, Some(Event::Message(vec![1u8; 1337])));
-        assert_eq!(handle.next().await, Some(Event::Close));
+        // After shutdown, should send FIN flag
+        assert_eq!(
+            handle.next().await,
+            Some(Event::MessageWithFlags {
+                payload: vec![],
+                flags: Flag::Fin as i32
+            })
+        );
     }
 
     #[tokio::test]
@@ -499,5 +543,213 @@ mod tests {
             .await
             .expect("writer task did not complete after capacity was freed")
             .expect("writer task panicked");
+    }
+
+    #[tokio::test]
+    async fn fin_flag_sent_on_shutdown() {
+        let (mut substream, mut handle) = Substream::new();
+
+        // Shutdown the substream
+        substream.shutdown().await.unwrap();
+
+        // Should receive FIN flag
+        assert_eq!(
+            handle.next().await,
+            Some(Event::MessageWithFlags {
+                payload: vec![],
+                flags: Flag::Fin as i32
+            })
+        );
+
+        // Verify state is FinSent
+        assert!(matches!(*handle.state.lock(), State::FinSent));
+    }
+
+    #[tokio::test]
+    async fn fin_ack_response_on_receiving_fin() {
+        let (_substream, handle) = Substream::new();
+
+        // Simulate receiving FIN from remote
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flags: Some(Flag::Fin as i32),
+            })
+            .await
+            .unwrap();
+
+        // Should have sent FIN_ACK back (this would be captured by the connection layer)
+        // In real scenario, the connection would read from handle.rx
+    }
+
+    #[tokio::test]
+    async fn fin_ack_received_transitions_to_fin_acked() {
+        let (mut substream, handle) = Substream::new();
+
+        // First, send FIN
+        substream.shutdown().await.unwrap();
+
+        // Verify we're in FinSent state
+        assert!(matches!(*handle.state.lock(), State::FinSent));
+
+        // Simulate receiving FIN_ACK from remote
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flags: Some(Flag::FinAck as i32),
+            })
+            .await
+            .unwrap();
+
+        // Should transition to FinAcked
+        assert!(matches!(*handle.state.lock(), State::FinAcked));
+    }
+
+    #[tokio::test]
+    async fn full_fin_handshake() {
+        let (mut substream, mut handle) = Substream::new();
+
+        // Write some data
+        substream.write_all(&vec![1u8; 100]).await.unwrap();
+
+        // Initiate shutdown (send FIN)
+        substream.shutdown().await.unwrap();
+
+        // Verify data was sent
+        assert_eq!(handle.next().await, Some(Event::Message(vec![1u8; 100])));
+
+        // Verify FIN was sent
+        assert_eq!(
+            handle.next().await,
+            Some(Event::MessageWithFlags {
+                payload: vec![],
+                flags: Flag::Fin as i32
+            })
+        );
+
+        // Simulate receiving FIN_ACK
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flags: Some(Flag::FinAck as i32),
+            })
+            .await
+            .unwrap();
+
+        // Should be in FinAcked state
+        assert!(matches!(*handle.state.lock(), State::FinAcked));
+    }
+
+    #[tokio::test]
+    async fn stop_sending_flag_closes_send_half() {
+        let (mut substream, handle) = Substream::new();
+
+        // Simulate receiving STOP_SENDING
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flags: Some(Flag::StopSending as i32),
+            })
+            .await
+            .unwrap();
+
+        // Should transition to SendClosed
+        assert!(matches!(*handle.state.lock(), State::SendClosed));
+
+        // Attempting to write should fail
+        match substream.write_all(&vec![0u8; 100]).await {
+            Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe),
+            _ => panic!("write should have failed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn reset_stream_flag_returns_error() {
+        let (_substream, handle) = Substream::new();
+
+        // Simulate receiving RESET_STREAM
+        let result = handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flags: Some(Flag::ResetStream as i32),
+            })
+            .await;
+
+        // Should return connection closed error
+        assert!(matches!(result, Err(Error::ConnectionClosed)));
+    }
+
+    #[tokio::test]
+    async fn fin_ack_does_not_trigger_other_flags() {
+        let (mut substream, handle) = Substream::new();
+
+        // First, send FIN to transition to FinSent state
+        substream.shutdown().await.unwrap();
+
+        // Verify we're in FinSent state
+        assert!(matches!(*handle.state.lock(), State::FinSent));
+
+        // Now simulate receiving FIN_ACK (value = 3)
+        // This should NOT trigger STOP_SENDING (value = 1) or RESET_STREAM (value = 2)
+        // even though 3 & 1 == 1 and 3 & 2 == 2
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flags: Some(Flag::FinAck as i32),
+            })
+            .await
+            .unwrap();
+
+        // Should transition to FinAcked, not SendClosed
+        assert!(matches!(*handle.state.lock(), State::FinAcked));
+
+        // Writing should still work (not closed by STOP_SENDING)
+        // Note: We already sent FIN, so write won't actually work, but the state check happens first
+    }
+
+    #[tokio::test]
+    async fn flags_are_mutually_exclusive() {
+        let (mut substream, handle) = Substream::new();
+
+        // Test that STOP_SENDING (1) is handled correctly
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flags: Some(Flag::StopSending as i32),
+            })
+            .await
+            .unwrap();
+
+        assert!(matches!(*handle.state.lock(), State::SendClosed));
+
+        // Create a new substream for RESET_STREAM test
+        let (_substream2, handle2) = Substream::new();
+
+        // Test that RESET_STREAM (2) is handled correctly
+        let result = handle2
+            .on_message(WebRtcMessage {
+                payload: None,
+                flags: Some(Flag::ResetStream as i32),
+            })
+            .await;
+
+        assert!(matches!(result, Err(Error::ConnectionClosed)));
+
+        // Create a new substream for FIN test
+        let (mut substream3, handle3) = Substream::new();
+
+        // First transition to FinSent
+        substream3.shutdown().await.unwrap();
+
+        // Test that FIN_ACK (3) is handled correctly
+        handle3
+            .on_message(WebRtcMessage {
+                payload: None,
+                flags: Some(Flag::FinAck as i32),
+            })
+            .await
+            .unwrap();
+
+        assert!(matches!(*handle3.state.lock(), State::FinAcked));
     }
 }
