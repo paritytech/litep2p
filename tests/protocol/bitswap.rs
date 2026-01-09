@@ -60,6 +60,7 @@ async fn bitswap_e2e() {
     let (mut litep2p_client, mut bitswap_client) = make_litep2p();
     let (mut litep2p_server, mut bitswap_server) = make_litep2p();
 
+    // Checking maximum block size of 2 MiB, as per spec.
     let payload = vec![0xde; 2 * 1024 * 1024];
     let multihash = Code::Sha2_256.digest(&payload);
     let multihash = cid::multihash::Multihash::wrap(multihash.code(), multihash.digest()).unwrap();
