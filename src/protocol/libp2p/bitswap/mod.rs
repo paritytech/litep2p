@@ -314,16 +314,16 @@ impl Bitswap {
         for action in actions {
             match action {
                 SubstreamAction::SendRequest(cids) => {
-                    if send_request(&mut substream, cids).await.is_err() {
+                    if let Err(error) = send_request(&mut substream, cids).await {
                         // Drop the substream and all actions in case of sending error.
-                        tracing::debug!(target: LOG_TARGET, ?peer, "bitswap request failed");
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?error, "bitswap request failed");
                         return;
                     }
                 }
                 SubstreamAction::SendResponse(entries) => {
-                    if send_response(&mut substream, entries).await.is_err() {
+                    if let Err(error) = send_response(&mut substream, entries).await {
                         // Drop the substream and all actions in case of sending error.
-                        tracing::debug!(target: LOG_TARGET, ?peer, "bitswap response failed");
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?error, "bitswap response failed");
                         return;
                     }
                 }
@@ -508,7 +508,7 @@ impl Bitswap {
     }
 }
 
-async fn send_request(substream: &mut Substream, cids: Vec<(Cid, WantType)>) -> Result<(), ()> {
+async fn send_request(substream: &mut Substream, cids: Vec<(Cid, WantType)>) -> Result<(), Error> {
     let request = schema::bitswap::Message {
         wantlist: Some(schema::bitswap::Wantlist {
             entries: cids
@@ -527,14 +527,14 @@ async fn send_request(substream: &mut Substream, cids: Vec<(Cid, WantType)>) -> 
     };
 
     let message = request.encode_to_vec().into();
-    if let Ok(Ok(())) = tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
-        Ok(())
-    } else {
-        Err(())
+    match tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
+        Err(_) => Err(Error::Timeout),
+        Ok(Err(e)) => Err(Error::SubstreamError(e)),
+        Ok(Ok(())) => Ok(()),
     }
 }
 
-async fn send_response(substream: &mut Substream, entries: Vec<ResponseType>) -> Result<(), ()> {
+async fn send_response(substream: &mut Substream, entries: Vec<ResponseType>) -> Result<(), Error> {
     let mut response = schema::bitswap::Message {
         // `wantlist` field must always be present. This is what the official Kubo
         // IPFS implementation does.
@@ -568,9 +568,9 @@ async fn send_response(substream: &mut Substream, entries: Vec<ResponseType>) ->
     }
 
     let message = response.encode_to_vec().into();
-    if let Ok(Ok(())) = tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
-        Ok(())
-    } else {
-        Err(())
+    match tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
+        Err(_) => Err(Error::Timeout),
+        Ok(Err(e)) => Err(Error::SubstreamError(e)),
+        Ok(Ok(())) => Ok(()),
     }
 }

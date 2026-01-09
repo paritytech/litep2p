@@ -30,8 +30,9 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 /// IPFS Bitswap protocol name as a string.
 pub const PROTOCOL_NAME: &str = "/ipfs/bitswap/1.2.0";
 
-/// Maximum Size for `/ipfs/bitswap/1.2.0` payloads.
-const MAX_PAYLOAD_SIZE: usize = 2_097_152;
+/// Maximum Size for `/ipfs/bitswap/1.2.0` substream payload. Note this is bigger than 2 MiB max
+/// block size to account for protobuf message overhead.
+const MAX_PAYLOAD_SIZE: usize = 2_100_000;
 
 /// Bitswap configuration.
 #[derive(Debug)]
