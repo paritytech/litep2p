@@ -29,35 +29,16 @@ pub struct WebRtcMessage {
     /// Payload.
     pub payload: Option<Vec<u8>>,
 
-    // Flags.
-    pub flags: Option<i32>,
+    /// Flag.
+    pub flag: Option<i32>,
 }
 
 impl WebRtcMessage {
-    /// Encode WebRTC message.
-    pub fn encode(payload: Vec<u8>) -> Vec<u8> {
+    /// Encode WebRTC message with optional flag.
+    pub fn encode(payload: Vec<u8>, flag: Option<i32>) -> Vec<u8> {
         let protobuf_payload = schema::webrtc::Message {
             message: (!payload.is_empty()).then_some(payload),
-            flag: None,
-        };
-        let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
-        protobuf_payload
-            .encode(&mut payload)
-            .expect("Vec<u8> to provide needed capacity");
-
-        let mut out_buf = bytes::BytesMut::with_capacity(payload.len() + 4);
-        let mut codec = UnsignedVarint::new(None);
-        let _result = codec.encode(payload.into(), &mut out_buf);
-
-        out_buf.into()
-    }
-
-    /// Encode WebRTC message with flags.
-    #[allow(unused)]
-    pub fn encode_with_flags(payload: Vec<u8>, flags: i32) -> Vec<u8> {
-        let protobuf_payload = schema::webrtc::Message {
-            message: (!payload.is_empty()).then_some(payload),
-            flag: Some(flags),
+            flag: flag,
         };
         let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
         protobuf_payload
@@ -84,7 +65,7 @@ impl WebRtcMessage {
         match schema::webrtc::Message::decode(result) {
             Ok(message) => Ok(Self {
                 payload: message.message,
-                flags: message.flag,
+                flag: message.flag,
             }),
             Err(_) => Err(ParseError::InvalidData),
         }
@@ -96,29 +77,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn with_payload_no_flags() {
-        let message = WebRtcMessage::encode("Hello, world!".as_bytes().to_vec());
+    fn with_payload_no_flag() {
+        let message = WebRtcMessage::encode("Hello, world!".as_bytes().to_vec(), None);
         let decoded = WebRtcMessage::decode(&message).unwrap();
 
         assert_eq!(decoded.payload, Some("Hello, world!".as_bytes().to_vec()));
-        assert_eq!(decoded.flags, None);
+        assert_eq!(decoded.flag, None);
     }
 
     #[test]
-    fn with_payload_and_flags() {
-        let message = WebRtcMessage::encode_with_flags("Hello, world!".as_bytes().to_vec(), 1i32);
+    fn with_payload_and_flag() {
+        let message = WebRtcMessage::encode("Hello, world!".as_bytes().to_vec(), Some(1i32));
         let decoded = WebRtcMessage::decode(&message).unwrap();
 
         assert_eq!(decoded.payload, Some("Hello, world!".as_bytes().to_vec()));
-        assert_eq!(decoded.flags, Some(1i32));
+        assert_eq!(decoded.flag, Some(1i32));
     }
 
     #[test]
-    fn no_payload_with_flags() {
-        let message = WebRtcMessage::encode_with_flags(vec![], 2i32);
+    fn no_payload_with_flag() {
+        let message = WebRtcMessage::encode(vec![], Some(2i32));
         let decoded = WebRtcMessage::decode(&message).unwrap();
 
         assert_eq!(decoded.payload, None);
-        assert_eq!(decoded.flags, Some(2i32));
+        assert_eq!(decoded.flag, Some(2i32));
     }
 }

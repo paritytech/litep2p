@@ -44,11 +44,11 @@ pub enum Event {
     /// Receiver closed.
     RecvClosed,
 
-    /// Send/receive message.
-    Message(Vec<u8>),
-
-    /// Send message with flags.
-    MessageWithFlags { payload: Vec<u8>, flags: i32 },
+    /// Send/receive message with optional flag.
+    Message {
+        payload: Vec<u8>,
+        flag: Option<i32>,
+    },
 }
 
 /// Substream stream.
@@ -121,25 +121,25 @@ pub struct SubstreamHandle {
 impl SubstreamHandle {
     /// Handle message received from a remote peer.
     ///
-    /// If the message contains any flags, handle them first and appropriately close the correct
+    /// If the message contains any flag, handle them first and appropriately close the correct
     /// side of the substream. If the message contained any payload, send it to the protocol for
     /// further processing.
     pub async fn on_message(&self, message: WebRtcMessage) -> crate::Result<()> {
-        if let Some(flags) = message.flags {
-            if flags == Flag::Fin as i32 {
+        if let Some(flag) = message.flag {
+            if flag == Flag::Fin as i32 {
                 // Received FIN, send FIN_ACK back
                 self.tx.send(Event::RecvClosed).await?;
                 // Send FIN_ACK to acknowledge
                 return self.tx
-                    .send(Event::MessageWithFlags {
+                    .send(Event::Message {
                         payload: vec![],
-                        flags: Flag::FinAck as i32,
+                        flag: Some(Flag::FinAck as i32),
                     })
                     .await
                     .map_err(From::from);
             }
 
-            if flags == Flag::FinAck as i32 {
+            if flag == Flag::FinAck as i32 {
                 // Received FIN_ACK, we can now fully close our write half
                 let mut state = self.state.lock();
                 if matches!(*state, State::FinSent) {
@@ -148,19 +148,25 @@ impl SubstreamHandle {
                 return Ok(());
             }
 
-            if flags == Flag::StopSending as i32 {
+            if flag == Flag::StopSending as i32 {
                 *self.state.lock() = State::SendClosed;
                 return Ok(());
             }
 
-            if flags == Flag::ResetStream as i32 {
+            if flag == Flag::ResetStream as i32 {
                 return Err(Error::ConnectionClosed);
             }
         }
 
         if let Some(payload) = message.payload {
             if !payload.is_empty() {
-                return self.tx.send(Event::Message(payload)).await.map_err(From::from);
+                return self.tx
+                    .send(Event::Message {
+                        payload,
+                        flag: None,
+                    })
+                    .await
+                    .map_err(From::from);
             }
         }
 
@@ -196,25 +202,21 @@ impl tokio::io::AsyncRead for Substream {
         match futures::ready!(self.rx.poll_recv(cx)) {
             None | Some(Event::RecvClosed) =>
                 Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
-            Some(Event::Message(message)) => {
-                if message.len() > MAX_FRAME_SIZE {
+            Some(Event::Message { payload, flag: _ }) => {
+                if payload.len() > MAX_FRAME_SIZE {
                     return Poll::Ready(Err(std::io::ErrorKind::PermissionDenied.into()));
                 }
 
-                match buf.remaining() >= message.len() {
-                    true => buf.put_slice(&message),
+                match buf.remaining() >= payload.len() {
+                    true => buf.put_slice(&payload),
                     false => {
                         let remaining = buf.remaining();
-                        buf.put_slice(&message[..remaining]);
-                        self.read_buffer.put_slice(&message[remaining..]);
+                        buf.put_slice(&payload[..remaining]);
+                        self.read_buffer.put_slice(&payload[remaining..]);
                     }
                 }
 
                 Poll::Ready(Ok(()))
-            }
-            // MessageWithFlags is handled at the connection layer, not here
-            Some(Event::MessageWithFlags { .. }) => {
-                Poll::Ready(Err(std::io::ErrorKind::InvalidData.into()))
             }
         }
     }
@@ -238,7 +240,10 @@ impl tokio::io::AsyncWrite for Substream {
         let num_bytes = std::cmp::min(MAX_FRAME_SIZE, buf.len());
         let frame = buf[..num_bytes].to_vec();
 
-        match self.tx.send_item(Event::Message(frame)) {
+        match self.tx.send_item(Event::Message {
+            payload: frame,
+            flag: None,
+        }) {
             Ok(()) => Poll::Ready(Ok(num_bytes)),
             Err(_) => Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
         }
@@ -262,9 +267,9 @@ impl tokio::io::AsyncWrite for Substream {
         *self.state.lock() = State::FinSent;
 
         // Send message with FIN flag
-        match self.tx.send_item(Event::MessageWithFlags {
+        match self.tx.send_item(Event::Message {
             payload: vec![],
-            flags: Flag::Fin as i32,
+            flag: Some(Flag::Fin as i32),
         }) {
             Ok(()) => Poll::Ready(Ok(())),
             Err(_) => Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
@@ -284,7 +289,13 @@ mod tests {
 
         substream.write_all(&vec![0u8; 1337]).await.unwrap();
 
-        assert_eq!(handle.next().await, Some(Event::Message(vec![0u8; 1337])));
+        assert_eq!(
+            handle.next().await,
+            Some(Event::Message {
+                payload: vec![0u8; 1337],
+                flag: None
+            })
+        );
 
         futures::future::poll_fn(|cx| match handle.poll_next_unpin(cx) {
             Poll::Pending => Poll::Ready(()),
@@ -301,13 +312,22 @@ mod tests {
 
         assert_eq!(
             handle.rx.recv().await,
-            Some(Event::Message(vec![0u8; MAX_FRAME_SIZE]))
+            Some(Event::Message {
+                payload: vec![0u8; MAX_FRAME_SIZE],
+                flag: None,
+            })
         );
         assert_eq!(
             handle.rx.recv().await,
-            Some(Event::Message(vec![0u8; MAX_FRAME_SIZE]))
+            Some(Event::Message {
+                payload: vec![0u8; MAX_FRAME_SIZE],
+                flag: None,
+            })
         );
-        assert_eq!(handle.rx.recv().await, Some(Event::Message(vec![0u8; 1])));
+        assert_eq!(handle.rx.recv().await, Some(Event::Message {
+                payload: vec![0u8; 1],
+                flag: None,
+            }));
 
         futures::future::poll_fn(|cx| match handle.poll_next_unpin(cx) {
             Poll::Pending => Poll::Ready(()),
@@ -334,13 +354,16 @@ mod tests {
         substream.write_all(&vec![1u8; 1337]).await.unwrap();
         substream.shutdown().await.unwrap();
 
-        assert_eq!(handle.next().await, Some(Event::Message(vec![1u8; 1337])));
+        assert_eq!(handle.next().await, Some(Event::Message {
+                payload: vec![1u8; 1337],
+                flag: None,
+            }));
         // After shutdown, should send FIN flag
         assert_eq!(
             handle.next().await,
-            Some(Event::MessageWithFlags {
+            Some(Event::Message {
                 payload: vec![],
-                flags: Flag::Fin as i32
+                flag: Some(Flag::Fin as i32)
             })
         );
     }
@@ -351,7 +374,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flags: Some(0i32),
+                flag: Some(0i32),
             })
             .await
             .unwrap();
@@ -365,7 +388,10 @@ mod tests {
     #[tokio::test]
     async fn read_small_frame() {
         let (mut substream, handle) = Substream::new();
-        handle.tx.send(Event::Message(vec![1u8; 256])).await.unwrap();
+        handle.tx.send(Event::Message {
+            payload: vec![1u8; 256],
+            flag: None,
+        }).await.unwrap();
 
         let mut buf = vec![0u8; 2048];
 
@@ -393,7 +419,10 @@ mod tests {
         let mut first = vec![1u8; 256];
         first.extend_from_slice(&vec![2u8; 256]);
 
-        handle.tx.send(Event::Message(first)).await.unwrap();
+        handle.tx.send(Event::Message {
+            payload: first,
+            flag: None,
+        }).await.unwrap();
 
         let mut buf = vec![0u8; 256];
 
@@ -429,8 +458,14 @@ mod tests {
         let mut first = vec![1u8; 256];
         first.extend_from_slice(&vec![2u8; 256]);
 
-        handle.tx.send(Event::Message(first)).await.unwrap();
-        handle.tx.send(Event::Message(vec![4u8; 2048])).await.unwrap();
+        handle.tx.send(Event::Message {
+            payload: first,
+            flag: None,
+        }).await.unwrap();
+        handle.tx.send(Event::Message {
+            payload: vec![4u8; 2048],
+            flag: None,
+        }).await.unwrap();
 
         let mut buf = vec![0u8; 256];
 
@@ -555,9 +590,9 @@ mod tests {
         // Should receive FIN flag
         assert_eq!(
             handle.next().await,
-            Some(Event::MessageWithFlags {
+            Some(Event::Message {
                 payload: vec![],
-                flags: Flag::Fin as i32
+                flag: Some(Flag::Fin as i32)
             })
         );
 
@@ -573,7 +608,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flags: Some(Flag::Fin as i32),
+                flag: Some(Flag::Fin as i32),
             })
             .await
             .unwrap();
@@ -596,7 +631,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flags: Some(Flag::FinAck as i32),
+                flag: Some(Flag::FinAck as i32),
             })
             .await
             .unwrap();
@@ -616,14 +651,17 @@ mod tests {
         substream.shutdown().await.unwrap();
 
         // Verify data was sent
-        assert_eq!(handle.next().await, Some(Event::Message(vec![1u8; 100])));
+        assert_eq!(handle.next().await, Some(Event::Message {
+            payload: vec![1u8; 100],
+            flag: None,
+        }));
 
         // Verify FIN was sent
         assert_eq!(
             handle.next().await,
-            Some(Event::MessageWithFlags {
+            Some(Event::Message {
                 payload: vec![],
-                flags: Flag::Fin as i32
+                flag: Some(Flag::Fin as i32)
             })
         );
 
@@ -631,7 +669,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flags: Some(Flag::FinAck as i32),
+                flag: Some(Flag::FinAck as i32),
             })
             .await
             .unwrap();
@@ -648,7 +686,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flags: Some(Flag::StopSending as i32),
+                flag: Some(Flag::StopSending as i32),
             })
             .await
             .unwrap();
@@ -671,7 +709,7 @@ mod tests {
         let result = handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flags: Some(Flag::ResetStream as i32),
+                flag: Some(Flag::ResetStream as i32),
             })
             .await;
 
@@ -680,7 +718,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fin_ack_does_not_trigger_other_flags() {
+    async fn fin_ack_does_not_trigger_other_flag() {
         let (mut substream, handle) = Substream::new();
 
         // First, send FIN to transition to FinSent state
@@ -695,7 +733,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flags: Some(Flag::FinAck as i32),
+                flag: Some(Flag::FinAck as i32),
             })
             .await
             .unwrap();
@@ -708,14 +746,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn flags_are_mutually_exclusive() {
+    async fn flag_are_mutually_exclusive() {
         let (mut substream, handle) = Substream::new();
 
         // Test that STOP_SENDING (1) is handled correctly
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flags: Some(Flag::StopSending as i32),
+                flag: Some(Flag::StopSending as i32),
             })
             .await
             .unwrap();
@@ -729,7 +767,7 @@ mod tests {
         let result = handle2
             .on_message(WebRtcMessage {
                 payload: None,
-                flags: Some(Flag::ResetStream as i32),
+                flag: Some(Flag::ResetStream as i32),
             })
             .await;
 
@@ -745,7 +783,7 @@ mod tests {
         handle3
             .on_message(WebRtcMessage {
                 payload: None,
-                flags: Some(Flag::FinAck as i32),
+                flag: Some(Flag::FinAck as i32),
             })
             .await
             .unwrap();

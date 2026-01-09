@@ -263,7 +263,7 @@ impl WebRtcConnection {
         let fallback_names = std::mem::take(&mut context.fallback_names);
         let (dialer_state, message) =
             WebRtcDialerState::propose(context.protocol.clone(), fallback_names)?;
-        let message = WebRtcMessage::encode(message);
+        let message = WebRtcMessage::encode(message, None);
 
         self.rtc
             .channel(channel_id)
@@ -330,7 +330,7 @@ impl WebRtcConnection {
         self.rtc
             .channel(channel_id)
             .ok_or(Error::ChannelDoesntExist)?
-            .write(true, WebRtcMessage::encode(response.to_vec()).as_ref())
+            .write(true, WebRtcMessage::encode(response.to_vec(), None).as_ref())
             .map_err(Error::WebRtc)?;
 
         let protocol = negotiated.ok_or(Error::SubstreamDoesntExist)?;
@@ -452,7 +452,7 @@ impl WebRtcConnection {
             target: LOG_TARGET,
             peer = ?self.peer,
             ?channel_id,
-            flags = message.flags,
+            flag = message.flag,
             data_len = message.payload.as_ref().map_or(0usize, |payload| payload.len()),
             "handle inbound message",
         );
@@ -598,47 +598,30 @@ impl WebRtcConnection {
         Ok(())
     }
 
-    /// Handle outbound data.
-    fn on_outbound_data(&mut self, channel_id: ChannelId, data: Vec<u8>) -> crate::Result<()> {
-        tracing::trace!(
-            target: LOG_TARGET,
-            peer = ?self.peer,
-            ?channel_id,
-            data_len = ?data.len(),
-            "send data",
-        );
-
-        self.rtc
-            .channel(channel_id)
-            .ok_or(Error::ChannelDoesntExist)?
-            .write(true, WebRtcMessage::encode(data).as_ref())
-            .map_err(Error::WebRtc)
-            .map(|_| ())
-    }
-
-    /// Handle outbound data with flags.
-    fn on_outbound_data_with_flags(
+    /// Handle outbound data with optional flag.
+    fn on_outbound_data(
         &mut self,
         channel_id: ChannelId,
         data: Vec<u8>,
-        flags: i32,
+        flag: Option<i32>,
     ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
             peer = ?self.peer,
             ?channel_id,
             data_len = ?data.len(),
-            ?flags,
-            "send data with flags",
+            ?flag,
+            "send data",
         );
 
         self.rtc
             .channel(channel_id)
             .ok_or(Error::ChannelDoesntExist)?
-            .write(true, WebRtcMessage::encode_with_flags(data, flags).as_ref())
+            .write(true, WebRtcMessage::encode(data, flag).as_ref())
             .map_err(Error::WebRtc)
             .map(|_| ())
     }
+
 
     /// Open outbound substream.
     fn on_open_substream(
@@ -824,23 +807,14 @@ impl WebRtcConnection {
                         self.channels.insert(channel_id, ChannelState::Closing);
                         self.handles.remove(&channel_id);
                     }
-                    Some((channel_id, Some(SubstreamEvent::Message(data)))) => {
-                        if let Err(error) = self.on_outbound_data(channel_id, data) {
+                    Some((channel_id, Some(SubstreamEvent::Message { payload, flag }))) => {
+                        if let Err(error) = self.on_outbound_data(channel_id, payload, flag) {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?channel_id,
+                                ?flag,
                                 ?error,
                                 "failed to send data to remote peer",
-                            );
-                        }
-                    }
-                    Some((channel_id, Some(SubstreamEvent::MessageWithFlags { payload, flags }))) => {
-                        if let Err(error) = self.on_outbound_data_with_flags(channel_id, payload, flags) {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?channel_id,
-                                ?error,
-                                "failed to send data with flags to remote peer",
                             );
                         }
                     }
