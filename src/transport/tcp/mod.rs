@@ -688,6 +688,7 @@ mod tests {
     use multihash::Multihash;
     use std::sync::Arc;
     use tokio::sync::mpsc::channel;
+    use crate::transport::manager::DialFailureAddresses;
 
     #[tokio::test]
     async fn connect_and_accept_works() {
@@ -714,6 +715,7 @@ mod tests {
                     tx: tx1,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
+                    dial_failure_mode: DialFailureAddresses::NotRequired,
                 },
             )]),
         };
@@ -745,7 +747,9 @@ mod tests {
                     tx: tx2,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
+                    dial_failure_mode: DialFailureAddresses::NotRequired,
                 },
+
             )]),
         };
         let transport_config2 = Config {
@@ -808,6 +812,7 @@ mod tests {
                     tx: tx1,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
+                    dial_failure_mode: DialFailureAddresses::NotRequired,
                 },
             )]),
         };
@@ -839,6 +844,7 @@ mod tests {
                     tx: tx2,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
+                    dial_failure_mode: DialFailureAddresses::NotRequired,
                 },
             )]),
         };
@@ -897,6 +903,7 @@ mod tests {
                     tx: tx1,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
+                    dial_failure_mode: DialFailureAddresses::NotRequired,
                 },
             )]),
         };
@@ -935,6 +942,7 @@ mod tests {
                     tx: tx2,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
+                    dial_failure_mode: DialFailureAddresses::NotRequired,
                 },
             )]),
         };
