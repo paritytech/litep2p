@@ -33,10 +33,20 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll, Waker},
+    time::{Duration, Instant},
 };
 
 /// Maximum frame size.
 const MAX_FRAME_SIZE: usize = 16384;
+
+/// Timeout for waiting on FIN_ACK after sending FIN.
+/// Matches go-libp2p's 5 second stream close timeout.
+#[cfg(not(test))]
+const FIN_ACK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Shorter timeout for tests.
+#[cfg(test)]
+const FIN_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Substream event.
 #[derive(Debug, PartialEq, Eq)]
@@ -87,6 +97,9 @@ pub struct Substream {
 
     /// Waker to notify when shutdown completes (FIN_ACK received).
     shutdown_waker: Arc<Mutex<Option<Waker>>>,
+
+    /// Timestamp when FIN was sent, used for timeout.
+    fin_sent_at: Option<Instant>,
 }
 
 impl Substream {
@@ -111,6 +124,7 @@ impl Substream {
                 rx: inbound_rx,
                 read_buffer: BytesMut::new(),
                 shutdown_waker,
+                fin_sent_at: None,
             },
             handle,
         )
@@ -292,8 +306,21 @@ impl tokio::io::AsyncWrite for Substream {
             // Already received FIN_ACK, shutdown complete
             State::FinAcked => return Poll::Ready(Ok(())),
 
-            // Sent FIN, waiting for FIN_ACK - register waker and return Pending
+            // Sent FIN, waiting for FIN_ACK - check timeout and return Pending
             State::FinSent => {
+                // Check if we've exceeded the timeout waiting for FIN_ACK
+                if let Some(sent_at) = self.fin_sent_at {
+                    if sent_at.elapsed() >= FIN_ACK_TIMEOUT {
+                        // Timeout exceeded, force complete shutdown
+                        tracing::debug!(
+                            target: "litep2p::webrtc::substream",
+                            "FIN_ACK timeout exceeded, forcing shutdown completion"
+                        );
+                        *self.state.lock() = State::FinAcked;
+                        return Poll::Ready(Ok(()));
+                    }
+                }
+
                 // Store the waker so it can be triggered when we receive FIN_ACK
                 *self.shutdown_waker.lock() = Some(cx.waker().clone());
                 return Poll::Pending;
@@ -331,9 +358,18 @@ impl tokio::io::AsyncWrite for Substream {
         }) {
             Ok(()) => {
                 // Transition to FinSent after successfully sending FIN
-                // Now we need to wait for FIN_ACK, so store waker and return Pending
+                // Record timestamp for timeout tracking
                 *self.state.lock() = State::FinSent;
+                self.fin_sent_at = Some(Instant::now());
                 *self.shutdown_waker.lock() = Some(cx.waker().clone());
+
+                // Spawn timeout task to wake us after FIN_ACK_TIMEOUT
+                let waker = cx.waker().clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(FIN_ACK_TIMEOUT).await;
+                    waker.wake();
+                });
+
                 Poll::Pending
             }
             Err(_) => Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
@@ -972,6 +1008,38 @@ mod tests {
 
         // Second shutdown should succeed without error (already in FinAcked state)
         substream.shutdown().await.unwrap();
+        assert!(matches!(*handle.state.lock(), State::FinAcked));
+    }
+
+    #[tokio::test]
+    async fn shutdown_timeout_without_fin_ack() {
+        use tokio::time::{timeout, Duration};
+
+        let (mut substream, mut handle) = Substream::new();
+
+        // Spawn shutdown in background
+        let shutdown_task = tokio::spawn(async move {
+            substream.shutdown().await.unwrap();
+        });
+
+        // Wait for FIN to be sent
+        assert_eq!(handle.next().await, Some(Event::Message {
+            payload: vec![],
+            flag: Some(Flag::Fin as i32)
+        }));
+
+        // Verify we're in FinSent state
+        assert!(matches!(*handle.state.lock(), State::FinSent));
+
+        // DON'T send FIN_ACK - let it timeout
+        // The shutdown should complete after FIN_ACK_TIMEOUT (2 seconds in tests)
+        // Add a bit of buffer to the timeout
+        let result = timeout(Duration::from_secs(4), shutdown_task).await;
+
+        assert!(result.is_ok(), "Shutdown should complete after timeout");
+        assert!(result.unwrap().is_ok(), "Shutdown should succeed after timeout");
+
+        // Should have transitioned to FinAcked after timeout
         assert!(matches!(*handle.state.lock(), State::FinAcked));
     }
 
