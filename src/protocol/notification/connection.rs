@@ -203,24 +203,21 @@ impl Stream for Connection {
         loop {
             let notification = match this.next_notification.take() {
                 Some(notification) => Some(notification),
-                None => {
-                    let future = async {
-                        tokio::select! {
-                            notification = this.async_rx.recv() => notification,
-                            notification = this.sync_rx.recv() => notification,
-                        }
-                    };
-                    futures::pin_mut!(future);
-
-                    match future.poll_unpin(cx) {
-                        Poll::Pending => None,
+                None => match this.async_rx.poll_recv(cx) {
+                    Poll::Ready(Some(notification)) => Some(notification),
+                    Poll::Ready(None) =>
+                        return Poll::Ready(Some(ConnectionEvent::CloseConnection {
+                            notify: NotifyProtocol::Yes,
+                        })),
+                    Poll::Pending => match this.sync_rx.poll_recv(cx) {
+                        Poll::Ready(Some(notification)) => Some(notification),
                         Poll::Ready(None) =>
                             return Poll::Ready(Some(ConnectionEvent::CloseConnection {
                                 notify: NotifyProtocol::Yes,
                             })),
-                        Poll::Ready(Some(notification)) => Some(notification),
-                    }
-                }
+                        Poll::Pending => None,
+                    },
+                },
             };
 
             let Some(notification) = notification else {
