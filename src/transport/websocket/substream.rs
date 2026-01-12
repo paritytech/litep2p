@@ -64,10 +64,12 @@ impl AsyncRead for Substream {
         cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
+        let len = buf.filled().len();
         match futures::ready!(Pin::new(&mut self.io).poll_read(cx, buf)) {
             Err(error) => Poll::Ready(Err(error)),
             Ok(res) => {
-                self.bandwidth_sink.increase_inbound(buf.filled().len());
+                let inbound_size = buf.filled().len().saturating_sub(len);
+                self.bandwidth_sink.increase_inbound(inbound_size);
                 Poll::Ready(Ok(res))
             }
         }
