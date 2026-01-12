@@ -203,13 +203,13 @@ impl Stream for Connection {
         loop {
             let notification = match this.next_notification.take() {
                 Some(notification) => Some(notification),
-                None => match this.async_rx.poll_recv(cx) {
+                None => match this.sync_rx.poll_recv(cx) {
                     Poll::Ready(Some(notification)) => Some(notification),
                     Poll::Ready(None) =>
                         return Poll::Ready(Some(ConnectionEvent::CloseConnection {
                             notify: NotifyProtocol::Yes,
                         })),
-                    Poll::Pending => match this.sync_rx.poll_recv(cx) {
+                    Poll::Pending => match this.async_rx.poll_recv(cx) {
                         Poll::Ready(Some(notification)) => Some(notification),
                         Poll::Ready(None) =>
                             return Poll::Ready(Some(ConnectionEvent::CloseConnection {
