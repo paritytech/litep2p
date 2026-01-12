@@ -38,7 +38,7 @@ impl WebRtcMessage {
     pub fn encode(payload: Vec<u8>, flag: Option<i32>) -> Vec<u8> {
         let protobuf_payload = schema::webrtc::Message {
             message: (!payload.is_empty()).then_some(payload),
-            flag: flag,
+            flag,
         };
         let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
         protobuf_payload

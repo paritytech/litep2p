@@ -55,10 +55,7 @@ pub enum Event {
     RecvClosed,
 
     /// Send/receive message with optional flag.
-    Message {
-        payload: Vec<u8>,
-        flag: Option<i32>,
-    },
+    Message { payload: Vec<u8>, flag: Option<i32> },
 }
 
 /// Substream stream.
@@ -157,7 +154,8 @@ impl SubstreamHandle {
                 // Received FIN, send FIN_ACK back
                 self.tx.send(Event::RecvClosed).await?;
                 // Send FIN_ACK to acknowledge
-                return self.tx
+                return self
+                    .tx
                     .send(Event::Message {
                         payload: vec![],
                         flag: Some(Flag::FinAck as i32),
@@ -191,7 +189,8 @@ impl SubstreamHandle {
 
         if let Some(payload) = message.payload {
             if !payload.is_empty() {
-                return self.tx
+                return self
+                    .tx
                     .send(Event::Message {
                         payload,
                         flag: None,
@@ -424,10 +423,13 @@ mod tests {
                 flag: None,
             })
         );
-        assert_eq!(handle.rx.recv().await, Some(Event::Message {
+        assert_eq!(
+            handle.rx.recv().await,
+            Some(Event::Message {
                 payload: vec![0u8; 1],
                 flag: None,
-            }));
+            })
+        );
 
         futures::future::poll_fn(|cx| match handle.poll_next_unpin(cx) {
             Poll::Pending => Poll::Ready(()),
@@ -458,10 +460,13 @@ mod tests {
             substream.shutdown().await.unwrap();
         });
 
-        assert_eq!(handle.next().await, Some(Event::Message {
+        assert_eq!(
+            handle.next().await,
+            Some(Event::Message {
                 payload: vec![1u8; 1337],
                 flag: None,
-            }));
+            })
+        );
         // After shutdown, should send FIN flag
         assert_eq!(
             handle.next().await,
@@ -503,10 +508,14 @@ mod tests {
     #[tokio::test]
     async fn read_small_frame() {
         let (mut substream, handle) = Substream::new();
-        handle.tx.send(Event::Message {
-            payload: vec![1u8; 256],
-            flag: None,
-        }).await.unwrap();
+        handle
+            .tx
+            .send(Event::Message {
+                payload: vec![1u8; 256],
+                flag: None,
+            })
+            .await
+            .unwrap();
 
         let mut buf = vec![0u8; 2048];
 
@@ -534,10 +543,14 @@ mod tests {
         let mut first = vec![1u8; 256];
         first.extend_from_slice(&vec![2u8; 256]);
 
-        handle.tx.send(Event::Message {
-            payload: first,
-            flag: None,
-        }).await.unwrap();
+        handle
+            .tx
+            .send(Event::Message {
+                payload: first,
+                flag: None,
+            })
+            .await
+            .unwrap();
 
         let mut buf = vec![0u8; 256];
 
@@ -573,14 +586,22 @@ mod tests {
         let mut first = vec![1u8; 256];
         first.extend_from_slice(&vec![2u8; 256]);
 
-        handle.tx.send(Event::Message {
-            payload: first,
-            flag: None,
-        }).await.unwrap();
-        handle.tx.send(Event::Message {
-            payload: vec![4u8; 2048],
-            flag: None,
-        }).await.unwrap();
+        handle
+            .tx
+            .send(Event::Message {
+                payload: first,
+                flag: None,
+            })
+            .await
+            .unwrap();
+        handle
+            .tx
+            .send(Event::Message {
+                payload: vec![4u8; 2048],
+                flag: None,
+            })
+            .await
+            .unwrap();
 
         let mut buf = vec![0u8; 256];
 
@@ -778,10 +799,13 @@ mod tests {
         });
 
         // Verify data was sent
-        assert_eq!(handle.next().await, Some(Event::Message {
-            payload: vec![1u8; 100],
-            flag: None,
-        }));
+        assert_eq!(
+            handle.next().await,
+            Some(Event::Message {
+                payload: vec![1u8; 100],
+                flag: None,
+            })
+        );
 
         // Verify FIN was sent
         assert_eq!(
@@ -880,7 +904,8 @@ mod tests {
         shutdown_task.await.unwrap();
 
         // Writing should still work (not closed by STOP_SENDING)
-        // Note: We already sent FIN, so write won't actually work, but the state check happens first
+        // Note: We already sent FIN, so write won't actually work, but the state check happens
+        // first
     }
 
     #[tokio::test]
@@ -951,14 +976,20 @@ mod tests {
         });
 
         // Wait for data and FIN to be sent
-        assert_eq!(handle.next().await, Some(Event::Message {
-            payload: vec![1u8; 100],
-            flag: None,
-        }));
-        assert_eq!(handle.next().await, Some(Event::Message {
-            payload: vec![],
-            flag: Some(Flag::Fin as i32)
-        }));
+        assert_eq!(
+            handle.next().await,
+            Some(Event::Message {
+                payload: vec![1u8; 100],
+                flag: None,
+            })
+        );
+        assert_eq!(
+            handle.next().await,
+            Some(Event::Message {
+                payload: vec![],
+                flag: Some(Flag::Fin as i32)
+            })
+        );
 
         // Verify we transitioned through Closing to FinSent
         assert!(matches!(*handle.state.lock(), State::FinSent));
@@ -988,10 +1019,13 @@ mod tests {
         });
 
         // Wait for FIN to be sent
-        assert_eq!(handle.next().await, Some(Event::Message {
-            payload: vec![],
-            flag: Some(Flag::Fin as i32)
-        }));
+        assert_eq!(
+            handle.next().await,
+            Some(Event::Message {
+                payload: vec![],
+                flag: Some(Flag::Fin as i32)
+            })
+        );
         assert!(matches!(*handle.state.lock(), State::FinSent));
 
         // Send FIN_ACK to complete first shutdown
@@ -1023,10 +1057,13 @@ mod tests {
         });
 
         // Wait for FIN to be sent
-        assert_eq!(handle.next().await, Some(Event::Message {
-            payload: vec![],
-            flag: Some(Flag::Fin as i32)
-        }));
+        assert_eq!(
+            handle.next().await,
+            Some(Event::Message {
+                payload: vec![],
+                flag: Some(Flag::Fin as i32)
+            })
+        );
 
         // Verify we're in FinSent state
         assert!(matches!(*handle.state.lock(), State::FinSent));
@@ -1037,7 +1074,10 @@ mod tests {
         let result = timeout(Duration::from_secs(4), shutdown_task).await;
 
         assert!(result.is_ok(), "Shutdown should complete after timeout");
-        assert!(result.unwrap().is_ok(), "Shutdown should succeed after timeout");
+        assert!(
+            result.unwrap().is_ok(),
+            "Shutdown should succeed after timeout"
+        );
 
         // Should have transitioned to FinAcked after timeout
         assert!(matches!(*handle.state.lock(), State::FinAcked));
@@ -1045,9 +1085,8 @@ mod tests {
 
     #[tokio::test]
     async fn closing_state_blocks_writes() {
+        use std::{pin::Pin, task::Poll};
         use tokio::io::AsyncWriteExt;
-        use std::pin::Pin;
-        use std::task::Poll;
 
         let (mut substream, handle) = Substream::new();
 

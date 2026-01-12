@@ -330,7 +330,10 @@ impl WebRtcConnection {
         self.rtc
             .channel(channel_id)
             .ok_or(Error::ChannelDoesntExist)?
-            .write(true, WebRtcMessage::encode(response.to_vec(), None).as_ref())
+            .write(
+                true,
+                WebRtcMessage::encode(response.to_vec(), None).as_ref(),
+            )
             .map_err(Error::WebRtc)?;
 
         let protocol = negotiated.ok_or(Error::SubstreamDoesntExist)?;
@@ -621,7 +624,6 @@ impl WebRtcConnection {
             .map_err(Error::WebRtc)
             .map(|_| ())
     }
-
 
     /// Open outbound substream.
     fn on_open_substream(
