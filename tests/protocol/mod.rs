@@ -19,6 +19,8 @@
 // DEALINGS IN THE SOFTWARE.
 
 #[cfg(test)]
+mod bitswap;
+#[cfg(test)]
 mod identify;
 #[cfg(test)]
 mod kademlia;
