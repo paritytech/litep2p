@@ -108,7 +108,8 @@ impl Substream {
         let shutdown_waker = Arc::new(Mutex::new(None));
 
         let handle = SubstreamHandle {
-            tx: inbound_tx,
+            inbound_tx,
+            outbound_tx: outbound_tx.clone(),
             rx: outbound_rx,
             state: Arc::clone(&state),
             shutdown_waker: Arc::clone(&shutdown_waker),
@@ -133,7 +134,10 @@ pub struct SubstreamHandle {
     state: Arc<Mutex<State>>,
 
     /// TX channel for sending inbound messages from `peer` to the associated `Substream`.
-    tx: Sender<Event>,
+    inbound_tx: Sender<Event>,
+
+    /// TX channel for sending outbound messages to `peer` (e.g., FIN_ACK responses).
+    outbound_tx: Sender<Event>,
 
     /// RX channel for receiving outbound messages to `peer` from the associated `Substream`.
     rx: Receiver<Event>,
@@ -151,11 +155,11 @@ impl SubstreamHandle {
     pub async fn on_message(&self, message: WebRtcMessage) -> crate::Result<()> {
         if let Some(flag) = message.flag {
             if flag == Flag::Fin as i32 {
-                // Received FIN, send FIN_ACK back
-                self.tx.send(Event::RecvClosed).await?;
-                // Send FIN_ACK to acknowledge
+                // Received FIN from remote, close our read half
+                self.inbound_tx.send(Event::RecvClosed).await?;
+                // Send FIN_ACK back to remote
                 return self
-                    .tx
+                    .outbound_tx
                     .send(Event::Message {
                         payload: vec![],
                         flag: Some(Flag::FinAck as i32),
@@ -190,7 +194,7 @@ impl SubstreamHandle {
         if let Some(payload) = message.payload {
             if !payload.is_empty() {
                 return self
-                    .tx
+                    .inbound_tx
                     .send(Event::Message {
                         payload,
                         flag: None,
@@ -509,7 +513,7 @@ mod tests {
     async fn read_small_frame() {
         let (mut substream, handle) = Substream::new();
         handle
-            .tx
+            .inbound_tx
             .send(Event::Message {
                 payload: vec![1u8; 256],
                 flag: None,
@@ -544,7 +548,7 @@ mod tests {
         first.extend_from_slice(&vec![2u8; 256]);
 
         handle
-            .tx
+            .inbound_tx
             .send(Event::Message {
                 payload: first,
                 flag: None,
@@ -587,7 +591,7 @@ mod tests {
         first.extend_from_slice(&vec![2u8; 256]);
 
         handle
-            .tx
+            .inbound_tx
             .send(Event::Message {
                 payload: first,
                 flag: None,
@@ -595,7 +599,7 @@ mod tests {
             .await
             .unwrap();
         handle
-            .tx
+            .inbound_tx
             .send(Event::Message {
                 payload: vec![4u8; 2048],
                 flag: None,
@@ -740,7 +744,19 @@ mod tests {
 
     #[tokio::test]
     async fn fin_ack_response_on_receiving_fin() {
-        let (_substream, handle) = Substream::new();
+        let (mut substream, mut handle) = Substream::new();
+
+        // Spawn task to consume inbound events sent to the substream
+        let consumer_task = tokio::spawn(async move {
+            // Substream should receive RecvClosed
+            let mut buf = vec![0u8; 1024];
+            match substream.read(&mut buf).await {
+                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                    // Expected - read half closed
+                }
+                other => panic!("Unexpected result: {:?}", other),
+            }
+        });
 
         // Simulate receiving FIN from remote
         handle
@@ -751,8 +767,17 @@ mod tests {
             .await
             .unwrap();
 
-        // Should have sent FIN_ACK back (this would be captured by the connection layer)
-        // In real scenario, the connection would read from handle.rx
+        // Wait for consumer task to complete
+        consumer_task.await.unwrap();
+
+        // Verify FIN_ACK was sent outbound to network
+        assert_eq!(
+            handle.next().await,
+            Some(Event::Message {
+                payload: vec![],
+                flag: Some(Flag::FinAck as i32)
+            })
+        );
     }
 
     #[tokio::test]
@@ -910,7 +935,7 @@ mod tests {
 
     #[tokio::test]
     async fn flag_are_mutually_exclusive() {
-        let (mut substream, handle) = Substream::new();
+        let (_substream, handle) = Substream::new();
 
         // Test that STOP_SENDING (1) is handled correctly
         handle
@@ -1085,7 +1110,6 @@ mod tests {
 
     #[tokio::test]
     async fn closing_state_blocks_writes() {
-        use std::{pin::Pin, task::Poll};
         use tokio::io::AsyncWriteExt;
 
         let (mut substream, handle) = Substream::new();
