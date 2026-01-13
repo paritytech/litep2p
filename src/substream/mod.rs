@@ -745,6 +745,10 @@ impl Sink<Bytes> for Substream {
                 Poll::Ready(Ok(nwritten)) => {
                     pending_frame.advance(nwritten);
 
+                    // The number of pending bytes is reduced by the number of bytes written
+                    // to ensure that backpressure is properly handled.
+                    self.pending_out_bytes = self.pending_out_bytes.saturating_sub(nwritten);
+
                     if !pending_frame.is_empty() {
                         self.pending_out_frame = Some(pending_frame);
                     }
