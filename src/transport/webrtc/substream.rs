@@ -157,7 +157,9 @@ impl SubstreamHandle {
             if flag == Flag::Fin as i32 {
                 // Received FIN from remote, close our read half
                 self.inbound_tx.send(Event::RecvClosed).await?;
+
                 // Send FIN_ACK back to remote
+                // Note: We stay in current state to allow shutdown() to send our own FIN if needed
                 return self
                     .outbound_tx
                     .send(Event::Message {
@@ -212,7 +214,27 @@ impl Stream for SubstreamHandle {
     type Item = Event;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.rx.poll_recv(cx)
+        // First, try to drain any pending outbound messages
+        match self.rx.poll_recv(cx) {
+            Poll::Ready(Some(event)) => return Poll::Ready(Some(event)),
+            Poll::Ready(None) => {
+                // Outbound channel closed (all senders dropped)
+                return Poll::Ready(None);
+            }
+            Poll::Pending => {
+                // No messages available, check if we should signal closure
+            }
+        }
+
+        // Check if Substream has been dropped (inbound channel closed)
+        // When Substream is dropped, there will be no more outbound messages
+        // Since we've already tried to recv above and got Pending, we know the queue is empty
+        // Therefore, it's safe to signal closure
+        if self.inbound_tx.is_closed() {
+            return Poll::Ready(None);
+        }
+
+        Poll::Pending
     }
 }
 
@@ -1121,5 +1143,94 @@ mod tests {
         let result = substream.write_all(&vec![1u8; 100]).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    #[tokio::test]
+    async fn handle_signals_closure_after_substream_dropped() {
+        use futures::StreamExt;
+
+        let (mut substream, mut handle) = Substream::new();
+
+        // Complete shutdown handshake (client-initiated)
+        let shutdown_task = tokio::spawn(async move {
+            substream.shutdown().await.unwrap();
+            // Substream will be dropped here
+        });
+
+        // Receive FIN
+        assert_eq!(
+            handle.next().await,
+            Some(Event::Message {
+                payload: vec![],
+                flag: Some(Flag::Fin as i32)
+            })
+        );
+
+        // Send FIN_ACK
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::FinAck as i32),
+            })
+            .await
+            .unwrap();
+
+        // Wait for shutdown to complete and Substream to drop
+        shutdown_task.await.unwrap();
+
+        // Verify handle signals closure (returns None)
+        assert_eq!(
+            handle.next().await,
+            None,
+            "SubstreamHandle should signal closure after Substream is dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn server_side_closure_after_receiving_fin() {
+        use futures::StreamExt;
+
+        let (mut substream, mut handle) = Substream::new();
+
+        // Spawn task to consume from substream (server side)
+        let server_task = tokio::spawn(async move {
+            let mut buf = vec![0u8; 1024];
+            // This should fail because we receive RecvClosed
+            match substream.read(&mut buf).await {
+                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                    // Expected - read half closed by FIN
+                }
+                other => panic!("Unexpected result: {:?}", other),
+            }
+            // Substream dropped here (server closes after receiving FIN)
+        });
+
+        // Remote (client) sends FIN
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::Fin as i32),
+            })
+            .await
+            .unwrap();
+
+        // Verify FIN_ACK was sent back
+        assert_eq!(
+            handle.next().await,
+            Some(Event::Message {
+                payload: vec![],
+                flag: Some(Flag::FinAck as i32)
+            })
+        );
+
+        // Wait for server to close substream
+        server_task.await.unwrap();
+
+        // Verify handle signals closure (returns None) - this is the key fix!
+        assert_eq!(
+            handle.next().await,
+            None,
+            "SubstreamHandle should signal closure after server receives FIN and drops Substream"
+        );
     }
 }
