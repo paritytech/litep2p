@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.3] - 2025-12-16
+
+This release improves the robustness of the multistream-select negotiation over WebRTC transport and fixes inbound bandwidth metering on substreams. It also enhances the dialing success rate by improving the transport dialing logic. Additionally, it re-exports CID's multihash to facilitate the construction of CID V1.
+
+### Changed
+
+- transports: Improves the robustness and success rate of connection dialing  ([#495](https://github.com/paritytech/litep2p/pull/495))
+- types: Re-export cid's multihash to construct CID V1  ([#491](https://github.com/paritytech/litep2p/pull/491))
+
+### Fixed
+
+- fix: multistream-select negotiation on outbound substream over webrtc  ([#465](https://github.com/paritytech/litep2p/pull/465))
+- substream: Fix inbound bandwidth metering  ([#499](https://github.com/paritytech/litep2p/pull/499))
+
+## [0.12.2] - 2025-11-28
+
+This release allows all Bitswap CIDs (v1) to pass regardless of the used hash. It also enhances local address checks in the transport manager.
+
+### Changed
+
+- transport-service: Enhance logging with protocol names  ([#485](https://github.com/paritytech/litep2p/pull/485))
+- bitswap: Reexports for CID  ([#486](https://github.com/paritytech/litep2p/pull/486))
+- Allow all the Bitswap CIDs (v1) to pass regardless of used hash  ([#482](https://github.com/paritytech/litep2p/pull/482))
+- transport/manager: Enhance local address checks  ([#480](https://github.com/paritytech/litep2p/pull/480))
+
 ## [0.12.1] - 2025-11-21
 
 This release adds support for connecting to multiple Kademlia DHT networks. The change is backward-compatible, no client code modifications should be needed compared to v0.12.0.
