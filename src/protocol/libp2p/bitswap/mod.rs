@@ -54,8 +54,9 @@ const LOG_TARGET: &str = "litep2p::ipfs::bitswap";
 const WRITE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Maximum size for a single bitswap response message.
-/// We use a value slightly below the codec limit to account for protobuf encoding overhead.
-const MAX_RESPONSE_MESSAGE_SIZE: usize = 7_800_000;
+/// Standard IPFS/Kubo has a 2MB limit, so we stay safely under that to ensure
+/// interoperability with all IPFS implementations.
+const MAX_RESPONSE_MESSAGE_SIZE: usize = 1_900_000;
 
 /// Bitswap metadata.
 #[derive(Debug)]
