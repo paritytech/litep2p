@@ -396,8 +396,8 @@ impl ProtocolSet {
     ) -> crate::Result<()> {
         let mut futures = self
             .protocols
-            .values()
-            .map(|sender| async move {
+            .iter()
+            .map(|(protocol, sender)| async move {
                 sender
                     .tx
                     .send(InnerTransportEvent::ConnectionClosed {
@@ -405,6 +405,16 @@ impl ProtocolSet {
                         connection: connection_id,
                     })
                     .await
+                    .inspect_err(|err| {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            %protocol,
+                            ?peer,
+                            ?connection_id,
+                            ?err,
+                            "failed to report connection closed to protocol",
+                        );
+                    })
             })
             .collect::<FuturesUnordered<_>>();
 
