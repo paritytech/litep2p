@@ -31,6 +31,7 @@ use crate::{
     PeerId,
 };
 
+use bytes::Bytes;
 use cid::{Cid, Version};
 use prost::Message;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -40,7 +41,7 @@ pub use config::Config;
 pub use handle::{BitswapCommand, BitswapEvent, BitswapHandle, ResponseType};
 pub use schema::bitswap::{wantlist::WantType, BlockPresenceType};
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
     time::Duration,
 };
 
@@ -535,16 +536,129 @@ async fn send_request(substream: &mut Substream, cids: Vec<(Cid, WantType)>) -> 
 }
 
 async fn send_response(substream: &mut Substream, entries: Vec<ResponseType>) -> Result<(), Error> {
-    let mut response = schema::bitswap::Message {
-        // `wantlist` field must always be present. This is what the official Kubo
-        // IPFS implementation does.
+    // Send presences in a separate message to not deal with it when batching blocks below.
+    if let Some((message, cid_count)) =
+        presences_message(entries.iter().filter_map(|entry| match entry {
+            ResponseType::Presence { cid, presence } => Some((cid.clone(), *presence)),
+            ResponseType::Block { .. } => None,
+        }))
+    {
+        if message.len() <= config::MAX_MESSAGE_SIZE {
+            tracing::trace!(
+                target: LOG_TARGET,
+                cid_count,
+                "sending Bitswap presence message",
+            );
+            match tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
+                Err(_) => return Err(Error::Timeout),
+                Ok(Err(e)) => return Err(Error::SubstreamError(e)),
+                Ok(Ok(())) => {}
+            }
+        } else {
+            // This should never happen in practice, but log a warning if the presence message
+            // exceeded [`config::MAX_MESSAGE_SIZE`].
+            tracing::warn!(
+                target: LOG_TARGET,
+                size = message.len(),
+                max_size = config::MAX_MESSAGE_SIZE,
+                "outgoing Bitswap presence message exceeded max size",
+            );
+        }
+    }
+
+    // Send blocks in batches of up to [`config::MAX_BATCH_SIZE`] bytes.
+    let mut blocks = entries
+        .into_iter()
+        .filter_map(|entry| match entry {
+            ResponseType::Block { cid, block } => Some((cid, block)),
+            ResponseType::Presence { .. } => None,
+        })
+        .collect::<VecDeque<_>>();
+
+    while !blocks.is_empty() {
+        // Get rid of oversized blocks to not stall the processing by not being able to queue them.
+        if let Some(block) = blocks.front() {
+            if block.1.len() > config::MAX_BATCH_SIZE {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    size = block.1.len(),
+                    max_size = config::MAX_BATCH_SIZE,
+                    "outgoing Bitswap block exceeded max batch size",
+                );
+                blocks.pop_front();
+                continue;
+            }
+        }
+
+        // Determine how many blocks we can batch.
+        let mut total_size = 0;
+        let mut block_count = 0;
+
+        for b in blocks.iter() {
+            let next_block_size = b.1.len();
+            if total_size + next_block_size > config::MAX_BATCH_SIZE {
+                break;
+            }
+            total_size += next_block_size;
+            block_count += 1;
+        }
+
+        if let Some(message) = blocks_message(blocks.drain(..block_count)) {
+            if message.len() <= config::MAX_MESSAGE_SIZE {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    block_count,
+                    "sending Bitswap blocks message",
+                );
+                match tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
+                    Err(_) => return Err(Error::Timeout),
+                    Ok(Err(e)) => return Err(Error::SubstreamError(e)),
+                    Ok(Ok(())) => {}
+                }
+            } else {
+                // This should never happen in practice, but log a warning if the blocks message
+                // exceeded [`config::MAX_MESSAGE_SIZE`].
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    size = message.len(),
+                    max_size = config::MAX_MESSAGE_SIZE,
+                    "outgoing Bitswap blocks message exceeded max size",
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn presences_message(
+    presences: impl IntoIterator<Item = (Cid, BlockPresenceType)>,
+) -> Option<(Bytes, usize)> {
+    let message = schema::bitswap::Message {
+        // Set wantlist to not cause null pointer dereference in older versions of Kubo.
         wantlist: Some(Default::default()),
+        block_presences: presences
+            .into_iter()
+            .map(|(cid, presence)| schema::bitswap::BlockPresence {
+                cid: cid.to_bytes(),
+                r#type: presence as i32,
+            })
+            .collect(),
         ..Default::default()
     };
 
-    for entry in entries {
-        match entry {
-            ResponseType::Block { cid, block } => {
+    let count = message.block_presences.len();
+
+    (count > 0).then_some((message.encode_to_vec().into(), count))
+}
+
+fn blocks_message(blocks: impl IntoIterator<Item = (Cid, Vec<u8>)>) -> Option<Bytes> {
+    let message = schema::bitswap::Message {
+        // Set wantlist to not cause null pointer dereference in older versions of Kubo.
+        wantlist: Some(Default::default()),
+        payload: blocks
+            .into_iter()
+            .map(|(cid, block)| {
                 let prefix = Prefix {
                     version: cid.version(),
                     codec: cid.codec(),
@@ -553,24 +667,14 @@ async fn send_response(substream: &mut Substream, entries: Vec<ResponseType>) ->
                 }
                 .to_bytes();
 
-                response.payload.push(schema::bitswap::Block {
+                schema::bitswap::Block {
                     prefix,
                     data: block,
-                });
-            }
-            ResponseType::Presence { cid, presence } => {
-                response.block_presences.push(schema::bitswap::BlockPresence {
-                    cid: cid.to_bytes(),
-                    r#type: presence as i32,
-                });
-            }
-        }
-    }
+                }
+            })
+            .collect(),
+        ..Default::default()
+    };
 
-    let message = response.encode_to_vec().into();
-    match tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
-        Err(_) => Err(Error::Timeout),
-        Ok(Err(e)) => Err(Error::SubstreamError(e)),
-        Ok(Ok(())) => Ok(()),
-    }
+    (!message.payload.is_empty()).then_some(message.encode_to_vec().into())
 }
