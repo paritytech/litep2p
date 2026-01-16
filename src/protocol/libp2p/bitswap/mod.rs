@@ -185,40 +185,78 @@ impl Bitswap {
             return;
         };
 
-        let mut response = schema::bitswap::Message {
-            // `wantlist` field must always be present. This is what the official Kubo IPFS
-            // implementation does.
-            wantlist: Some(Default::default()),
-            ..Default::default()
-        };
+        // TODO: shouldn't we handle some backpressure?
+        // TODO: Some Bitswap impls using pendingBytes?
 
-        for entry in entries {
-            match entry {
-                ResponseType::Block { cid, block } => {
-                    let prefix = Prefix {
-                        version: cid.version(),
-                        codec: cid.codec(),
-                        multihash_type: cid.hash().code(),
-                        multihash_len: cid.hash().size(),
+        // Split entries into chunks of 2
+        for (chunk_idx, chunk) in entries.chunks(2).enumerate() {
+            let mut response = schema::bitswap::Message {
+                // `wantlist` field must always be present
+                wantlist: Some(Default::default()),
+                ..Default::default()
+            };
+            tracing::error!(
+                target: LOG_TARGET,
+                ?peer,
+                ?substream_id,
+                ?chunk_idx,
+                chunks = chunk.len(),
+                "[Bitswap] Sending chunk index",
+            );
+
+            for entry in chunk {
+                match entry {
+                    ResponseType::Block { cid, block } => {
+                        let prefix = Prefix {
+                            version: cid.version(),
+                            codec: cid.codec(),
+                            multihash_type: cid.hash().code(),
+                            multihash_len: cid.hash().size(),
+                        }
+                            .to_bytes();
+
+                        response.payload.push(schema::bitswap::Block {
+                            prefix,
+                            data: block.clone(), // make sure block is cloned if needed
+                        });
                     }
-                    .to_bytes();
-
-                    response.payload.push(schema::bitswap::Block {
-                        prefix,
-                        data: block,
-                    });
-                }
-                ResponseType::Presence { cid, presence } => {
-                    response.block_presences.push(schema::bitswap::BlockPresence {
-                        cid: cid.to_bytes(),
-                        r#type: presence as i32,
-                    });
+                    ResponseType::Presence { cid, presence } => {
+                        response.block_presences.push(schema::bitswap::BlockPresence {
+                            cid: cid.to_bytes(),
+                            r#type: *presence as i32,
+                        });
+                    }
                 }
             }
-        }
 
-        let message = response.encode_to_vec().into();
-        let _ = tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await;
+            let message = response.encode_to_vec().into();
+
+            tracing::error!(
+                target: LOG_TARGET,
+                ?peer,
+                ?substream_id,
+                "[Bitswap] Sending message with {} entries...",
+                chunk.len()
+            );
+
+            // TOOD: is this hard-coded WRITE_TIMEOUT ok? enough?
+            if let Err(error) = tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?substream_id,
+                    ?error,
+                    "[Bitswap] error received!"
+                );
+            } else {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?substream_id,
+                    "[Bitswap] Sending done!"
+                );
+            }
+        }
 
         substream.close().await;
     }
