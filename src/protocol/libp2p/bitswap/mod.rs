@@ -230,6 +230,44 @@ impl Bitswap {
                 tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to open substream to peer")
             }
             Ok(substream_id) => {
+                // TODO: is the substream id guaranteed to be unique per peer?
+
+                // Just dummy debug, if we are not overriding anything.
+                if let Some(existing) = self.pending_outbound.get(&substream_id) {
+                    let existing = existing.iter().map(|entry| match entry {
+                        ResponseType::Block { cid, .. } => cid.to_string(),
+                        ResponseType::Presence { cid, .. } => cid.to_string(),
+                    }).collect::<Vec<_>>();
+
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        existing_count = existing.len(),
+                        ?existing,
+                        "[Bitswap] Overriding pending outbound responses?"
+                    );
+                }
+
+                // Debug pendings.
+                {
+                    let cids = responses.iter().map(|entry| match entry {
+                        ResponseType::Block { cid, .. } => cid.to_string(),
+                        ResponseType::Presence { cid, .. } => cid.to_string(),
+                    }).collect::<Vec<_>>();
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        responses_count = cids.len(),
+                        ?cids,
+                        "[Bitswap] Adding to the pending outbound responses!"
+                    );
+                }
+
+                // TODO: Shouldn't we check and merge uniques?
+                // self.pending_outbound.insert(
+                //      substream_id,
+                //      self.pending_outbound.get(substream_id) + append uniques responses
+                // );
                 self.pending_outbound.insert(substream_id, responses);
             }
         }
