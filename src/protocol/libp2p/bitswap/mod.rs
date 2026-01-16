@@ -539,7 +539,7 @@ async fn send_response(substream: &mut Substream, entries: Vec<ResponseType>) ->
     // Send presences in a separate message to not deal with it when batching blocks below.
     if let Some((message, cid_count)) =
         presences_message(entries.iter().filter_map(|entry| match entry {
-            ResponseType::Presence { cid, presence } => Some((cid.clone(), *presence)),
+            ResponseType::Presence { cid, presence } => Some((*cid, *presence)),
             ResponseType::Block { .. } => None,
         }))
     {
