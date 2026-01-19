@@ -677,6 +677,26 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
             }
         }
 
+        // Step 2. Encrypt and buffer the new data.
+
+        // If we are still in Writing state, we must check if we have space.
+        let mut buffer_offset = match this.write_state {
+            WriteState::Idle => 0,
+            WriteState::Writing { encrypted_len, .. } => encrypted_len,
+        };
+        // If buffer is too full to fit even one frame overhead, we must wait.
+        // This is the only place we return Pending to the caller.
+        if buffer_offset + MAX_NOISE_MSG_LEN + 2 > this.encrypt_buffer.len() {
+            // This can happen once we have pending data and no space to buffer new data.
+            // Therefore, a call to poll_write returned Pending in the first step. This
+            // just forwards the Pending to the caller until we have space again.
+            return Poll::Pending;
+        }
+        // Nothing to do if there is no data to write.
+        if buf.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+
         loop {
             match this.write_state {
                 WriteState::Ready {
