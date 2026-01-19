@@ -647,6 +647,36 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
     ) -> Poll<io::Result<usize>> {
         let this = Pin::into_inner(self);
 
+        // Step 1. Attempt to drain any pending data.
+        if let WriteState::Writing {
+            offset,
+            encrypted_len,
+        } = &mut this.write_state
+        {
+            loop {
+                match Pin::new(&mut this.io)
+                    .poll_write(cx, &this.encrypt_buffer[*offset..*encrypted_len])
+                {
+                    Poll::Ready(Ok(0)) => {
+                        return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
+                    }
+                    Poll::Ready(Ok(n)) => {
+                        *offset += n;
+                        if offset == encrypted_len {
+                            // Buffer fully drained!
+                            this.write_state = WriteState::Idle;
+                            break;
+                        }
+                    }
+                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                    Poll::Pending => {
+                        // Socket is busy, move on to encryption.
+                        break;
+                    }
+                }
+            }
+        }
+
         loop {
             match this.write_state {
                 WriteState::Ready {
