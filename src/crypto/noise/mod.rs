@@ -756,8 +756,34 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
         Poll::Ready(Ok(total_plaintext))
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.io).poll_flush(cx)
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = Pin::into_inner(self);
+
+        // Flush internal buffer of encrypted messages
+        if let WriteState::Writing {
+            offset,
+            encrypted_len,
+        } = &mut this.write_state
+        {
+            loop {
+                match futures::ready!(Pin::new(&mut this.io)
+                    .poll_write(cx, &this.encrypt_buffer[*offset..*encrypted_len]))
+                {
+                    Ok(0) => return Poll::Ready(Err(io::ErrorKind::WriteZero.into())),
+                    Ok(n) => {
+                        *offset += n;
+                        if offset == encrypted_len {
+                            this.write_state = WriteState::Idle;
+                            break;
+                        }
+                    }
+                    Err(e) => return Poll::Ready(Err(e)),
+                }
+            }
+        }
+
+        // Flush underlying socket
+        Pin::new(&mut this.io).poll_flush(cx)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
