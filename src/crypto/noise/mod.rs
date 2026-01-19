@@ -975,7 +975,17 @@ mod tests {
 
         // verify the connection works by reading a string
         let mut buf = vec![0u8; 512];
+
+        // Calling AsyncWrite::write, followed by AsyncRead::read_exact can
+        // cause deadlocks because the "AsyncWrite::write" does not guarantee
+        // flushing. Therefore, this is a misuse of the API.
         let sent = res1.0.write(b"hello, world").await.unwrap();
+        // Write ensures data reaches the buffers, flush ensures data is sent.
+        res1.0.flush().await.unwrap();
+
+        // At this point it is safe to read_exact. The test previously relied
+        // on the fact that `Noise::poll_write` would flush the data internally,
+        // causing head-of-line blocking and panics on different buffer sizes.
         res2.0.read_exact(&mut buf[..sent]).await.unwrap();
 
         assert_eq!(std::str::from_utf8(&buf[..sent]), Ok("hello, world"));
