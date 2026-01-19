@@ -936,4 +936,158 @@ mod tests {
             _ => panic!("invalid error"),
         }
     }
+
+    /// Mock IO that returns Pending on first write, then Ready on subsequent writes
+    struct MockPendingIO {
+        write_count: usize,
+        buffer: Vec<u8>,
+    }
+
+    impl MockPendingIO {
+        fn new() -> Self {
+            Self {
+                write_count: 0,
+                buffer: Vec::new(),
+            }
+        }
+    }
+
+    impl AsyncRead for MockPendingIO {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &mut [u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(0))
+        }
+    }
+
+    impl AsyncWrite for MockPendingIO {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            self.write_count += 1;
+
+            // Return Pending on first write, Ready on subsequent writes
+            if self.write_count == 1 {
+                Poll::Pending
+            } else {
+                // Accept the write
+                self.buffer.extend_from_slice(buf);
+                Poll::Ready(Ok(buf.len()))
+            }
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "range start index 512 out of range for slice of length 12")]
+    async fn test_poll_write_wrong_size_panic() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let keypair1 = Keypair::generate();
+        let keypair2 = Keypair::generate();
+
+        let peer1_id = PeerId::from_public_key(&keypair1.public().into());
+        let peer2_id = PeerId::from_public_key(&keypair2.public().into());
+
+        let listener = TcpListener::bind("[::1]:0".parse::<SocketAddr>().unwrap()).await.unwrap();
+
+        let (stream1, stream2) = tokio::join!(
+            TcpStream::connect(listener.local_addr().unwrap()),
+            listener.accept()
+        );
+        let (io1, io2) = {
+            let io1 = TokioAsyncReadCompatExt::compat(stream1.unwrap()).into_inner();
+            let io1 = Box::new(TokioAsyncWriteCompatExt::compat_write(io1));
+            let io2 = TokioAsyncReadCompatExt::compat(stream2.unwrap().0).into_inner();
+            let io2 = Box::new(TokioAsyncWriteCompatExt::compat_write(io2));
+
+            (io1, io2)
+        };
+
+        // Perform handshake
+        let (res1, res2) = tokio::join!(
+            handshake(
+                io1,
+                &keypair1,
+                Role::Dialer,
+                MAX_READ_AHEAD_FACTOR,
+                MAX_WRITE_BUFFER_SIZE,
+                std::time::Duration::from_secs(10),
+                HandshakeTransport::Tcp,
+            ),
+            handshake(
+                io2,
+                &keypair2,
+                Role::Listener,
+                MAX_READ_AHEAD_FACTOR,
+                MAX_WRITE_BUFFER_SIZE,
+                std::time::Duration::from_secs(10),
+                HandshakeTransport::Tcp,
+            )
+        );
+        let (socket1, peer1) = res1.unwrap();
+        let (_socket2, peer2) = res2.unwrap();
+
+        assert_eq!(peer1, peer2_id);
+        assert_eq!(peer2, peer1_id);
+
+        // Wrap socket with MockPendingIO
+        let mock_io = MockPendingIO::new();
+        let mut noise_socket = NoiseSocket::new(
+            mock_io,
+            socket1.noise,
+            MAX_READ_AHEAD_FACTOR,
+            MAX_WRITE_BUFFER_SIZE,
+            peer1,
+            HandshakeTransport::Tcp,
+        );
+
+        // First write with 512 bytes - this will encrypt and return Pending
+        let large_buffer = vec![0xAA; 512];
+        let waker = futures::task::noop_waker();
+        let mut cx = Context::from_waker(&waker);
+
+        match Pin::new(&mut noise_socket).poll_write(&mut cx, &large_buffer) {
+            Poll::Pending => {
+                // Expected: first write returns Pending
+            }
+            Poll::Ready(Ok(n)) => panic!("Expected Pending, got Ready with {} bytes", n),
+            Poll::Ready(Err(e)) => panic!("Expected Pending, got error: {}", e),
+        }
+
+        // Second write with 12 bytes (PONG frame) - this will flush the first write
+        // and return 512 instead of 12, causing a panic to rust-yamux when indexing the buffer
+        let small_buffer = vec![0xBB; 12];
+        match Pin::new(&mut noise_socket).poll_write(&mut cx, &small_buffer) {
+            Poll::Ready(Ok(n)) => {
+                // Bug: this returns 512 (from first write) instead of 12
+                // When the caller tries to advance their buffer by n bytes, it panics
+                println!(
+                    "poll_write returned {} bytes, but buffer is only {} bytes",
+                    n,
+                    small_buffer.len()
+                );
+
+                // This simulates the rust-yamux behavior to advance the buffer
+                let _ = &large_buffer[n..];
+                // This panics: range end index 512 out of bounds for slice of length 12
+                let _ = &small_buffer[n..];
+            }
+            Poll::Pending => panic!("Expected Ready, got Pending"),
+            Poll::Ready(Err(e)) => panic!("Expected Ready, got error: {}", e),
+        }
+    }
 }
