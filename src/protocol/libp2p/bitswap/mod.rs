@@ -575,7 +575,7 @@ async fn send_response(substream: &mut Substream, entries: Vec<ResponseType>) ->
         })
         .collect::<VecDeque<_>>();
 
-    while let Some(batch) = extract_next_batch(&mut blocks) {
+    while let Some(batch) = extract_next_batch(&mut blocks, config::MAX_BATCH_SIZE) {
         if let Some((message, block_count)) = blocks_message(batch) {
             if message.len() <= config::MAX_MESSAGE_SIZE {
                 tracing::trace!(
@@ -654,19 +654,20 @@ fn blocks_message(blocks: impl IntoIterator<Item = (Cid, Vec<u8>)>) -> Option<(B
     (count > 0).then(|| (message.encode_to_vec().into(), count))
 }
 
-/// Extract a batch of blocks of no more than [`config::MAX_BATCH_SIZE`] from `blocks`.
+/// Extract a batch of blocks of no more than `max_size` from `blocks`.
 /// Returns `None` if no more blocks are left.
 fn extract_next_batch<'a>(
     blocks: &'a mut VecDeque<(Cid, Vec<u8>)>,
+    max_size: usize,
 ) -> Option<Drain<'a, (Cid, Vec<u8>)>> {
     // Get rid of oversized blocks to not stall the processing by not being able to queue them.
     loop {
         if let Some(block) = blocks.front() {
-            if block.1.len() > config::MAX_BATCH_SIZE {
+            if block.1.len() > max_size {
                 tracing::warn!(
                     target: LOG_TARGET,
                     size = block.1.len(),
-                    max_size = config::MAX_BATCH_SIZE,
+                    max_size,
                     "outgoing Bitswap block exceeded max batch size",
                 );
                 blocks.pop_front();
@@ -685,7 +686,7 @@ fn extract_next_batch<'a>(
 
     for b in blocks.iter() {
         let next_block_size = b.1.len();
-        if total_size + next_block_size > config::MAX_BATCH_SIZE {
+        if total_size + next_block_size > max_size {
             break;
         }
         total_size += next_block_size;
@@ -693,4 +694,125 @@ fn extract_next_batch<'a>(
     }
 
     Some(blocks.drain(..block_count))
+}
+
+#[cfg(test)]
+mod tests {
+    use cid::multihash::Multihash;
+
+    use super::*;
+
+    fn cid(block: &[u8]) -> Cid {
+        let codec = 0x55;
+        let multihash = Code::Sha2_256.digest(block);
+        let multihash =
+            Multihash::wrap(multihash.code(), multihash.digest()).expect("to be valid multihash");
+
+        Cid::new_v1(codec, multihash)
+    }
+
+    #[test]
+    fn extract_next_batch_fits_max_size() {
+        let max_size = 100;
+
+        let block1 = vec![0x01; 10];
+        let block2 = vec![0x02; 10];
+        let block3 = vec![0x03; 10];
+
+        let blocks = vec![
+            (cid(&block1), block1),
+            (cid(&block2), block2),
+            (cid(&block3), block3),
+        ];
+        let mut blocks_deque = blocks.iter().cloned().collect::<VecDeque<_>>();
+
+        let batch = extract_next_batch(&mut blocks_deque, max_size).unwrap();
+        assert_eq!(batch.collect::<Vec<_>>(), blocks);
+
+        assert!(extract_next_batch(&mut blocks_deque, max_size).is_none());
+    }
+
+    #[test]
+    fn extract_next_batch_chunking_exact() {
+        let max_size = 20;
+
+        let block1 = vec![0x01; 10];
+        let block2 = vec![0x02; 10];
+        let block3 = vec![0x03; 10];
+
+        let blocks = vec![
+            (cid(&block1), block1.clone()),
+            (cid(&block2), block2.clone()),
+            (cid(&block3), block3.clone()),
+        ];
+        let chunk1 = vec![
+            (cid(&block1), block1.clone()),
+            (cid(&block2), block2.clone()),
+        ];
+        let chunk2 = vec![(cid(&block3), block3.clone())];
+        let mut blocks_deque = blocks.iter().cloned().collect::<VecDeque<_>>();
+
+        let batch = extract_next_batch(&mut blocks_deque, max_size).unwrap();
+        assert_eq!(batch.collect::<Vec<_>>(), chunk1);
+
+        let batch = extract_next_batch(&mut blocks_deque, max_size).unwrap();
+        assert_eq!(batch.collect::<Vec<_>>(), chunk2);
+
+        assert!(extract_next_batch(&mut blocks_deque, max_size).is_none());
+    }
+
+    #[test]
+    fn extract_next_batch_chunking_less_than() {
+        let max_size = 20;
+
+        let block1 = vec![0x01; 10];
+        let block2 = vec![0x02; 9];
+        let block3 = vec![0x03; 10];
+
+        let blocks = vec![
+            (cid(&block1), block1.clone()),
+            (cid(&block2), block2.clone()),
+            (cid(&block3), block3.clone()),
+        ];
+        let chunk1 = vec![
+            (cid(&block1), block1.clone()),
+            (cid(&block2), block2.clone()),
+        ];
+        let chunk2 = vec![(cid(&block3), block3.clone())];
+        let mut blocks_deque = blocks.iter().cloned().collect::<VecDeque<_>>();
+
+        let batch = extract_next_batch(&mut blocks_deque, max_size).unwrap();
+        assert_eq!(batch.collect::<Vec<_>>(), chunk1);
+
+        let batch = extract_next_batch(&mut blocks_deque, max_size).unwrap();
+        assert_eq!(batch.collect::<Vec<_>>(), chunk2);
+
+        assert!(extract_next_batch(&mut blocks_deque, max_size).is_none());
+    }
+
+    #[test]
+    fn extract_next_batch_oversized_blocks_discarded() {
+        let max_size = 20;
+
+        let block1 = vec![0x01; 10];
+        let block2 = vec![0x02; 101];
+        let block3 = vec![0x03; 10];
+
+        let blocks = vec![
+            (cid(&block1), block1.clone()),
+            (cid(&block2), block2.clone()),
+            (cid(&block3), block3.clone()),
+        ];
+        let chunk1 = vec![(cid(&block1), block1.clone())];
+        let chunk2 = vec![(cid(&block3), block3.clone())];
+        let mut blocks_deque = blocks.iter().cloned().collect::<VecDeque<_>>();
+
+        let batch = extract_next_batch(&mut blocks_deque, max_size).unwrap();
+        assert_eq!(batch.collect::<Vec<_>>(), chunk1);
+
+        let batch = extract_next_batch(&mut blocks_deque, max_size).unwrap();
+        assert_eq!(batch.collect::<Vec<_>>(), chunk2);
+
+        assert!(extract_next_batch(&mut blocks_deque, max_size).is_none());
+    }
 }
