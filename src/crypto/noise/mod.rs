@@ -787,6 +787,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        // Ensure buffer is flushed before closing
+        if let Poll::Pending = self.as_mut().poll_flush(cx) {
+            return Poll::Pending;
+        }
+
         Pin::new(&mut self.io).poll_close(cx)
     }
 }
