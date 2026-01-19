@@ -331,15 +331,14 @@ enum ReadState {
 }
 
 enum WriteState {
-    Ready {
+    /// No pending encrypted data, ready to accept new writes
+    Idle,
+    /// Writing encrypted data to socket
+    Writing {
+        /// Offset into encrypt_buffer that's been written to socket
         offset: usize,
-        size: usize,
-        encrypted_size: usize,
-    },
-    WriteFrame {
-        offset: usize,
-        size: usize,
-        encrypted_size: usize,
+        /// Total length of encrypted data in encrypt_buffer
+        encrypted_len: usize,
     },
 }
 
@@ -378,11 +377,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> NoiseSocket<S> {
             nread: 0usize,
             offset: 0usize,
             current_frame_size: None,
-            write_state: WriteState::Ready {
-                offset: 0usize,
-                size: 0usize,
-                encrypted_size: 0usize,
-            },
+            write_state: WriteState::Idle,
             encrypt_buffer: vec![0u8; max_write_buffer_size * (MAX_NOISE_MSG_LEN + 2)],
             decrypt_buffer: Some(vec![0u8; MAX_FRAME_LEN]),
             read_state: ReadState::ReadData {
@@ -651,7 +646,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         let this = Pin::into_inner(self);
-        let mut chunks = buf.chunks(MAX_FRAME_LEN).peekable();
 
         loop {
             match this.write_state {
