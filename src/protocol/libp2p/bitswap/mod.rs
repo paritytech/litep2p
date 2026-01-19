@@ -41,7 +41,7 @@ pub use config::Config;
 pub use handle::{BitswapCommand, BitswapEvent, BitswapHandle, ResponseType};
 pub use schema::bitswap::{wantlist::WantType, BlockPresenceType};
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
+    collections::{hash_map::Entry, vec_deque::Drain, HashMap, HashSet, VecDeque},
     time::Duration,
 };
 
@@ -575,35 +575,8 @@ async fn send_response(substream: &mut Substream, entries: Vec<ResponseType>) ->
         })
         .collect::<VecDeque<_>>();
 
-    while !blocks.is_empty() {
-        // Get rid of oversized blocks to not stall the processing by not being able to queue them.
-        if let Some(block) = blocks.front() {
-            if block.1.len() > config::MAX_BATCH_SIZE {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    size = block.1.len(),
-                    max_size = config::MAX_BATCH_SIZE,
-                    "outgoing Bitswap block exceeded max batch size",
-                );
-                blocks.pop_front();
-                continue;
-            }
-        }
-
-        // Determine how many blocks we can batch.
-        let mut total_size = 0;
-        let mut block_count = 0;
-
-        for b in blocks.iter() {
-            let next_block_size = b.1.len();
-            if total_size + next_block_size > config::MAX_BATCH_SIZE {
-                break;
-            }
-            total_size += next_block_size;
-            block_count += 1;
-        }
-
-        if let Some(message) = blocks_message(blocks.drain(..block_count)) {
+    while let Some(batch) = extract_next_batch(&mut blocks) {
+        if let Some((message, block_count)) = blocks_message(batch) {
             if message.len() <= config::MAX_MESSAGE_SIZE {
                 tracing::trace!(
                     target: LOG_TARGET,
@@ -649,10 +622,10 @@ fn presences_message(
 
     let count = message.block_presences.len();
 
-    (count > 0).then_some((message.encode_to_vec().into(), count))
+    (count > 0).then(|| (message.encode_to_vec().into(), count))
 }
 
-fn blocks_message(blocks: impl IntoIterator<Item = (Cid, Vec<u8>)>) -> Option<Bytes> {
+fn blocks_message(blocks: impl IntoIterator<Item = (Cid, Vec<u8>)>) -> Option<(Bytes, usize)> {
     let message = schema::bitswap::Message {
         // Set wantlist to not cause null pointer dereference in older versions of Kubo.
         wantlist: Some(Default::default()),
@@ -676,5 +649,48 @@ fn blocks_message(blocks: impl IntoIterator<Item = (Cid, Vec<u8>)>) -> Option<By
         ..Default::default()
     };
 
-    (!message.payload.is_empty()).then_some(message.encode_to_vec().into())
+    let count = message.payload.len();
+
+    (count > 0).then(|| (message.encode_to_vec().into(), count))
+}
+
+/// Extract a batch of blocks of no more than [`config::MAX_BATCH_SIZE`] from `blocks`.
+/// Returns `None` if no more blocks are left.
+fn extract_next_batch<'a>(
+    blocks: &'a mut VecDeque<(Cid, Vec<u8>)>,
+) -> Option<Drain<'a, (Cid, Vec<u8>)>> {
+    // Get rid of oversized blocks to not stall the processing by not being able to queue them.
+    loop {
+        if let Some(block) = blocks.front() {
+            if block.1.len() > config::MAX_BATCH_SIZE {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    size = block.1.len(),
+                    max_size = config::MAX_BATCH_SIZE,
+                    "outgoing Bitswap block exceeded max batch size",
+                );
+                blocks.pop_front();
+            } else {
+                break;
+            }
+        } else {
+            return None;
+        }
+    }
+
+    // Determine how many blocks we can batch. Note that we can always batch at least one
+    // block due to check above.
+    let mut total_size = 0;
+    let mut block_count = 0;
+
+    for b in blocks.iter() {
+        let next_block_size = b.1.len();
+        if total_size + next_block_size > config::MAX_BATCH_SIZE {
+            break;
+        }
+        total_size += next_block_size;
+        block_count += 1;
+    }
+
+    Some(blocks.drain(..block_count))
 }
