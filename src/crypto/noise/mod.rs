@@ -1057,7 +1057,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "range start index 512 out of range for slice of length 12")]
     async fn test_poll_write_wrong_size_panic() {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -1122,35 +1121,32 @@ mod tests {
             HandshakeTransport::Tcp,
         );
 
-        // First write with 512 bytes - this will encrypt and return Pending
+        // First write with 512 bytes - this will encrypt data, buffer it and return Ok(512)
+        // However, the data is not yet flushed to the underlying IO.
         let large_buffer = vec![0xAA; 512];
         let waker = futures::task::noop_waker();
         let mut cx = Context::from_waker(&waker);
 
         match Pin::new(&mut noise_socket).poll_write(&mut cx, &large_buffer) {
-            Poll::Pending => {
-                // Expected: first write returns Pending
-            }
-            Poll::Ready(Ok(n)) => panic!("Expected Pending, got Ready with {} bytes", n),
-            Poll::Ready(Err(e)) => panic!("Expected Pending, got error: {}", e),
+            Poll::Ready(Ok(n)) if n == 512 => {}
+            state => panic!("Expected Ok(512), got {:?}", state),
         }
 
-        // Second write with 12 bytes (PONG frame) - this will flush the first write
-        // and return 512 instead of 12, causing a panic to rust-yamux when indexing the buffer
+        // Second write with 12 bytes (PONG frame).
+        // This previously flushes the first write and returned 512 instead of 12, causing a panic
+        // to rust-yamux when indexing the buffer.
+        // With the new implementation this will: flush any pending data (from first write), and
+        // then encrypt the small buffer.
         let small_buffer = vec![0xBB; 12];
         match Pin::new(&mut noise_socket).poll_write(&mut cx, &small_buffer) {
             Poll::Ready(Ok(n)) => {
-                // Bug: this returns 512 (from first write) instead of 12
-                // When the caller tries to advance their buffer by n bytes, it panics
                 println!(
                     "poll_write returned {} bytes, but buffer is only {} bytes",
                     n,
                     small_buffer.len()
                 );
 
-                // This simulates the rust-yamux behavior to advance the buffer
-                let _ = &large_buffer[n..];
-                // This panics: range end index 512 out of bounds for slice of length 12
+                // Safe to reference since the exact length is returned.
                 let _ = &small_buffer[n..];
             }
             Poll::Pending => panic!("Expected Ready, got Pending"),
