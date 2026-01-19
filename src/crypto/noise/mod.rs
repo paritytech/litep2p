@@ -727,81 +727,33 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
             return Poll::Pending;
         }
 
-        loop {
-            match this.write_state {
-                WriteState::Ready {
-                    offset,
-                    size,
-                    encrypted_size,
-                } => {
-                    let Some(chunk) = chunks.next() else {
-                        break;
-                    };
+        // Step 3. Adjust state to writing and return number of bytes accepted.
+        // Without this step, we can cause higher-level panics in rust-yamux
+        // leading to unnecessary connection closures:
+        // - poll_write is called with buffer 512 bytes (we previously returned Pending but accepted
+        //   and encrypted the buffer)
+        // - a future poll_write is called with a PONG frame (or smaller buffer) of 12 bytes
+        // - at this point we would have returned 512 from the previous call causing indexing out of
+        //   bounds
 
-                    match this.noise.write_message(chunk, &mut this.encrypt_buffer[offset + 2..]) {
-                        Err(error) => {
-                            tracing::error!(
-                                target: LOG_TARGET,
-                                ?error,
-                                ty = ?this.ty,
-                                peer = ?this.peer,
-                                "failed to encrypt message"
-                            );
-
-                            return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
-                        }
-                        Ok(nwritten) => {
-                            this.encrypt_buffer[offset] = (nwritten >> 8) as u8;
-                            this.encrypt_buffer[offset + 1] = (nwritten & 0xff) as u8;
-
-                            if let Some(next_chunk) = chunks.peek() {
-                                if next_chunk.len() + NOISE_EXTRA_ENCRYPT_SPACE + 2
-                                    <= this.encrypt_buffer[offset + nwritten + 2..].len()
-                                {
-                                    this.write_state = WriteState::Ready {
-                                        offset: offset + nwritten + 2,
-                                        size: size + chunk.len(),
-                                        encrypted_size: encrypted_size + nwritten + 2,
-                                    };
-                                    continue;
-                                }
-                            }
-
-                            this.write_state = WriteState::WriteFrame {
-                                offset: 0usize,
-                                size: size + chunk.len(),
-                                encrypted_size: encrypted_size + nwritten + 2,
-                            };
-                        }
-                    }
-                }
-                WriteState::WriteFrame {
-                    ref mut offset,
-                    size,
-                    encrypted_size,
-                } => loop {
-                    match futures::ready!(Pin::new(&mut this.io)
-                        .poll_write(cx, &this.encrypt_buffer[*offset..encrypted_size]))
-                    {
-                        Ok(nwritten) => {
-                            *offset += nwritten;
-
-                            if offset == &encrypted_size {
-                                this.write_state = WriteState::Ready {
-                                    offset: 0usize,
-                                    size: 0usize,
-                                    encrypted_size: 0usize,
-                                };
-                                return Poll::Ready(Ok(size));
-                            }
-                        }
-                        Err(error) => return Poll::Ready(Err(error)),
-                    }
-                },
+        match this.write_state {
+            WriteState::Idle => {
+                this.write_state = WriteState::Writing {
+                    offset: 0,
+                    encrypted_len: buffer_offset,
+                };
+            }
+            WriteState::Writing {
+                ref mut encrypted_len,
+                ..
+            } => {
+                *encrypted_len = buffer_offset;
             }
         }
 
-        Poll::Ready(Ok(0))
+        // We have successfully buffered the data:
+        // - poll_flush or next poll_write will drain it.
+        Poll::Ready(Ok(total_plaintext))
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
