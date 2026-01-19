@@ -685,7 +685,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
             WriteState::Writing { encrypted_len, .. } => encrypted_len,
         };
         // If buffer is too full to fit even one frame overhead, we must wait.
-        // This is the only place we return Pending to the caller.
         if buffer_offset + MAX_NOISE_MSG_LEN + 2 > this.encrypt_buffer.len() {
             // This can happen once we have pending data and no space to buffer new data.
             // Therefore, a call to poll_write returned Pending in the first step. This
@@ -695,6 +694,37 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
         // Nothing to do if there is no data to write.
         if buf.is_empty() {
             return Poll::Ready(Ok(0));
+        }
+
+        let mut total_plaintext = 0usize;
+        // Encrypt as many chunks as fit in the remaining space
+        for chunk in buf.chunks(MAX_FRAME_LEN) {
+            // Check space for this specific chunk + overhead
+            // Note: overhead is 2 bytes length + 16 bytes auth tag
+            let overhead = 2 + NOISE_EXTRA_ENCRYPT_SPACE;
+            if buffer_offset + chunk.len() + overhead > this.encrypt_buffer.len() {
+                // Buffer is full, stop packing
+                break;
+            }
+
+            match this.noise.write_message(chunk, &mut this.encrypt_buffer[buffer_offset + 2..]) {
+                Ok(nwritten) => {
+                    // Write frame length prefix
+                    this.encrypt_buffer[buffer_offset] = (nwritten >> 8) as u8;
+                    this.encrypt_buffer[buffer_offset + 1] = (nwritten & 0xff) as u8;
+
+                    buffer_offset += nwritten + 2;
+                    total_plaintext += chunk.len();
+                }
+                Err(error) => {
+                    tracing::error!(target: LOG_TARGET, ?error, "failed to encrypt");
+                    return Poll::Ready(Err(io::ErrorKind::InvalidData.into()));
+                }
+            }
+        }
+        if total_plaintext == 0 {
+            // No data could be buffered, therefore we must wait on step 1 to drain.
+            return Poll::Pending;
         }
 
         loop {
