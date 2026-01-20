@@ -658,7 +658,7 @@ fn blocks_message(blocks: impl IntoIterator<Item = (Cid, Vec<u8>)>) -> Option<(B
 /// Returns `None` if no more blocks are left.
 fn extract_next_batch<'a>(
     blocks: &'a mut VecDeque<(Cid, Vec<u8>)>,
-    max_size: usize,
+    max_batch_size: usize,
 ) -> Option<Drain<'a, (Cid, Vec<u8>)>> {
     // Get rid of oversized blocks to not stall the processing by not being able to queue them.
     loop {
