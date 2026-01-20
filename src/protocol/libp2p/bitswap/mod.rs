@@ -663,12 +663,12 @@ fn extract_next_batch<'a>(
     // Get rid of oversized blocks to not stall the processing by not being able to queue them.
     loop {
         if let Some(block) = blocks.front() {
-            if block.1.len() > max_size {
+            if block.1.len() > max_batch_size {
                 tracing::warn!(
                     target: LOG_TARGET,
                     cid = block.0.to_string(),
                     size = block.1.len(),
-                    max_size,
+                    max_batch_size,
                     "outgoing Bitswap block exceeded max batch size",
                 );
                 blocks.pop_front();
@@ -687,7 +687,7 @@ fn extract_next_batch<'a>(
 
     for b in blocks.iter() {
         let next_block_size = b.1.len();
-        if total_size + next_block_size > max_size {
+        if total_size + next_block_size > max_batch_size {
             break;
         }
         total_size += next_block_size;
