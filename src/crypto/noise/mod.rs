@@ -852,7 +852,7 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
             Role::Dialer => {
                 // write initial message
                 let first_message = noise.first_message(Role::Dialer)?;
-                let _ = io.write(&first_message).await?;
+                io.write_all(&first_message).await?;
                 io.flush().await?;
 
                 // read back response which contains the remote peer id
@@ -867,7 +867,7 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
 
                 // send the final message which contains local peer id
                 let second_message = noise.second_message()?;
-                let _ = io.write(&second_message).await?;
+                io.write_all(&second_message).await?;
                 io.flush().await?;
 
                 payload
@@ -878,7 +878,7 @@ pub async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
 
                 // send local peer id.
                 let second_message = noise.second_message()?;
-                let _ = io.write(&second_message).await?;
+                io.write_all(&second_message).await?;
                 io.flush().await?;
 
                 // read remote's second message which contains their peer id
