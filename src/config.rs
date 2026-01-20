@@ -68,7 +68,7 @@ impl From<Role> for crate::yamux::Mode {
 
 /// Configuration builder for [`Litep2p`](`crate::Litep2p`).
 pub struct ConfigBuilder {
-    // TCP transport configuration.
+    /// TCP transport configuration.
     tcp: Option<TcpConfig>,
 
     /// QUIC transport config.
@@ -93,7 +93,7 @@ pub struct ConfigBuilder {
     identify: Option<identify::Config>,
 
     /// Kademlia protocol config.
-    kademlia: Option<kademlia::Config>,
+    kademlia: Vec<kademlia::Config>,
 
     /// Bitswap protocol config.
     bitswap: Option<bitswap::Config>,
@@ -149,7 +149,7 @@ impl ConfigBuilder {
             keypair: None,
             ping: None,
             identify: None,
-            kademlia: None,
+            kademlia: Vec::new(),
             bitswap: None,
             mdns: None,
             executor: None,
@@ -219,7 +219,7 @@ impl ConfigBuilder {
 
     /// Enable IPFS Kademlia protocol.
     pub fn with_libp2p_kademlia(mut self, config: kademlia::Config) -> Self {
-        self.kademlia = Some(config);
+        self.kademlia.push(config);
         self
     }
 
@@ -307,7 +307,7 @@ impl ConfigBuilder {
             websocket: self.websocket.take(),
             ping: self.ping.take(),
             identify: self.identify.take(),
-            kademlia: self.kademlia.take(),
+            kademlia: self.kademlia,
             bitswap: self.bitswap.take(),
             max_parallel_dials: self.max_parallel_dials,
             executor: self.executor.map_or(Arc::new(DefaultExecutor {}), |executor| executor),
@@ -349,7 +349,7 @@ pub struct Litep2pConfig {
     pub(crate) identify: Option<identify::Config>,
 
     /// Kademlia protocol configuration, if enabled.
-    pub(crate) kademlia: Option<kademlia::Config>,
+    pub(crate) kademlia: Vec<kademlia::Config>,
 
     /// Bitswap protocol configuration, if enabled.
     pub(crate) bitswap: Option<bitswap::Config>,
