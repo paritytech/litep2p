@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-01-21
+
+This PR brings multiple fixes of transport and application level protocols. Also, Bitswap client functionality is introduced, what makes this release semver breaking.
+
+### Added
+
+- Add Bitswap client ([#501](https://github.com/paritytech/litep2p/pull/501))
+
+### Fixed
+
+- substream: Decrement the bytes counter to avoid excessive flushing ([#511](https://github.com/paritytech/litep2p/pull/511))
+- crypto/noise: Improve stability of websockets by fixing AsyncWrite implementation ([#518](https://github.com/paritytech/litep2p/pull/518))
+- bitswap: Split block responses into batches under 2 MiB ([#516](https://github.com/paritytech/litep2p/pull/516))
+- crypto/noise: Fix connection negotiation logic on partial writes ([#519](https://github.com/paritytech/litep2p/pull/519))
+- substream/fix: Fix partial reads for ProtocolCodec::Identity ([#512](https://github.com/paritytech/litep2p/pull/512))
+- webrtc: Avoid panics returning error instead ([#509](https://github.com/paritytech/litep2p/pull/509))
+- bitswap: e2e test & max payload fix ([#508](https://github.com/paritytech/litep2p/pull/508))
+- tcp: Exit connections when events fail to propagate to protocols ([#506](https://github.com/paritytech/litep2p/pull/506))
+- webrtc: Avoid future being dropped when channel is full ([#483](https://github.com/paritytech/litep2p/pull/483))
+
 ## [0.12.3] - 2025-12-16
 
 This release improves the robustness of the multistream-select negotiation over WebRTC transport and fixes inbound bandwidth metering on substreams. It also enhances the dialing success rate by improving the transport dialing logic. Additionally, it re-exports CID's multihash to facilitate the construction of CID V1.
