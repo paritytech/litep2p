@@ -678,19 +678,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
         }
 
         // Step 2. Encrypt and buffer the new data.
-
-        // If we are still in Writing state, we must check if we have space.
         let mut buffer_offset = match this.write_state {
             WriteState::Idle => 0,
             WriteState::Writing { encrypted_len, .. } => encrypted_len,
         };
-        // If buffer is too full to fit even one frame overhead, we must wait.
-        if buffer_offset + MAX_NOISE_MSG_LEN + 2 > this.encrypt_buffer.len() {
-            // This can happen once we have pending data and no space to buffer new data.
-            // Therefore, a call to poll_write returned Pending in the first step. This
-            // just forwards the Pending to the caller until we have space again.
-            return Poll::Pending;
-        }
         // Nothing to do if there is no data to write.
         if buf.is_empty() {
             return Poll::Ready(Ok(0));
@@ -723,7 +714,16 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
             }
         }
         if total_plaintext == 0 {
-            // No data could be buffered, therefore we must wait on step 1 to drain.
+            // No data could be buffered because the buffer is full.
+            //
+            // This can only happen when we're in WriteState::Writing (buffer not empty).
+            // In step 1, the inner poll_write must have returned Pending (otherwise the
+            // buffer would have drained and we'd have space). That Pending registered
+            // the waker, so we'll be woken when the socket becomes writable again.
+            //
+            // This condition will always be satisfied, since the encrypted buffer
+            // is large enough (MAX_NOISE_MSG_LEN) to hold at least one chunk (MAX_FRAME_LEN) with
+            // overhead.
             return Poll::Pending;
         }
 
@@ -788,9 +788,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for NoiseSocket<S> {
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         // Ensure buffer is flushed before closing
-        if let Poll::Pending = self.as_mut().poll_flush(cx) {
-            return Poll::Pending;
-        }
+        futures::ready!(self.as_mut().poll_flush(cx))?;
 
         Pin::new(&mut self.io).poll_close(cx)
     }
