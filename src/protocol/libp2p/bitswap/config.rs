@@ -32,11 +32,11 @@ pub const PROTOCOL_NAME: &str = "/ipfs/bitswap/1.2.0";
 
 /// Maximum size for `/ipfs/bitswap/1.2.0` substream message. Includes enough room for protobuf
 /// overhead. Enforced on the transport level.
-pub const MAX_MESSAGE_SIZE: usize = 4_194_304;
+pub const MAX_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
 
 /// Maximum batch size of all blocks in a single Bitswap message combined. Enforced on the
 /// application protocol level.
-pub const MAX_BATCH_SIZE: usize = 2_097_152;
+pub const MAX_BATCH_SIZE: usize = 2 * 1024 * 1024;
 
 /// Bitswap configuration.
 #[derive(Debug)]

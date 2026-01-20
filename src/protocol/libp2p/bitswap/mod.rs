@@ -666,6 +666,7 @@ fn extract_next_batch<'a>(
             if block.1.len() > max_size {
                 tracing::warn!(
                     target: LOG_TARGET,
+                    cid = block.0.to_string(),
                     size = block.1.len(),
                     max_size,
                     "outgoing Bitswap block exceeded max batch size",
