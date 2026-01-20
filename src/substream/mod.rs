@@ -548,7 +548,9 @@ impl Stream for Substream {
                                 return Poll::Ready(None);
                             }
 
-                            if nread == payload_size {
+                            this.offset = this.offset.saturating_add(nread);
+
+                            if this.offset == payload_size {
                                 let mut payload = std::mem::replace(
                                     &mut this.read_buffer,
                                     BytesMut::zeroed(payload_size),
@@ -557,8 +559,6 @@ impl Stream for Substream {
                                 this.offset = 0usize;
 
                                 return Poll::Ready(Some(Ok(payload)));
-                            } else {
-                                this.offset += read_buf.filled().len();
                             }
                         }
                         Err(error) => return Poll::Ready(Some(Err(error.into()))),
