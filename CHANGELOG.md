@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.13.0] - 2026-01-21
 
-This PR brings multiple fixes of transport and application level protocols. Also, Bitswap client functionality is introduced, what makes this release semver breaking.
+This release brings multiple fixes to both the transport and application-level protocols.
+
+Specifically, it enhances WebSocket stability by resolving AsyncWrite errors and ensuring that partial writes during the negotiation phase no longer trigger connection failures.
+
+At the same time, Bitswap client functionality is introduced, which makes this release semver breaking.
 
 ### Added
 
