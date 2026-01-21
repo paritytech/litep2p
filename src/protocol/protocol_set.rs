@@ -396,8 +396,8 @@ impl ProtocolSet {
     ) -> crate::Result<()> {
         let mut futures = self
             .protocols
-            .values()
-            .map(|sender| async move {
+            .iter()
+            .map(|(protocol, sender)| async move {
                 sender
                     .tx
                     .send(InnerTransportEvent::ConnectionClosed {
@@ -405,22 +405,44 @@ impl ProtocolSet {
                         connection: connection_id,
                     })
                     .await
+                    .inspect_err(|err| {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            %protocol,
+                            ?peer,
+                            ?connection_id,
+                            ?err,
+                            "failed to report connection closed to protocol",
+                        );
+                    })
             })
             .collect::<FuturesUnordered<_>>();
 
+        // Capture the first error that occurs while reporting to protocols.
+        let mut protocol_error = None;
         while !futures.is_empty() {
-            if let Some(Err(error)) = futures.next().await {
-                return Err(error.into());
+            if let Some(Err(err)) = futures.next().await {
+                if protocol_error.is_none() {
+                    protocol_error = Some(err.into());
+                }
             }
         }
 
+        // Ensure the manager receives the connection closed event. Otherwise, the
+        // manager will think the connection is still open, while the underlying
+        // protocols and raw connection are closed.
         self.mgr_tx
             .send(TransportManagerEvent::ConnectionClosed {
                 peer,
                 connection: connection_id,
             })
-            .await
-            .map_err(From::from)
+            .await?;
+
+        // If any protocol report failed, return that error now
+        match protocol_error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 }
 
