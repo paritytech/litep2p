@@ -15,6 +15,8 @@ This PR brings multiple fixes of transport and application level protocols. Also
 
 ### Fixed
 
+- notif/fix: Avoid CPU busy loops on litep2p full shutdown ([#521](https://github.com/paritytech/litep2p/pull/521))
+- protocol: Ensure transport manager knows about closed connections ([#515](https://github.com/paritytech/litep2p/pull/515))
 - substream: Decrement the bytes counter to avoid excessive flushing ([#511](https://github.com/paritytech/litep2p/pull/511))
 - crypto/noise: Improve stability of websockets by fixing AsyncWrite implementation ([#518](https://github.com/paritytech/litep2p/pull/518))
 - bitswap: Split block responses into batches under 2 MiB ([#516](https://github.com/paritytech/litep2p/pull/516))
