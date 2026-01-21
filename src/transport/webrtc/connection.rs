@@ -59,6 +59,9 @@ use std::{
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::webrtc::connection";
 
+/// Low water mark - resume writes when buffered_amount drops below this.
+const BACKPRESSURE_LOW_THRESHOLD: usize = 16 * 1024; // 16 KB
+
 /// Opening channel context.
 #[derive(Debug)]
 struct ChannelContext {
@@ -281,11 +284,12 @@ impl WebRtcConnection {
             WebRtcDialerState::propose(context.protocol.clone(), fallback_names)?;
         let message = WebRtcMessage::encode(message, None);
 
-        self.rtc
-            .channel(channel_id)
-            .ok_or(Error::ChannelDoesntExist)?
-            .write(true, message.as_ref())
-            .map_err(Error::WebRtc)?;
+        let mut channel = self.rtc.channel(channel_id).ok_or(Error::ChannelDoesntExist)?;
+
+        // Set threshold for backpressure event
+        channel.set_buffered_amount_low_threshold(BACKPRESSURE_LOW_THRESHOLD);
+
+        channel.write(true, message.as_ref()).map_err(Error::WebRtc)?;
 
         self.channels.insert(
             channel_id,
@@ -393,9 +397,12 @@ impl WebRtcConnection {
                 | ListenerSelectResult::PendingProtocol { message } => (message, None),
             };
 
-        self.rtc
-            .channel(channel_id)
-            .ok_or(Error::ChannelDoesntExist)?
+        let mut channel = self.rtc.channel(channel_id).ok_or(Error::ChannelDoesntExist)?;
+
+        // Set threshold for backpressure event
+        channel.set_buffered_amount_low_threshold(BACKPRESSURE_LOW_THRESHOLD);
+
+        channel
             .write(
                 true,
                 WebRtcMessage::encode(response.to_vec(), None).as_ref(),
@@ -759,12 +766,17 @@ impl WebRtcConnection {
     }
 
     /// Handle outbound data with optional flag.
+    ///
+    /// Returns `Ok(true)` if backpressure should be applied (buffer too full),
+    /// `Ok(false)` if write succeeded, or `Err` on failure.
     fn on_outbound_data(
         &mut self,
         channel_id: ChannelId,
         data: Vec<u8>,
         flag: Option<Flag>,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<bool> {
+        let mut channel = self.rtc.channel(channel_id).ok_or(Error::ChannelDoesntExist)?;
+
         tracing::trace!(
             target: LOG_TARGET,
             peer = ?self.peer,
@@ -774,18 +786,20 @@ impl WebRtcConnection {
             "send data",
         );
 
-        let written = self
-            .rtc
-            .channel(channel_id)
-            .ok_or(Error::ChannelDoesntExist)?
+        let accepted = channel
             .write(true, WebRtcMessage::encode(data, flag).as_ref())
             .map_err(Error::WebRtc)?;
 
-        if !written {
-            return Err(Error::ChannelClogged);
+        if !accepted {
+            tracing::trace!(
+                target: LOG_TARGET,
+                peer = ?self.peer,
+                ?channel_id,
+                "backpressure applied, str0m write buffer full",
+            );
         }
 
-        Ok(())
+        Ok(!accepted)
     }
 
     /// Open outbound substream.
@@ -918,6 +932,54 @@ impl WebRtcConnection {
 
                         continue;
                     }
+                    Event::ChannelBufferedAmountLow(channel_id) => {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            peer = ?self.peer,
+                            ?channel_id,
+                            "channel buffer low, clearing backpressure",
+                        );
+
+                        if let Some(handle) = self.handles.get_mut(&channel_id) {
+                            // Clear backpressure flag and wake blocked writers
+                            handle.set_backpressure(false);
+
+                            // Drain any pending message
+                            if let Some(SubstreamEvent::Message { payload, flag }) =
+                                handle.take_pending()
+                            {
+                                match self.on_outbound_data(
+                                    channel_id,
+                                    payload.clone(),
+                                    flag,
+                                ) {
+                                    Ok(false) => {} // Drained successfully
+                                    Ok(true) => {
+                                        // Still can't write — re-queue and keep backpressure
+                                        if let Some(handle) =
+                                            self.handles.get_mut(&channel_id)
+                                        {
+                                            handle.set_backpressure(true);
+                                            handle.queue_pending(
+                                                SubstreamEvent::Message { payload, flag },
+                                            );
+                                        }
+                                    }
+                                    Err(error) => {
+                                        tracing::debug!(
+                                            target: LOG_TARGET,
+                                            peer = ?self.peer,
+                                            ?channel_id,
+                                            ?error,
+                                            "failed to drain pending write",
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        continue;
+                    }
                     event => {
                         tracing::debug!(
                             target: LOG_TARGET,
@@ -976,14 +1038,24 @@ impl WebRtcConnection {
                         self.handles.remove(&channel_id);
                     }
                     Some((channel_id, Some(SubstreamEvent::Message { payload, flag }))) => {
-                        if let Err(error) = self.on_outbound_data(channel_id, payload, flag) {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?channel_id,
-                                ?flag,
-                                ?error,
-                                "failed to send data to remote peer",
-                            );
+                        match self.on_outbound_data(channel_id, payload.clone(), flag) {
+                            Ok(false) => {} // Write succeeded
+                            Ok(true) => {
+                                // Backpressure - queue message and signal handle
+                                if let Some(handle) = self.handles.get_mut(&channel_id) {
+                                    handle.set_backpressure(true);
+                                    handle.queue_pending(SubstreamEvent::Message { payload, flag });
+                                }
+                            }
+                            Err(error) => {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?channel_id,
+                                    ?flag,
+                                    ?error,
+                                    "failed to send data to remote peer",
+                                );
+                            }
                         }
                     }
                     Some((_, Some(SubstreamEvent::RecvClosed))) => {}
