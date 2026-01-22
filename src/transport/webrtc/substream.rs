@@ -24,7 +24,7 @@ use crate::{
 };
 
 use bytes::{Buf, BufMut, BytesMut};
-use futures::{task::AtomicWaker, Stream};
+use futures::{task::AtomicWaker, Future, Stream};
 use parking_lot::Mutex;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_util::sync::PollSender;
@@ -33,7 +33,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 /// Maximum frame size.
@@ -98,8 +98,9 @@ pub struct Substream {
     /// Waker to notify when shutdown completes (FIN_ACK received).
     shutdown_waker: Arc<AtomicWaker>,
 
-    /// Timestamp when FIN was sent, used for timeout.
-    fin_sent_at: Option<Instant>,
+    /// Timeout for waiting on FIN_ACK after sending FIN.
+    /// Boxed to maintain Unpin for Substream while allowing the Sleep to be polled.
+    fin_ack_timeout: Option<Pin<Box<tokio::time::Sleep>>>,
 }
 
 impl Substream {
@@ -125,7 +126,7 @@ impl Substream {
                 rx: inbound_rx,
                 read_buffer: BytesMut::new(),
                 shutdown_waker,
-                fin_sent_at: None,
+                fin_ack_timeout: None,
             },
             handle,
         )
@@ -332,12 +333,11 @@ impl tokio::io::AsyncWrite for Substream {
             // Already received FIN_ACK, shutdown complete
             State::FinAcked => return Poll::Ready(Ok(())),
 
-            // Sent FIN, waiting for FIN_ACK - check timeout and return Pending
+            // Sent FIN, waiting for FIN_ACK - poll timeout and return Pending
             State::FinSent => {
-                // Check if we've exceeded the timeout waiting for FIN_ACK
-                if let Some(sent_at) = self.fin_sent_at {
-                    if sent_at.elapsed() >= FIN_ACK_TIMEOUT {
-                        // Timeout exceeded, force complete shutdown
+                // Poll the timeout - if it fires, force shutdown completion
+                if let Some(timeout) = self.fin_ack_timeout.as_mut() {
+                    if timeout.as_mut().poll(cx).is_ready() {
                         tracing::debug!(
                             target: "litep2p::webrtc::substream",
                             "FIN_ACK timeout exceeded, forcing shutdown completion"
@@ -384,17 +384,14 @@ impl tokio::io::AsyncWrite for Substream {
         }) {
             Ok(()) => {
                 // Transition to FinSent after successfully sending FIN
-                // Record timestamp for timeout tracking
+                // Initialize the timeout for FIN_ACK
                 *self.state.lock() = State::FinSent;
-                self.fin_sent_at = Some(Instant::now());
+                let mut timeout = Box::pin(tokio::time::sleep(FIN_ACK_TIMEOUT));
+                // Poll the timeout once to register it with tokio's timer
+                // This ensures we'll be woken when it expires
+                let _ = timeout.as_mut().poll(cx);
+                self.fin_ack_timeout = Some(timeout);
                 self.shutdown_waker.register(cx.waker());
-
-                // Spawn timeout task to wake us after FIN_ACK_TIMEOUT
-                let waker = cx.waker().clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(FIN_ACK_TIMEOUT).await;
-                    waker.wake();
-                });
 
                 Poll::Pending
             }
