@@ -18,7 +18,11 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{codec::unsigned_varint::UnsignedVarint, error::ParseError, transport::webrtc::schema};
+use crate::{
+    codec::unsigned_varint::UnsignedVarint,
+    error::ParseError,
+    transport::webrtc::schema::{self, webrtc::message::Flag},
+};
 
 use prost::Message;
 use tokio_util::codec::{Decoder, Encoder};
@@ -30,15 +34,15 @@ pub struct WebRtcMessage {
     pub payload: Option<Vec<u8>>,
 
     /// Flag.
-    pub flag: Option<i32>,
+    pub flag: Option<Flag>,
 }
 
 impl WebRtcMessage {
     /// Encode WebRTC message with optional flag.
-    pub fn encode(payload: Vec<u8>, flag: Option<i32>) -> Vec<u8> {
+    pub fn encode(payload: Vec<u8>, flag: Option<Flag>) -> Vec<u8> {
         let protobuf_payload = schema::webrtc::Message {
             message: (!payload.is_empty()).then_some(payload),
-            flag,
+            flag: flag.map(|f| f as i32),
         };
         let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
         protobuf_payload
@@ -65,7 +69,7 @@ impl WebRtcMessage {
         match schema::webrtc::Message::decode(result) {
             Ok(message) => Ok(Self {
                 payload: message.message,
-                flag: message.flag,
+                flag: message.flag.and_then(|f| Flag::try_from(f).ok()),
             }),
             Err(_) => Err(ParseError::InvalidData),
         }
@@ -87,19 +91,20 @@ mod tests {
 
     #[test]
     fn with_payload_and_flag() {
-        let message = WebRtcMessage::encode("Hello, world!".as_bytes().to_vec(), Some(1i32));
+        let message =
+            WebRtcMessage::encode("Hello, world!".as_bytes().to_vec(), Some(Flag::StopSending));
         let decoded = WebRtcMessage::decode(&message).unwrap();
 
         assert_eq!(decoded.payload, Some("Hello, world!".as_bytes().to_vec()));
-        assert_eq!(decoded.flag, Some(1i32));
+        assert_eq!(decoded.flag, Some(Flag::StopSending));
     }
 
     #[test]
     fn no_payload_with_flag() {
-        let message = WebRtcMessage::encode(vec![], Some(2i32));
+        let message = WebRtcMessage::encode(vec![], Some(Flag::ResetStream));
         let decoded = WebRtcMessage::decode(&message).unwrap();
 
         assert_eq!(decoded.payload, None);
-        assert_eq!(decoded.flag, Some(2i32));
+        assert_eq!(decoded.flag, Some(Flag::ResetStream));
     }
 }

@@ -55,7 +55,10 @@ pub enum Event {
     RecvClosed,
 
     /// Send/receive message with optional flag.
-    Message { payload: Vec<u8>, flag: Option<i32> },
+    Message {
+        payload: Vec<u8>,
+        flag: Option<Flag>,
+    },
 }
 
 /// Substream stream.
@@ -154,42 +157,42 @@ impl SubstreamHandle {
     /// further processing.
     pub async fn on_message(&self, message: WebRtcMessage) -> crate::Result<()> {
         if let Some(flag) = message.flag {
-            if flag == Flag::Fin as i32 {
-                // Received FIN from remote, close our read half
-                self.inbound_tx.send(Event::RecvClosed).await?;
+            match flag {
+                Flag::Fin => {
+                    // Received FIN from remote, close our read half
+                    self.inbound_tx.send(Event::RecvClosed).await?;
 
-                // Send FIN_ACK back to remote
-                // Note: We stay in current state to allow shutdown() to send our own FIN if needed
-                return self
-                    .outbound_tx
-                    .send(Event::Message {
-                        payload: vec![],
-                        flag: Some(Flag::FinAck as i32),
-                    })
-                    .await
-                    .map_err(From::from);
-            }
-
-            if flag == Flag::FinAck as i32 {
-                // Received FIN_ACK, we can now fully close our write half
-                let mut state = self.state.lock();
-                if matches!(*state, State::FinSent) {
-                    *state = State::FinAcked;
-                    // Wake up any task waiting on shutdown
-                    if let Some(waker) = self.shutdown_waker.lock().take() {
-                        waker.wake();
-                    }
+                    // Send FIN_ACK back to remote
+                    // Note: We stay in current state to allow shutdown() to send our own FIN if
+                    // needed
+                    return self
+                        .outbound_tx
+                        .send(Event::Message {
+                            payload: vec![],
+                            flag: Some(Flag::FinAck),
+                        })
+                        .await
+                        .map_err(From::from);
                 }
-                return Ok(());
-            }
-
-            if flag == Flag::StopSending as i32 {
-                *self.state.lock() = State::SendClosed;
-                return Ok(());
-            }
-
-            if flag == Flag::ResetStream as i32 {
-                return Err(Error::ConnectionClosed);
+                Flag::FinAck => {
+                    // Received FIN_ACK, we can now fully close our write half
+                    let mut state = self.state.lock();
+                    if matches!(*state, State::FinSent) {
+                        *state = State::FinAcked;
+                        // Wake up any task waiting on shutdown
+                        if let Some(waker) = self.shutdown_waker.lock().take() {
+                            waker.wake();
+                        }
+                    }
+                    return Ok(());
+                }
+                Flag::StopSending => {
+                    *self.state.lock() = State::SendClosed;
+                    return Ok(());
+                }
+                Flag::ResetStream => {
+                    return Err(Error::ConnectionClosed);
+                }
             }
         }
 
@@ -379,7 +382,7 @@ impl tokio::io::AsyncWrite for Substream {
         // Send message with FIN flag
         match self.tx.send_item(Event::Message {
             payload: vec![],
-            flag: Some(Flag::Fin as i32),
+            flag: Some(Flag::Fin),
         }) {
             Ok(()) => {
                 // Transition to FinSent after successfully sending FIN
@@ -498,7 +501,7 @@ mod tests {
             handle.next().await,
             Some(Event::Message {
                 payload: vec![],
-                flag: Some(Flag::Fin as i32)
+                flag: Some(Flag::Fin)
             })
         );
 
@@ -506,7 +509,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flag: Some(Flag::FinAck as i32),
+                flag: Some(Flag::FinAck),
             })
             .await
             .unwrap();
@@ -520,7 +523,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flag: Some(0i32),
+                flag: Some(Flag::Fin),
             })
             .await
             .unwrap();
@@ -756,7 +759,7 @@ mod tests {
             handle.next().await,
             Some(Event::Message {
                 payload: vec![],
-                flag: Some(Flag::Fin as i32)
+                flag: Some(Flag::Fin)
             })
         );
 
@@ -784,7 +787,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flag: Some(Flag::Fin as i32),
+                flag: Some(Flag::Fin),
             })
             .await
             .unwrap();
@@ -797,7 +800,7 @@ mod tests {
             handle.next().await,
             Some(Event::Message {
                 payload: vec![],
-                flag: Some(Flag::FinAck as i32)
+                flag: Some(Flag::FinAck)
             })
         );
     }
@@ -821,7 +824,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flag: Some(Flag::FinAck as i32),
+                flag: Some(Flag::FinAck),
             })
             .await
             .unwrap();
@@ -859,7 +862,7 @@ mod tests {
             handle.next().await,
             Some(Event::Message {
                 payload: vec![],
-                flag: Some(Flag::Fin as i32)
+                flag: Some(Flag::Fin)
             })
         );
 
@@ -867,7 +870,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flag: Some(Flag::FinAck as i32),
+                flag: Some(Flag::FinAck),
             })
             .await
             .unwrap();
@@ -887,7 +890,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flag: Some(Flag::StopSending as i32),
+                flag: Some(Flag::StopSending),
             })
             .await
             .unwrap();
@@ -910,7 +913,7 @@ mod tests {
         let result = handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flag: Some(Flag::ResetStream as i32),
+                flag: Some(Flag::ResetStream),
             })
             .await;
 
@@ -939,7 +942,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flag: Some(Flag::FinAck as i32),
+                flag: Some(Flag::FinAck),
             })
             .await
             .unwrap();
@@ -963,7 +966,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flag: Some(Flag::StopSending as i32),
+                flag: Some(Flag::StopSending),
             })
             .await
             .unwrap();
@@ -977,7 +980,7 @@ mod tests {
         let result = handle2
             .on_message(WebRtcMessage {
                 payload: None,
-                flag: Some(Flag::ResetStream as i32),
+                flag: Some(Flag::ResetStream),
             })
             .await;
 
@@ -998,7 +1001,7 @@ mod tests {
         handle3
             .on_message(WebRtcMessage {
                 payload: None,
-                flag: Some(Flag::FinAck as i32),
+                flag: Some(Flag::FinAck),
             })
             .await
             .unwrap();
@@ -1034,7 +1037,7 @@ mod tests {
             handle.next().await,
             Some(Event::Message {
                 payload: vec![],
-                flag: Some(Flag::Fin as i32)
+                flag: Some(Flag::Fin)
             })
         );
 
@@ -1045,7 +1048,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flag: Some(Flag::FinAck as i32),
+                flag: Some(Flag::FinAck),
             })
             .await
             .unwrap();
@@ -1070,7 +1073,7 @@ mod tests {
             handle.next().await,
             Some(Event::Message {
                 payload: vec![],
-                flag: Some(Flag::Fin as i32)
+                flag: Some(Flag::Fin)
             })
         );
         assert!(matches!(*handle.state.lock(), State::FinSent));
@@ -1079,7 +1082,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flag: Some(Flag::FinAck as i32),
+                flag: Some(Flag::FinAck),
             })
             .await
             .unwrap();
@@ -1108,7 +1111,7 @@ mod tests {
             handle.next().await,
             Some(Event::Message {
                 payload: vec![],
-                flag: Some(Flag::Fin as i32)
+                flag: Some(Flag::Fin)
             })
         );
 
@@ -1162,7 +1165,7 @@ mod tests {
             handle.next().await,
             Some(Event::Message {
                 payload: vec![],
-                flag: Some(Flag::Fin as i32)
+                flag: Some(Flag::Fin)
             })
         );
 
@@ -1170,7 +1173,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flag: Some(Flag::FinAck as i32),
+                flag: Some(Flag::FinAck),
             })
             .await
             .unwrap();
@@ -1209,7 +1212,7 @@ mod tests {
         handle
             .on_message(WebRtcMessage {
                 payload: None,
-                flag: Some(Flag::Fin as i32),
+                flag: Some(Flag::Fin),
             })
             .await
             .unwrap();
@@ -1219,7 +1222,7 @@ mod tests {
             handle.next().await,
             Some(Event::Message {
                 payload: vec![],
-                flag: Some(Flag::FinAck as i32)
+                flag: Some(Flag::FinAck)
             })
         );
 

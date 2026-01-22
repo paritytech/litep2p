@@ -27,6 +27,7 @@ use crate::{
     substream::Substream,
     transport::{
         webrtc::{
+            schema::webrtc::message::Flag,
             substream::{Event as SubstreamEvent, Substream as WebRtcSubstream, SubstreamHandle},
             util::WebRtcMessage,
         },
@@ -455,7 +456,7 @@ impl WebRtcConnection {
             target: LOG_TARGET,
             peer = ?self.peer,
             ?channel_id,
-            flag = message.flag,
+            flag = ?message.flag,
             data_len = message.payload.as_ref().map_or(0usize, |payload| payload.len()),
             "handle inbound message",
         );
@@ -606,7 +607,7 @@ impl WebRtcConnection {
         &mut self,
         channel_id: ChannelId,
         data: Vec<u8>,
-        flag: Option<i32>,
+        flag: Option<Flag>,
     ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
