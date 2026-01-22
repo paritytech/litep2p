@@ -152,7 +152,7 @@ pub struct SubstreamHandle {
 impl SubstreamHandle {
     /// Handle message received from a remote peer.
     ///
-    /// If the message contains any flag, handle them first and appropriately close the correct
+    /// If the message contains a flag, handle it first and appropriately close the correct
     /// side of the substream. If the message contained any payload, send it to the protocol for
     /// further processing.
     pub async fn on_message(&self, message: WebRtcMessage) -> crate::Result<()> {
