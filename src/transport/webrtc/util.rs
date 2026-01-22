@@ -25,7 +25,7 @@ use crate::{
 
 use prost::Message;
 
-/// WebRTC mesage.
+/// WebRTC message.
 #[derive(Debug)]
 pub struct WebRtcMessage {
     /// Payload.
