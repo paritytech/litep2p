@@ -365,6 +365,15 @@ impl tokio::io::AsyncWrite for Substream {
 
             // Sent FIN, waiting for FIN_ACK - poll timeout and return Pending
             State::FinSent => {
+                // Register waker FIRST to avoid race condition with on_message
+                self.shutdown_waker.register(cx.waker());
+
+                // Re-check state after waker registration in case FIN_ACK arrived
+                // between the initial state check and waker registration
+                if matches!(*self.state.lock(), State::FinAcked) {
+                    return Poll::Ready(Ok(()));
+                }
+
                 // Poll the timeout - if it fires, force shutdown completion
                 if let Some(timeout) = self.fin_ack_timeout.as_mut() {
                     if timeout.as_mut().poll(cx).is_ready() {
@@ -377,8 +386,6 @@ impl tokio::io::AsyncWrite for Substream {
                     }
                 }
 
-                // Store the waker so it can be triggered when we receive FIN_ACK
-                self.shutdown_waker.register(cx.waker());
                 return Poll::Pending;
             }
 
@@ -413,15 +420,27 @@ impl tokio::io::AsyncWrite for Substream {
             flag: Some(Flag::Fin),
         }) {
             Ok(()) => {
+                // Register waker BEFORE transitioning state to avoid race condition:
+                // If FIN_ACK arrives between state transition and waker registration,
+                // on_message would call wake() before the waker is registered, causing
+                // a missed wakeup.
+                self.shutdown_waker.register(cx.waker());
+
                 // Transition to FinSent after successfully sending FIN
-                // Initialize the timeout for FIN_ACK
                 *self.state.lock() = State::FinSent;
+
+                // Re-check state in case FIN_ACK arrived between state transition and now
+                // (on_message may have already transitioned us to FinAcked)
+                if matches!(*self.state.lock(), State::FinAcked) {
+                    return Poll::Ready(Ok(()));
+                }
+
+                // Initialize the timeout for FIN_ACK
                 let mut timeout = Box::pin(tokio::time::sleep(FIN_ACK_TIMEOUT));
                 // Poll the timeout once to register it with tokio's timer
                 // This ensures we'll be woken when it expires
                 let _ = timeout.as_mut().poll(cx);
                 self.fin_ack_timeout = Some(timeout);
-                self.shutdown_waker.register(cx.waker());
 
                 Poll::Pending
             }
