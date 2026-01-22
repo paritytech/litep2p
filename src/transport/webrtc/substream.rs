@@ -959,7 +959,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn flag_are_mutually_exclusive() {
+    async fn flags_are_mutually_exclusive() {
         let (_substream, handle) = Substream::new();
 
         // Test that STOP_SENDING (1) is handled correctly
