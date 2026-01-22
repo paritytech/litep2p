@@ -71,6 +71,12 @@ impl WebRtcMessage {
     ///
     /// Decodes the varint length prefix directly from the slice without allocations,
     /// then decodes the protobuf message from the remaining bytes.
+    ///
+    /// # Flag handling
+    ///
+    /// Unknown flag values (e.g., from a newer protocol version) are logged as warnings
+    /// and treated as `None` for forward compatibility. This allows the message payload
+    /// to still be processed even if the flag is not recognized.
     pub fn decode(payload: &[u8]) -> Result<Self, ParseError> {
         // Decode varint length prefix directly from slice (no allocation)
         // Returns (decoded_length, remaining_bytes_after_varint)
@@ -81,10 +87,23 @@ impl WebRtcMessage {
         let protobuf_data = remaining.get(..len).ok_or(ParseError::InvalidData)?;
 
         match schema::webrtc::Message::decode(protobuf_data) {
-            Ok(message) => Ok(Self {
-                payload: message.message,
-                flag: message.flag.and_then(|f| Flag::try_from(f).ok()),
-            }),
+            Ok(message) => {
+                let flag = message.flag.and_then(|f| match Flag::try_from(f) {
+                    Ok(flag) => Some(flag),
+                    Err(_) => {
+                        tracing::warn!(
+                            target: "litep2p::webrtc",
+                            ?f,
+                            "received message with unknown flag value, ignoring flag"
+                        );
+                        None
+                    }
+                });
+                Ok(Self {
+                    payload: message.message,
+                    flag,
+                })
+            }
             Err(_) => Err(ParseError::InvalidData),
         }
     }
