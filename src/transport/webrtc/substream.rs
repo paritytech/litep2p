@@ -24,7 +24,7 @@ use crate::{
 };
 
 use bytes::{Buf, BufMut, BytesMut};
-use futures::Stream;
+use futures::{task::AtomicWaker, Stream};
 use parking_lot::Mutex;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_util::sync::PollSender;
@@ -32,7 +32,7 @@ use tokio_util::sync::PollSender;
 use std::{
     pin::Pin,
     sync::Arc,
-    task::{Context, Poll, Waker},
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 
@@ -96,7 +96,7 @@ pub struct Substream {
     rx: Receiver<Event>,
 
     /// Waker to notify when shutdown completes (FIN_ACK received).
-    shutdown_waker: Arc<Mutex<Option<Waker>>>,
+    shutdown_waker: Arc<AtomicWaker>,
 
     /// Timestamp when FIN was sent, used for timeout.
     fin_sent_at: Option<Instant>,
@@ -108,7 +108,7 @@ impl Substream {
         let (outbound_tx, outbound_rx) = channel(256);
         let (inbound_tx, inbound_rx) = channel(256);
         let state = Arc::new(Mutex::new(State::Open));
-        let shutdown_waker = Arc::new(Mutex::new(None));
+        let shutdown_waker = Arc::new(AtomicWaker::new());
 
         let handle = SubstreamHandle {
             inbound_tx,
@@ -146,7 +146,7 @@ pub struct SubstreamHandle {
     rx: Receiver<Event>,
 
     /// Waker to notify when shutdown completes (FIN_ACK received).
-    shutdown_waker: Arc<Mutex<Option<Waker>>>,
+    shutdown_waker: Arc<AtomicWaker>,
 }
 
 impl SubstreamHandle {
@@ -180,9 +180,7 @@ impl SubstreamHandle {
                     if matches!(*state, State::FinSent) {
                         *state = State::FinAcked;
                         // Wake up any task waiting on shutdown
-                        if let Some(waker) = self.shutdown_waker.lock().take() {
-                            waker.wake();
-                        }
+                        self.shutdown_waker.wake();
                     }
                     return Ok(());
                 }
@@ -350,7 +348,7 @@ impl tokio::io::AsyncWrite for Substream {
                 }
 
                 // Store the waker so it can be triggered when we receive FIN_ACK
-                *self.shutdown_waker.lock() = Some(cx.waker().clone());
+                self.shutdown_waker.register(cx.waker());
                 return Poll::Pending;
             }
 
@@ -389,7 +387,7 @@ impl tokio::io::AsyncWrite for Substream {
                 // Record timestamp for timeout tracking
                 *self.state.lock() = State::FinSent;
                 self.fin_sent_at = Some(Instant::now());
-                *self.shutdown_waker.lock() = Some(cx.waker().clone());
+                self.shutdown_waker.register(cx.waker());
 
                 // Spawn timeout task to wake us after FIN_ACK_TIMEOUT
                 let waker = cx.waker().clone();
