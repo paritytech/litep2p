@@ -98,6 +98,9 @@ pub struct Substream {
     /// Waker to notify when shutdown completes (FIN_ACK received).
     shutdown_waker: Arc<AtomicWaker>,
 
+    /// Waker to notify when write state changes (e.g., STOP_SENDING received).
+    write_waker: Arc<AtomicWaker>,
+
     /// Timeout for waiting on FIN_ACK after sending FIN.
     /// Boxed to maintain Unpin for Substream while allowing the Sleep to be polled.
     fin_ack_timeout: Option<Pin<Box<tokio::time::Sleep>>>,
@@ -110,6 +113,7 @@ impl Substream {
         let (inbound_tx, inbound_rx) = channel(256);
         let state = Arc::new(Mutex::new(State::Open));
         let shutdown_waker = Arc::new(AtomicWaker::new());
+        let write_waker = Arc::new(AtomicWaker::new());
 
         let handle = SubstreamHandle {
             inbound_tx,
@@ -117,6 +121,7 @@ impl Substream {
             rx: outbound_rx,
             state: Arc::clone(&state),
             shutdown_waker: Arc::clone(&shutdown_waker),
+            write_waker: Arc::clone(&write_waker),
         };
 
         (
@@ -126,6 +131,7 @@ impl Substream {
                 rx: inbound_rx,
                 read_buffer: BytesMut::new(),
                 shutdown_waker,
+                write_waker,
                 fin_ack_timeout: None,
             },
             handle,
@@ -148,6 +154,9 @@ pub struct SubstreamHandle {
 
     /// Waker to notify when shutdown completes (FIN_ACK received).
     shutdown_waker: Arc<AtomicWaker>,
+
+    /// Waker to notify when write state changes (e.g., STOP_SENDING received).
+    write_waker: Arc<AtomicWaker>,
 }
 
 impl SubstreamHandle {
@@ -187,9 +196,19 @@ impl SubstreamHandle {
                 }
                 Flag::StopSending => {
                     *self.state.lock() = State::SendClosed;
+                    // Wake any blocked poll_write so it can see the state change
+                    self.write_waker.wake();
                     return Ok(());
                 }
                 Flag::ResetStream => {
+                    // RESET_STREAM abruptly terminates both sides of the stream
+                    // (matching go-libp2p behavior)
+                    // Close the read side
+                    let _ = self.inbound_tx.try_send(Event::RecvClosed);
+                    // Close the write side
+                    *self.state.lock() = State::SendClosed;
+                    // Wake any blocked poll_write so it can see the state change
+                    self.write_waker.wake();
                     return Err(Error::ConnectionClosed);
                 }
             }
@@ -286,6 +305,9 @@ impl tokio::io::AsyncWrite for Substream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
+        // Register waker so we get notified on state changes (e.g., STOP_SENDING)
+        self.write_waker.register(cx.waker());
+
         // Reject writes if we're closing or closed
         match *self.state.lock() {
             State::SendClosed | State::Closing | State::FinSent | State::FinAcked => {
@@ -298,6 +320,14 @@ impl tokio::io::AsyncWrite for Substream {
             Ok(()) => {}
             Err(_) => return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
         };
+
+        // Re-check state after poll_reserve - it may have changed while we were waiting
+        match *self.state.lock() {
+            State::SendClosed | State::Closing | State::FinSent | State::FinAcked => {
+                return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
+            }
+            State::Open => {}
+        }
 
         let num_bytes = std::cmp::min(MAX_FRAME_SIZE, buf.len());
         let frame = buf[..num_bytes].to_vec();
@@ -901,8 +931,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reset_stream_flag_returns_error() {
-        let (_substream, handle) = Substream::new();
+    async fn reset_stream_flag_closes_both_sides() {
+        use tokio::io::AsyncWriteExt;
+        let (mut substream, handle) = Substream::new();
 
         // Simulate receiving RESET_STREAM
         let result = handle
@@ -914,6 +945,19 @@ mod tests {
 
         // Should return connection closed error
         assert!(matches!(result, Err(Error::ConnectionClosed)));
+
+        // Write side should be closed (state = SendClosed)
+        assert!(matches!(*handle.state.lock(), State::SendClosed));
+
+        // Attempting to write should fail
+        match substream.write_all(&vec![0u8; 100]).await {
+            Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe),
+            _ => panic!("write should have failed"),
+        }
+
+        // Read side should also be closed (RecvClosed event was sent)
+        // The substream's rx channel should have RecvClosed
+        assert!(matches!(substream.rx.try_recv(), Ok(Event::RecvClosed)));
     }
 
     #[tokio::test]
@@ -1005,6 +1049,85 @@ mod tests {
 
         // Shutdown should complete
         shutdown_task3.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stop_sending_wakes_blocked_writer() {
+        use tokio::io::AsyncWriteExt;
+        let (mut substream, handle) = Substream::new();
+
+        // Fill up the channel to cause poll_write to return Pending
+        // Channel capacity is 256
+        for _ in 0..256 {
+            substream.write_all(&[1u8; 100]).await.unwrap();
+        }
+
+        // Now the next write should block waiting for channel capacity
+        let write_task = tokio::spawn(async move {
+            // This write will block because channel is full
+            let result = substream.write_all(&[2u8; 100]).await;
+            // Should fail because STOP_SENDING was received
+            assert!(result.is_err());
+        });
+
+        // Give the writer time to block on poll_reserve
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(!write_task.is_finished(), "write should be blocked");
+
+        // Simulate receiving STOP_SENDING from remote
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::StopSending),
+            })
+            .await
+            .unwrap();
+
+        // The write task should wake up and see the state change
+        tokio::time::timeout(Duration::from_secs(1), write_task)
+            .await
+            .expect("write task should complete after STOP_SENDING")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn reset_stream_wakes_blocked_writer() {
+        use tokio::io::AsyncWriteExt;
+        let (mut substream, handle) = Substream::new();
+
+        // Fill up the channel to cause poll_write to return Pending
+        // Channel capacity is 256
+        for _ in 0..256 {
+            substream.write_all(&[1u8; 100]).await.unwrap();
+        }
+
+        // Now the next write should block waiting for channel capacity
+        let write_task = tokio::spawn(async move {
+            // This write will block because channel is full
+            let result = substream.write_all(&[2u8; 100]).await;
+            // Should fail because RESET_STREAM was received
+            assert!(result.is_err());
+        });
+
+        // Give the writer time to block on poll_reserve
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(!write_task.is_finished(), "write should be blocked");
+
+        // Simulate receiving RESET_STREAM from remote
+        let result = handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::ResetStream),
+            })
+            .await;
+        // RESET_STREAM returns an error
+        assert!(result.is_err());
+
+        // The write task should wake up and see the state change
+        tokio::time::timeout(Duration::from_secs(1), write_task)
+            .await
+            .expect("write task should complete after RESET_STREAM")
+            .unwrap();
     }
 
     #[tokio::test]
