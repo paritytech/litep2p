@@ -49,10 +49,11 @@ impl WebRtcMessage {
         // Calculate sizes upfront for single allocation with exact capacity
         let protobuf_len = protobuf_payload.encoded_len();
         // Varint uses 7 bits per byte, so calculate exact length needed
+        // ilog2 gives the position of the highest set bit (0-indexed), divide by 7 for varint bytes
         let varint_len = if protobuf_len == 0 {
             1
         } else {
-            (usize::BITS - protobuf_len.leading_zeros()) as usize / 7 + 1
+            (protobuf_len.ilog2() as usize / 7) + 1
         };
 
         // Single allocation for the entire output with exact size
