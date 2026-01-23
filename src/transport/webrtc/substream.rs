@@ -41,12 +41,7 @@ const MAX_FRAME_SIZE: usize = 16384;
 
 /// Timeout for waiting on FIN_ACK after sending FIN.
 /// Matches go-libp2p's 5 second stream close timeout.
-#[cfg(not(test))]
 const FIN_ACK_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Shorter timeout for tests.
-#[cfg(test)]
-const FIN_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Substream event.
 #[derive(Debug, PartialEq, Eq)]
