@@ -122,6 +122,7 @@ impl Substream {
             state: Arc::clone(&state),
             shutdown_waker: Arc::clone(&shutdown_waker),
             write_waker: Arc::clone(&write_waker),
+            read_closed: std::sync::atomic::AtomicBool::new(false),
         };
 
         (
@@ -157,6 +158,10 @@ pub struct SubstreamHandle {
 
     /// Waker to notify when write state changes (e.g., STOP_SENDING received).
     write_waker: Arc<AtomicWaker>,
+
+    /// Whether we've already sent RecvClosed to the inbound channel.
+    /// Prevents duplicate RecvClosed events if multiple FIN messages are received.
+    read_closed: std::sync::atomic::AtomicBool,
 }
 
 impl SubstreamHandle {
@@ -184,20 +189,34 @@ impl SubstreamHandle {
         if let Some(flag) = message.flag {
             match flag {
                 Flag::Fin => {
+                    // Guard against duplicate FIN messages - only send RecvClosed once
+                    if self.read_closed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                        // Already processed FIN, ignore duplicate
+                        tracing::debug!(
+                            target: "litep2p::webrtc::substream",
+                            "received duplicate FIN, ignoring"
+                        );
+                        return Ok(());
+                    }
+
                     // Received FIN from remote, close our read half
                     self.inbound_tx.send(Event::RecvClosed).await?;
 
-                    // Send FIN_ACK back to remote
-                    // Note: We stay in current state to allow shutdown() to send our own FIN if
-                    // needed
-                    return self
-                        .outbound_tx
-                        .send(Event::Message {
-                            payload: vec![],
-                            flag: Some(Flag::FinAck),
-                        })
-                        .await
-                        .map_err(From::from);
+                    // Send FIN_ACK back to remote using try_send to avoid blocking.
+                    // If the channel is full, the remote will timeout waiting for FIN_ACK
+                    // and handle it gracefully. This prevents deadlock if the outbound
+                    // channel is blocked due to backpressure.
+                    if let Err(e) = self.outbound_tx.try_send(Event::Message {
+                        payload: vec![],
+                        flag: Some(Flag::FinAck),
+                    }) {
+                        tracing::warn!(
+                            target: "litep2p::webrtc::substream",
+                            ?e,
+                            "failed to send FIN_ACK, remote will timeout"
+                        );
+                    }
+                    return Ok(());
                 }
                 Flag::FinAck => {
                     // Received FIN_ACK, we can now fully close our write half
@@ -404,9 +423,13 @@ impl tokio::io::AsyncWrite for Substream {
 
             State::Closing => {
                 // Already in closing state, continue with shutdown process.
-                // Note: Concurrent calls to poll_shutdown violate AsyncWrite's contract
-                // (requires &mut self). If this somehow happens, duplicate FIN messages
-                // could be sent, but the protocol handles this gracefully.
+                // Guard against duplicate FIN sends: if timeout is already set, we've
+                // already sent FIN and are waiting for FIN_ACK. This shouldn't happen
+                // with correct AsyncWrite usage (&mut self), but provides defense in depth.
+                if self.fin_ack_timeout.is_some() {
+                    self.shutdown_waker.register(cx.waker());
+                    return Poll::Pending;
+                }
             }
 
             State::SendClosed => {

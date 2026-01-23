@@ -46,13 +46,17 @@ impl WebRtcMessage {
             flag: flag.map(|f| f as i32),
         };
 
-        // Calculate sizes upfront for single allocation
-        // usize_buffer() is a fixed [u8; 10] array (max varint size)
-        const VARINT_MAX_LEN: usize = 10;
+        // Calculate sizes upfront for single allocation with exact capacity
         let protobuf_len = protobuf_payload.encoded_len();
+        // Varint uses 7 bits per byte, so calculate exact length needed
+        let varint_len = if protobuf_len == 0 {
+            1
+        } else {
+            (usize::BITS - protobuf_len.leading_zeros()) as usize / 7 + 1
+        };
 
-        // Single allocation for the entire output
-        let mut out_buf = Vec::with_capacity(VARINT_MAX_LEN + protobuf_len);
+        // Single allocation for the entire output with exact size
+        let mut out_buf = Vec::with_capacity(varint_len + protobuf_len);
 
         // Encode varint length prefix directly
         let mut varint_buf = unsigned_varint::encode::usize_buffer();
