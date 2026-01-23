@@ -454,16 +454,14 @@ impl tokio::io::AsyncWrite for Substream {
             flag: Some(Flag::Fin),
         }) {
             Ok(()) => {
-                // Transition to FinSent FIRST so that on_message can recognize FIN_ACK.
-                // If we registered the waker first, a FIN_ACK arriving before state transition
-                // would be ignored (on_message checks for FinSent state).
+                // Race condition mitigation strategy:
+                // 1. Transition to FinSent FIRST so on_message can recognize FIN_ACK (if waker
+                //    registered first, FIN_ACK would be ignored since state != FinSent)
+                // 2. Register waker so we'll be notified on future FIN_ACK arrivals
+                // 3. Re-check state to catch FIN_ACK that arrived between steps 1 and 2 (wake()
+                //    called before waker registered has no effect, but state changed)
                 *self.state.lock() = State::FinSent;
-
-                // Now register waker so we'll be notified when FIN_ACK arrives
                 self.shutdown_waker.register(cx.waker());
-
-                // Re-check state in case FIN_ACK arrived between state transition and
-                // waker registration (on_message may have already transitioned us to FinAcked)
                 if matches!(*self.state.lock(), State::FinAcked) {
                     return Poll::Ready(Ok(()));
                 }
@@ -1482,5 +1480,36 @@ mod tests {
 
         // Shutdown should complete successfully
         shutdown_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fin_with_payload_delivers_data_before_close() {
+        // Test that when a FIN message contains payload data, the data is delivered
+        // to the substream before the RecvClosed event. This is important because
+        // the spec allows a FIN message to contain final data.
+
+        let (mut substream, handle) = Substream::new();
+
+        // Simulate receiving FIN with payload from remote
+        handle
+            .on_message(WebRtcMessage {
+                payload: Some(b"final data".to_vec()),
+                flag: Some(Flag::Fin),
+            })
+            .await
+            .unwrap();
+
+        // First, we should receive the payload data
+        let mut buf = vec![0u8; 1024];
+        let n = substream.read(&mut buf).await.unwrap();
+        assert_eq!(&buf[..n], b"final data");
+
+        // Then, subsequent read should fail with BrokenPipe (RecvClosed)
+        match substream.read(&mut buf).await {
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                // Expected - read half closed after FIN
+            }
+            other => panic!("Expected BrokenPipe error, got: {:?}", other),
+        }
     }
 }
