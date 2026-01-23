@@ -162,10 +162,25 @@ pub struct SubstreamHandle {
 impl SubstreamHandle {
     /// Handle message received from a remote peer.
     ///
-    /// If the message contains a flag, handle it first and appropriately close the correct
-    /// side of the substream. If the message contained any payload, send it to the protocol for
-    /// further processing.
+    /// Process an incoming WebRTC message, handling any payload and flags.
+    ///
+    /// Payload is processed first (if present), then flags are handled. This ensures that
+    /// a FIN message containing final data will deliver that data before signaling closure.
     pub async fn on_message(&self, message: WebRtcMessage) -> crate::Result<()> {
+        // Process payload first, before handling flags.
+        // This ensures that if a FIN message contains data, we deliver it before closing.
+        if let Some(payload) = message.payload {
+            if !payload.is_empty() {
+                self.inbound_tx
+                    .send(Event::Message {
+                        payload,
+                        flag: None,
+                    })
+                    .await?;
+            }
+        }
+
+        // Now handle flags
         if let Some(flag) = message.flag {
             match flag {
                 Flag::Fin => {
@@ -191,6 +206,12 @@ impl SubstreamHandle {
                         *state = State::FinAcked;
                         // Wake up any task waiting on shutdown
                         self.shutdown_waker.wake();
+                    } else {
+                        tracing::warn!(
+                            target: "litep2p::webrtc::substream",
+                            ?state,
+                            "received FIN_ACK in unexpected state, ignoring"
+                        );
                     }
                     return Ok(());
                 }
@@ -211,19 +232,6 @@ impl SubstreamHandle {
                     self.write_waker.wake();
                     return Err(Error::ConnectionClosed);
                 }
-            }
-        }
-
-        if let Some(payload) = message.payload {
-            if !payload.is_empty() {
-                return self
-                    .inbound_tx
-                    .send(Event::Message {
-                        payload,
-                        flag: None,
-                    })
-                    .await
-                    .map_err(From::from);
             }
         }
 
@@ -395,7 +403,10 @@ impl tokio::io::AsyncWrite for Substream {
             }
 
             State::Closing => {
-                // Already in closing state, continue with shutdown process
+                // Already in closing state, continue with shutdown process.
+                // Note: Concurrent calls to poll_shutdown violate AsyncWrite's contract
+                // (requires &mut self). If this somehow happens, duplicate FIN messages
+                // could be sent, but the protocol handles this gracefully.
             }
 
             State::SendClosed => {
@@ -420,17 +431,16 @@ impl tokio::io::AsyncWrite for Substream {
             flag: Some(Flag::Fin),
         }) {
             Ok(()) => {
-                // Register waker BEFORE transitioning state to avoid race condition:
-                // If FIN_ACK arrives between state transition and waker registration,
-                // on_message would call wake() before the waker is registered, causing
-                // a missed wakeup.
-                self.shutdown_waker.register(cx.waker());
-
-                // Transition to FinSent after successfully sending FIN
+                // Transition to FinSent FIRST so that on_message can recognize FIN_ACK.
+                // If we registered the waker first, a FIN_ACK arriving before state transition
+                // would be ignored (on_message checks for FinSent state).
                 *self.state.lock() = State::FinSent;
 
-                // Re-check state in case FIN_ACK arrived between state transition and now
-                // (on_message may have already transitioned us to FinAcked)
+                // Now register waker so we'll be notified when FIN_ACK arrives
+                self.shutdown_waker.register(cx.waker());
+
+                // Re-check state in case FIN_ACK arrived between state transition and
+                // waker registration (on_message may have already transitioned us to FinAcked)
                 if matches!(*self.state.lock(), State::FinAcked) {
                     return Poll::Ready(Ok(()));
                 }
@@ -794,7 +804,7 @@ mod tests {
         let (mut substream, mut handle) = Substream::new();
 
         // Spawn shutdown since it waits for FIN_ACK
-        let _shutdown_task = tokio::spawn(async move {
+        let shutdown_task = tokio::spawn(async move {
             substream.shutdown().await.unwrap();
         });
 
@@ -809,6 +819,18 @@ mod tests {
 
         // Verify state is FinSent
         assert!(matches!(*handle.state.lock(), State::FinSent));
+
+        // Send FIN_ACK to complete shutdown cleanly (avoids waiting for timeout)
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::FinAck),
+            })
+            .await
+            .unwrap();
+
+        // Wait for shutdown to complete
+        shutdown_task.await.unwrap();
     }
 
     #[tokio::test]
@@ -1372,5 +1394,70 @@ mod tests {
             None,
             "SubstreamHandle should signal closure after server receives FIN and drops Substream"
         );
+    }
+
+    #[tokio::test]
+    async fn simultaneous_close() {
+        // Test simultaneous close where both sides send FIN at the same time.
+        // This verifies that:
+        // 1. Both sides can be in FinSent state simultaneously
+        // 2. Both sides correctly respond to FIN with FIN_ACK even when in FinSent state
+        // 3. Both sides eventually transition to FinAcked
+
+        let (mut substream, mut handle) = Substream::new();
+
+        // Local side initiates shutdown (sends FIN, transitions to FinSent)
+        let shutdown_task = tokio::spawn(async move {
+            substream.shutdown().await.unwrap();
+        });
+
+        // Wait for local FIN to be sent
+        assert_eq!(
+            handle.next().await,
+            Some(Event::Message {
+                payload: vec![],
+                flag: Some(Flag::Fin)
+            })
+        );
+
+        // Verify local is in FinSent state
+        assert!(matches!(*handle.state.lock(), State::FinSent));
+
+        // Now simulate remote also sending FIN (simultaneous close)
+        // This should trigger FIN_ACK response even though we're in FinSent state
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::Fin),
+            })
+            .await
+            .unwrap();
+
+        // Local should send FIN_ACK in response to remote's FIN
+        assert_eq!(
+            handle.next().await,
+            Some(Event::Message {
+                payload: vec![],
+                flag: Some(Flag::FinAck)
+            })
+        );
+
+        // Local should still be in FinSent (waiting for FIN_ACK from remote)
+        assert!(matches!(*handle.state.lock(), State::FinSent));
+
+        // Now remote sends FIN_ACK (completing their side of the handshake)
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::FinAck),
+            })
+            .await
+            .unwrap();
+
+        // Local should now transition to FinAcked
+        assert!(matches!(*handle.state.lock(), State::FinAcked));
+
+        // Shutdown should complete successfully
+        shutdown_task.await.unwrap();
     }
 }
