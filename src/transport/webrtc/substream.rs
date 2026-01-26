@@ -1294,9 +1294,9 @@ mod tests {
         assert!(matches!(*handle.state.lock(), State::FinSent));
 
         // DON'T send FIN_ACK - let it timeout
-        // The shutdown should complete after FIN_ACK_TIMEOUT (2 seconds in tests)
+        // The shutdown should complete after FIN_ACK_TIMEOUT (5 seconds)
         // Add a bit of buffer to the timeout
-        let result = timeout(Duration::from_secs(4), shutdown_task).await;
+        let result = timeout(Duration::from_secs(7), shutdown_task).await;
 
         assert!(result.is_ok(), "Shutdown should complete after timeout");
         assert!(
