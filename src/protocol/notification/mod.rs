@@ -1773,7 +1773,15 @@ impl NotificationProtocol {
                     self.on_substream_open_failure(substream, error).await;
                 }
                 Some(TransportEvent::DialFailure { peer, addresses }) => self.on_dial_failure(peer, addresses).await,
-                None => (),
+                None => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        protocol = %self.protocol,
+                        "transport service has exited, exiting",
+                    );
+
+                    return true;
+                }
             },
             result = self.pending_validations.select_next_some(), if !self.pending_validations.is_empty() => {
                 if let Err(error) = self.on_validation_result(result.0, result.1).await {
