@@ -532,7 +532,10 @@ impl Transport for WebRtcTransport {
         ))
     }
 
-    fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
+    fn accept(
+        &mut self,
+        connection_id: ConnectionId,
+    ) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
         tracing::trace!(
             target: LOG_TARGET,
             ?connection_id,
@@ -580,9 +583,7 @@ impl Transport for WebRtcTransport {
 
         Ok(Box::pin(async move {
             // First, notify all protocols about the connection establishment
-            protocol_set
-                .report_connection_established(peer, endpoint_clone)
-                .await?;
+            protocol_set.report_connection_established(peer, endpoint_clone).await?;
 
             // After protocols are notified, create connection and spawn event loop
             let connection = WebRtcConnection::new(

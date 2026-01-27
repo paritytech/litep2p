@@ -177,7 +177,7 @@ pub struct WebRtcConnection {
     peer: PeerId,
 
     /// Endpoint.
-    endpoint: Endpoint,
+    _endpoint: Endpoint,
 
     /// Peer address
     peer_address: SocketAddr,
@@ -220,7 +220,7 @@ impl WebRtcConnection {
             peer_address,
             local_address,
             socket,
-            endpoint,
+            _endpoint: endpoint,
             dgram_rx,
             pending_outbound: HashMap::new(),
             channels: HashMap::new(),
@@ -667,21 +667,21 @@ impl WebRtcConnection {
             .await;
     }
 
-    /// Start running event loop of [`WebRtcConnection`].
-    pub async fn run(mut self) {
-        tracing::trace!(
-            target: LOG_TARGET,
-            peer = ?self.peer,
-            "start webrtc connection event loop",
-        );
+    // /// Start running event loop of [`WebRtcConnection`].
+    // pub async fn run(mut self) {
+    //     tracing::trace!(
+    //         target: LOG_TARGET,
+    //         peer = ?self.peer,
+    //         "start webrtc connection event loop",
+    //     );
 
-        let _ = self
-            .protocol_set
-            .report_connection_established(self.peer, self.endpoint.clone())
-            .await;
+    //     let _ = self
+    //         .protocol_set
+    //         .report_connection_established(self.peer, self.endpoint.clone())
+    //         .await;
 
-        self.run_event_loop().await;
-    }
+    //     self.run_event_loop().await;
+    // }
 
     /// Start the connection event loop without notifying protocols.
     /// This is used when protocols have already been notified during accept().
