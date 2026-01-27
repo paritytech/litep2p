@@ -389,14 +389,15 @@ impl Transport for TcpTransport {
         )
     }
 
-    fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+    fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
         let context = self
             .pending_open
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
-        let protocol_set = self.context.protocol_set(connection_id);
+        let mut protocol_set = self.context.protocol_set(connection_id);
         let bandwidth_sink = self.context.bandwidth_sink.clone();
         let next_substream_id = self.context.next_substream_id.clone();
+        let executor = self.context.executor.clone();
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -404,22 +405,34 @@ impl Transport for TcpTransport {
             "start connection",
         );
 
-        self.context.executor.run(Box::pin(async move {
-            if let Err(error) =
-                TcpConnection::new(context, protocol_set, bandwidth_sink, next_substream_id)
-                    .start()
-                    .await
-            {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    ?connection_id,
-                    ?error,
-                    "connection exited with error",
-                );
-            }
-        }));
+        let peer = context.peer();
+        let endpoint = context.endpoint().clone();
 
-        Ok(())
+        Ok(Box::pin(async move {
+            // First, notify all protocols about the connection establishment
+            // This ensures that when the accept() future completes, protocols are ready
+            protocol_set
+                .report_connection_established(peer, endpoint)
+                .await?;
+
+            // After protocols are notified, spawn the connection event loop
+            executor.run(Box::pin(async move {
+                if let Err(error) =
+                    TcpConnection::new(context, protocol_set, bandwidth_sink, next_substream_id)
+                        .start_event_loop()
+                        .await
+                {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?connection_id,
+                        ?error,
+                        "connection exited with error",
+                    );
+                }
+            }));
+
+            Ok(())
+        }))
     }
 
     fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()> {

@@ -532,7 +532,7 @@ impl Transport for WebRtcTransport {
         ))
     }
 
-    fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+    fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
         tracing::trace!(
             target: LOG_TARGET,
             ?connection_id,
@@ -562,19 +562,13 @@ impl Transport for WebRtcTransport {
 
         let rtc = connection.on_accept()?;
         let (tx, rx) = channel(self.datagram_buffer_size);
-        let protocol_set = self.context.protocol_set(connection_id);
+        let mut protocol_set = self.context.protocol_set(connection_id);
         let connection_id = endpoint.connection_id();
+        let endpoint_clone = endpoint.clone();
+        let executor = self.context.executor.clone();
+        let socket = Arc::clone(&self.socket);
+        let listen_address = self.listen_address;
 
-        let connection = WebRtcConnection::new(
-            rtc,
-            peer,
-            source,
-            self.listen_address,
-            Arc::clone(&self.socket),
-            protocol_set,
-            endpoint,
-            rx,
-        );
         self.open.insert(
             source,
             ConnectionContext {
@@ -584,11 +578,30 @@ impl Transport for WebRtcTransport {
             },
         );
 
-        self.context.executor.run(Box::pin(async move {
-            connection.run().await;
-        }));
+        Ok(Box::pin(async move {
+            // First, notify all protocols about the connection establishment
+            protocol_set
+                .report_connection_established(peer, endpoint_clone)
+                .await?;
 
-        Ok(())
+            // After protocols are notified, create connection and spawn event loop
+            let connection = WebRtcConnection::new(
+                rtc,
+                peer,
+                source,
+                listen_address,
+                socket,
+                protocol_set,
+                endpoint,
+                rx,
+            );
+
+            executor.run(Box::pin(async move {
+                connection.run_event_loop().await;
+            }));
+
+            Ok(())
+        }))
     }
 
     fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
