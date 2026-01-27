@@ -1107,10 +1107,7 @@ impl TransportManager {
                             "connection accepted and protocols notified",
                         );
 
-                        return Some(TransportEvent::ConnectionEstablished {
-                            peer,
-                            endpoint,
-                        });
+                        return Some(TransportEvent::ConnectionEstablished { peer, endpoint });
                     }
                     Err(error) => {
                         tracing::debug!(

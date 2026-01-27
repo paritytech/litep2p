@@ -231,18 +231,9 @@ impl QuicConnection {
         })
     }
 
-    /// Start event loop for [`QuicConnection`].
-    pub async fn start(mut self) -> crate::Result<()> {
-        self.protocol_set
-            .report_connection_established(self.peer, self.endpoint.clone())
-            .await?;
-
-        self.start_event_loop().await
-    }
-
     /// Start the connection event loop without notifying protocols.
     /// This is used when protocols have already been notified during accept().
-    pub(crate) async fn start_event_loop(mut self) -> crate::Result<()> {
+    pub(crate) async fn start(mut self) -> crate::Result<()> {
         loop {
             tokio::select! {
                 event = self.connection.accept_bi() => match event {

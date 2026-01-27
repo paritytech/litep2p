@@ -199,7 +199,10 @@ pub(crate) trait Transport: Stream + Unpin + Send {
     /// and all installed protocols have been notified via their event channels.
     /// This ensures that by the time the caller receives a ConnectionEstablished event,
     /// protocols are ready to handle substream operations.
-    fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<BoxFuture<'static, crate::Result<()>>>;
+    fn accept(
+        &mut self,
+        connection_id: ConnectionId,
+    ) -> crate::Result<BoxFuture<'static, crate::Result<()>>>;
 
     /// Accept pending connection.
     fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()>;

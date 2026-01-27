@@ -398,7 +398,10 @@ impl Transport for WebSocketTransport {
         Ok(())
     }
 
-    fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
+    fn accept(
+        &mut self,
+        connection_id: ConnectionId,
+    ) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
         let context = self
             .pending_open
             .remove(&connection_id)
@@ -419,9 +422,7 @@ impl Transport for WebSocketTransport {
 
         Ok(Box::pin(async move {
             // First, notify all protocols about the connection establishment
-            protocol_set
-                .report_connection_established(peer, endpoint)
-                .await?;
+            protocol_set.report_connection_established(peer, endpoint).await?;
 
             // After protocols are notified, spawn the connection event loop
             executor.run(Box::pin(async move {
@@ -431,7 +432,7 @@ impl Transport for WebSocketTransport {
                     bandwidth_sink,
                     substream_open_timeout,
                 )
-                .start_event_loop()
+                .start()
                 .await
                 {
                     tracing::debug!(

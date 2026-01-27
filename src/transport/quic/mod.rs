@@ -306,7 +306,10 @@ impl Transport for QuicTransport {
         Ok(())
     }
 
-    fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
+    fn accept(
+        &mut self,
+        connection_id: ConnectionId,
+    ) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
         let (connection, endpoint) = self
             .pending_open
             .remove(&connection_id)
@@ -327,9 +330,7 @@ impl Transport for QuicTransport {
 
         Ok(Box::pin(async move {
             // First, notify all protocols about the connection establishment
-            protocol_set
-                .report_connection_established(peer, endpoint_clone)
-                .await?;
+            protocol_set.report_connection_established(peer, endpoint_clone).await?;
 
             // After protocols are notified, spawn the connection event loop
             executor.run(Box::pin(async move {
@@ -341,7 +342,7 @@ impl Transport for QuicTransport {
                     bandwidth_sink,
                     substream_open_timeout,
                 )
-                .start_event_loop()
+                .start()
                 .await;
             }));
 
