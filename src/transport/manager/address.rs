@@ -129,9 +129,6 @@ impl AddressRecord {
     }
 
     /// Update score of an address.
-    ///
-    /// This replaces the score rather than accumulating, since connection outcomes
-    /// are more meaningful as current state than as history.
     pub fn update_score(&mut self, score: i32) {
         self.score = score;
     }
