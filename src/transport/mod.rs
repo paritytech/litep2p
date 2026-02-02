@@ -141,6 +141,9 @@ pub(crate) enum TransportEvent {
 
         /// Address that was dialed.
         address: Multiaddr,
+
+        /// Errors from unsuccessful dial attempts.
+        errors: Vec<(Multiaddr, DialError)>,
     },
 
     /// Connection closed to remote peer.

@@ -78,6 +78,7 @@ enum RawConnectionResult {
         connection_id: ConnectionId,
         address: Multiaddr,
         stream: NegotiatedConnection,
+        errors: Vec<(Multiaddr, DialError)>,
     },
 
     /// All connection attempts failed.
@@ -437,6 +438,7 @@ impl Transport for QuicTransport {
                             connection_id,
                             address,
                             stream,
+                            errors,
                         },
                     Err(error) => {
                         tracing::debug!(
@@ -514,6 +516,7 @@ impl Stream for QuicTransport {
                     connection_id,
                     address,
                     stream,
+                    errors,
                 } => {
                     let Some(handle) = self.cancel_futures.remove(&connection_id) else {
                         tracing::warn!(
@@ -531,6 +534,7 @@ impl Stream for QuicTransport {
                         return Poll::Ready(Some(TransportEvent::ConnectionOpened {
                             connection_id,
                             address,
+                            errors,
                         }));
                     }
                 }

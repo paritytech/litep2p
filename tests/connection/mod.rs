@@ -46,6 +46,8 @@ use crate::common::{add_transport, Transport};
 use std::collections::HashSet;
 
 #[cfg(test)]
+mod failed_addresses_on_success;
+#[cfg(test)]
 mod protocol_dial_invalid_address;
 #[cfg(test)]
 mod stability;
