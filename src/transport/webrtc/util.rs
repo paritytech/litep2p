@@ -23,6 +23,8 @@ use crate::{codec::unsigned_varint::UnsignedVarint, error::ParseError, transport
 use prost::Message;
 use tokio_util::codec::{Decoder, Encoder};
 
+const MAX_MESSAGE_SIZE: usize = 16 * 1024;
+
 /// WebRTC mesage.
 #[derive(Debug)]
 pub struct WebRtcMessage {
@@ -73,8 +75,7 @@ impl WebRtcMessage {
 
     /// Decode payload into [`WebRtcMessage`].
     pub fn decode(payload: &[u8]) -> Result<Self, ParseError> {
-        // TODO: https://github.com/paritytech/litep2p/issues/352 set correct size
-        let mut codec = UnsignedVarint::new(None);
+        let mut codec = UnsignedVarint::new(Some(MAX_MESSAGE_SIZE));
         let mut data = bytes::BytesMut::from(payload);
         let result = codec
             .decode(&mut data)
