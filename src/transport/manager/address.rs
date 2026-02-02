@@ -253,10 +253,17 @@ impl AddressStore {
     /// Insert the address record into [`AddressStore`] with the provided score.
     ///
     /// If the address is not in the store, it will be inserted.
-    /// Otherwise, the score and connection ID will be updated.
+    /// Otherwise, the score will be updated only for significant changes (connection events),
+    /// not for re-adding the same address which would incorrectly accumulate the public address
+    /// bonus.
     pub fn insert(&mut self, record: AddressRecord) {
         if let Entry::Occupied(mut occupied) = self.addresses.entry(record.address.clone()) {
-            occupied.get_mut().update_score(record.score);
+            // Only update score for connection events (score magnitude > PUBLIC_ADDRESS_BONUS).
+            // Re-adding an address has score 0 (private) or 1 (public with bonus), and should
+            // not accumulate the bonus repeatedly.
+            if record.score.abs() > scores::PUBLIC_ADDRESS_BONUS {
+                occupied.get_mut().update_score(record.score);
+            }
             return;
         }
 
@@ -512,12 +519,62 @@ mod tests {
         assert_eq!(store.addresses.len(), 1);
         assert_eq!(store.addresses.get(record.address()).unwrap(), &record);
 
-        // This time the record is updated.
+        // This time the record is updated because score > PUBLIC_ADDRESS_BONUS.
         store.insert(record.clone());
 
         assert_eq!(store.addresses.len(), 1);
         let store_record = store.addresses.get(record.address()).unwrap();
         assert_eq!(store_record.score, record.score * 2);
+    }
+
+    #[test]
+    fn insert_record_does_not_accumulate_public_bonus() {
+        let mut store = AddressStore::new();
+        let peer = PeerId::random();
+
+        // Create a public address (8.8.8.8 is global) using from_multiaddr.
+        // This will apply the PUBLIC_ADDRESS_BONUS (+1).
+        let address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(8, 8, 8, 8)))
+            .with(Protocol::Tcp(9999))
+            .with(Protocol::P2p(
+                multihash::Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+
+        let record = AddressRecord::from_multiaddr(address.clone()).unwrap();
+        assert_eq!(record.score, scores::PUBLIC_ADDRESS_BONUS);
+
+        store.insert(record.clone());
+        assert_eq!(store.addresses.len(), 1);
+        assert_eq!(
+            store.addresses.get(&address).unwrap().score,
+            scores::PUBLIC_ADDRESS_BONUS
+        );
+
+        // Re-adding the same address should NOT accumulate the bonus.
+        let record2 = AddressRecord::from_multiaddr(address.clone()).unwrap();
+        store.insert(record2);
+
+        assert_eq!(store.addresses.len(), 1);
+        // Score should still be 1, not 2.
+        assert_eq!(
+            store.addresses.get(&address).unwrap().score,
+            scores::PUBLIC_ADDRESS_BONUS
+        );
+
+        // However, connection events should still update the score.
+        let connection_record =
+            AddressRecord::new(&peer, address.clone(), scores::CONNECTION_ESTABLISHED);
+        store.insert(connection_record);
+
+        assert_eq!(store.addresses.len(), 1);
+        // Score should now be 1 + 101 = 102 (original bonus + connection success with bonus).
+        assert_eq!(
+            store.addresses.get(&address).unwrap().score,
+            scores::PUBLIC_ADDRESS_BONUS
+                + scores::CONNECTION_ESTABLISHED
+                + scores::PUBLIC_ADDRESS_BONUS
+        );
     }
 
     #[test]
