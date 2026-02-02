@@ -599,6 +599,7 @@ mod tests {
     };
     use multihash::Multihash;
     use tokio::sync::mpsc::channel;
+    use crate::transport::manager::DialFailureAddresses;
 
     #[tokio::test]
     async fn test_quinn() {
@@ -624,6 +625,7 @@ mod tests {
                     tx: tx1,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
+                    dial_failure_mode: DialFailureAddresses::NotRequired,
                 },
             )]),
         };
@@ -651,6 +653,7 @@ mod tests {
                     tx: tx2,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
+                    dial_failure_mode: DialFailureAddresses::NotRequired,
                 },
             )]),
         };

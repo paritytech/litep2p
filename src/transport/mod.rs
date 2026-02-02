@@ -157,6 +157,7 @@ pub(crate) enum TransportEvent {
     },
 
     /// Failed to dial remote peer.
+    /// The addresses are only forwarded to the protocol if it was registered with `DialFailureAddresses::Required`.
     DialFailure {
         /// Connection ID.
         connection_id: ConnectionId,
@@ -169,6 +170,7 @@ pub(crate) enum TransportEvent {
     },
 
     /// Open failure for an unnegotiated set of connections.
+    /// The addresses are only forwarded to the protocol if it was registered with `DialFailureAddresses::Required`.
     OpenFailure {
         /// Connection ID.
         connection_id: ConnectionId,

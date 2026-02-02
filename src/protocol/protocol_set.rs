@@ -83,7 +83,8 @@ pub enum InnerTransportEvent {
 
     /// Failed to dial peer.
     ///
-    /// This is reported to that protocol which initiated the connection.
+    /// This is reported to that protocol which initiated the connection. The addresses are only forwarded
+    /// if the protocol was registered with `DialFailureAddresses::Required`.
     DialFailure {
         /// Peer ID.
         peer: PeerId,
@@ -459,6 +460,7 @@ mod tests {
     use super::*;
     use crate::mock::substream::MockSubstream;
     use std::collections::HashSet;
+    use crate::transport::manager::DialFailureAddresses;
 
     #[tokio::test]
     async fn fallback_is_provided() {
@@ -478,6 +480,7 @@ mod tests {
                         ProtocolName::from("/notif/1/fallback/1"),
                         ProtocolName::from("/notif/1/fallback/2"),
                     ],
+                    dial_failure_mode: DialFailureAddresses::NotRequired,
                 },
             )]),
         );
@@ -525,6 +528,7 @@ mod tests {
                         ProtocolName::from("/notif/1/fallback/1"),
                         ProtocolName::from("/notif/1/fallback/2"),
                     ],
+                    dial_failure_mode: DialFailureAddresses::NotRequired,
                 },
             )]),
         );
@@ -572,6 +576,7 @@ mod tests {
                         ProtocolName::from("/notif/1/fallback/1"),
                         ProtocolName::from("/notif/1/fallback/2"),
                     ],
+                    dial_failure_mode: DialFailureAddresses::NotRequired,
                 },
             )]),
         );
