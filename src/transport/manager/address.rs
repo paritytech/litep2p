@@ -84,8 +84,6 @@ impl AddressRecord {
     ///
     /// If `address` doesn't contain `PeerId`, return `None` to indicate that this
     /// an invalid `Multiaddr` from the perspective of the `TransportManager`.
-    ///
-    /// Public addresses get an initial score bonus to be prioritized over private addresses.
     pub fn from_multiaddr(address: Multiaddr) -> Option<AddressRecord> {
         if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
             return None;
