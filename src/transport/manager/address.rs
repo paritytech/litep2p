@@ -77,8 +77,7 @@ impl AddressRecord {
             address
         };
 
-        let is_global = is_global_multiaddr(&address);
-        Self { address, score }
+        Self::from_raw_multiaddr_with_score(address, score)
     }
 
     /// Create `AddressRecord` from `Multiaddr`.
@@ -92,13 +91,7 @@ impl AddressRecord {
             return None;
         }
 
-        let is_global = is_global_multiaddr(&address);
-        let score = if is_global {
-            scores::PUBLIC_ADDRESS_BONUS
-        } else {
-            0i32
-        };
-        Some(AddressRecord { address, score })
+        Some(Self::from_raw_multiaddr_with_score(address, 0))
     }
 
     /// Create `AddressRecord` from `Multiaddr`.
@@ -109,13 +102,7 @@ impl AddressRecord {
     ///
     /// Please consider using [`Self::from_multiaddr`] from the transport manager code.
     pub fn from_raw_multiaddr(address: Multiaddr) -> AddressRecord {
-        let is_global = is_global_multiaddr(&address);
-        let score = if is_global {
-            scores::PUBLIC_ADDRESS_BONUS
-        } else {
-            0i32
-        };
-        AddressRecord { address, score }
+        Self::from_raw_multiaddr_with_score(address, 0)
     }
 
     /// Create `AddressRecord` from `Multiaddr`.
@@ -124,8 +111,14 @@ impl AddressRecord {
     ///
     /// Please consider using [`Self::from_multiaddr`] from the transport manager code.
     pub fn from_raw_multiaddr_with_score(address: Multiaddr, score: i32) -> AddressRecord {
-        let is_global = is_global_multiaddr(&address);
-        AddressRecord { address, score }
+        if is_global_multiaddr(&address) {
+            Self {
+                address,
+                score: score.saturating_add(scores::PUBLIC_ADDRESS_BONUS),
+            }
+        } else {
+            Self { address, score }
+        }
     }
 
     /// Get address score.
