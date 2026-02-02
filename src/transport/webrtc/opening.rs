@@ -207,7 +207,7 @@ impl OpeningWebRtcConnection {
         };
 
         // create first noise handshake and send it to remote peer
-        let payload = WebRtcMessage::encode(context.first_message(Role::Dialer)?);
+        let payload = WebRtcMessage::encode(context.first_message(Role::Dialer)?, None);
 
         self.rtc
             .channel(self.noise_channel_id)
@@ -300,7 +300,7 @@ impl OpeningWebRtcConnection {
         };
 
         // create second noise handshake message and send it to remote
-        let payload = WebRtcMessage::encode(context.second_message()?);
+        let payload = WebRtcMessage::encode(context.second_message()?, None);
 
         let mut channel =
             self.rtc.channel(self.noise_channel_id).ok_or(Error::ChannelDoesntExist)?;
