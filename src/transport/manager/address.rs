@@ -40,7 +40,7 @@ pub mod scores {
     /// Score for providing an invalid address.
     ///
     /// This address can never be reached.
-    pub const ADDRESS_FAILURE: i32 = i32::MIN;
+    pub const ADDRESS_FAILURE: i32 = -200i32;
 
     /// Initial score for public/global addresses.
     ///
