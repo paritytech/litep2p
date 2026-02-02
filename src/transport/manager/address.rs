@@ -96,8 +96,6 @@ impl AddressRecord {
     ///
     /// This method does not check if the address contains `PeerId`.
     ///
-    /// Public addresses get an initial score bonus to be prioritized over private addresses.
-    ///
     /// Please consider using [`Self::from_multiaddr`] from the transport manager code.
     pub fn from_raw_multiaddr(address: Multiaddr) -> AddressRecord {
         Self::from_raw_multiaddr_with_score(address, 0)
