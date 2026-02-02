@@ -20,6 +20,7 @@
 
 use crate::{error::DialError, PeerId};
 
+use ip_network::IpNetwork;
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 
@@ -40,6 +41,12 @@ pub mod scores {
     ///
     /// This address can never be reached.
     pub const ADDRESS_FAILURE: i32 = i32::MIN;
+
+    /// Initial score for public/global addresses.
+    ///
+    /// This gives public addresses a slight priority over private addresses
+    /// when all addresses are untested (private addresses start at 0).
+    pub const PUBLIC_ADDRESS_BONUS: i32 = 1i32;
 }
 
 #[allow(clippy::derived_hash_with_manual_eq)]
@@ -70,6 +77,7 @@ impl AddressRecord {
             address
         };
 
+        let is_global = is_global_multiaddr(&address);
         Self { address, score }
     }
 
@@ -77,27 +85,37 @@ impl AddressRecord {
     ///
     /// If `address` doesn't contain `PeerId`, return `None` to indicate that this
     /// an invalid `Multiaddr` from the perspective of the `TransportManager`.
+    ///
+    /// Public addresses get an initial score bonus to be prioritized over private addresses.
     pub fn from_multiaddr(address: Multiaddr) -> Option<AddressRecord> {
         if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
             return None;
         }
 
-        Some(AddressRecord {
-            address,
-            score: 0i32,
-        })
+        let is_global = is_global_multiaddr(&address);
+        let score = if is_global {
+            scores::PUBLIC_ADDRESS_BONUS
+        } else {
+            0i32
+        };
+        Some(AddressRecord { address, score })
     }
 
     /// Create `AddressRecord` from `Multiaddr`.
     ///
     /// This method does not check if the address contains `PeerId`.
     ///
+    /// Public addresses get an initial score bonus to be prioritized over private addresses.
+    ///
     /// Please consider using [`Self::from_multiaddr`] from the transport manager code.
     pub fn from_raw_multiaddr(address: Multiaddr) -> AddressRecord {
-        AddressRecord {
-            address,
-            score: 0i32,
-        }
+        let is_global = is_global_multiaddr(&address);
+        let score = if is_global {
+            scores::PUBLIC_ADDRESS_BONUS
+        } else {
+            0i32
+        };
+        AddressRecord { address, score }
     }
 
     /// Create `AddressRecord` from `Multiaddr`.
@@ -106,6 +124,7 @@ impl AddressRecord {
     ///
     /// Please consider using [`Self::from_multiaddr`] from the transport manager code.
     pub fn from_raw_multiaddr_with_score(address: Multiaddr, score: i32) -> AddressRecord {
+        let is_global = is_global_multiaddr(&address);
         AddressRecord { address, score }
     }
 
@@ -124,6 +143,27 @@ impl AddressRecord {
     pub fn update_score(&mut self, score: i32) {
         self.score = self.score.saturating_add(score);
     }
+}
+
+/// Check if a multiaddr represents a global/public address.
+///
+/// DNS addresses are considered potentially public.
+fn is_global_multiaddr(address: &Multiaddr) -> bool {
+    for protocol in address.iter() {
+        match protocol {
+            Protocol::Ip4(ip) => return IpNetwork::from(ip).is_global(),
+            Protocol::Ip6(ip) => return IpNetwork::from(ip).is_global(),
+            // DNS addresses could resolve to public IPs, treat as potentially public.
+            // Ideally we need to resolve DNS to check the actual IPs. However, this
+            // is a more complex operation that requires async DNS resolution in the
+            // transport manager context / transport layer.
+            Protocol::Dns(_) | Protocol::Dns4(_) | Protocol::Dns6(_) => return true,
+            _ => continue,
+        }
+    }
+
+    // Consider the address as non-global if no IP or DNS component is found
+    false
 }
 
 impl PartialEq for AddressRecord {
