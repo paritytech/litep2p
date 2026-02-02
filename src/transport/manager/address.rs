@@ -133,8 +133,11 @@ impl AddressRecord {
     }
 
     /// Update score of an address.
+    ///
+    /// This replaces the score rather than accumulating, since connection outcomes
+    /// are more meaningful as current state than as history.
     pub fn update_score(&mut self, score: i32) {
-        self.score = self.score.saturating_add(score);
+        self.score = score;
     }
 }
 
@@ -519,12 +522,12 @@ mod tests {
         assert_eq!(store.addresses.len(), 1);
         assert_eq!(store.addresses.get(record.address()).unwrap(), &record);
 
-        // This time the record is updated because score > PUBLIC_ADDRESS_BONUS.
+        // This time the record score is replaced (not accumulated).
         store.insert(record.clone());
 
         assert_eq!(store.addresses.len(), 1);
         let store_record = store.addresses.get(record.address()).unwrap();
-        assert_eq!(store_record.score, record.score * 2);
+        assert_eq!(store_record.score, record.score);
     }
 
     #[test]
@@ -562,19 +565,55 @@ mod tests {
             scores::PUBLIC_ADDRESS_BONUS
         );
 
-        // However, connection events should still update the score.
+        // However, connection events should still update (replace) the score.
         let connection_record =
             AddressRecord::new(&peer, address.clone(), scores::CONNECTION_ESTABLISHED);
         store.insert(connection_record);
 
         assert_eq!(store.addresses.len(), 1);
-        // Score should now be 1 + 101 = 102 (original bonus + connection success with bonus).
+        // Score should now be 101 (CONNECTION_ESTABLISHED + PUBLIC_ADDRESS_BONUS).
+        // The score replaces rather than accumulates.
+        assert_eq!(
+            store.addresses.get(&address).unwrap().score,
+            scores::CONNECTION_ESTABLISHED + scores::PUBLIC_ADDRESS_BONUS
+        );
+    }
+
+    #[test]
+    fn rediscovery_does_not_wipe_dial_failure() {
+        let mut store = AddressStore::new();
+        let peer = PeerId::random();
+
+        // Public address (8.8.8.8 is global).
+        let address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(8, 8, 8, 8)))
+            .with(Protocol::Tcp(9999))
+            .with(Protocol::P2p(
+                multihash::Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+
+        // First, add the address normally.
+        let record = AddressRecord::from_multiaddr(address.clone()).unwrap();
+        store.insert(record);
         assert_eq!(
             store.addresses.get(&address).unwrap().score,
             scores::PUBLIC_ADDRESS_BONUS
-                + scores::CONNECTION_ESTABLISHED
-                + scores::PUBLIC_ADDRESS_BONUS
         );
+
+        // Dial failure occurs.
+        let failure_record = AddressRecord::new(&peer, address.clone(), scores::CONNECTION_FAILURE);
+        store.insert(failure_record);
+        let failure_score = scores::CONNECTION_FAILURE + scores::PUBLIC_ADDRESS_BONUS; // -99
+        assert_eq!(store.addresses.get(&address).unwrap().score, failure_score);
+
+        // Address is rediscovered via Kademlia (creates record with score 0 or 1).
+        // This should NOT wipe out the dial failure score.
+        let rediscovered = AddressRecord::from_multiaddr(address.clone()).unwrap();
+        assert_eq!(rediscovered.score, scores::PUBLIC_ADDRESS_BONUS); // score = 1
+        store.insert(rediscovered);
+
+        // Score should still be -99, not 1.
+        assert_eq!(store.addresses.get(&address).unwrap().score, failure_score);
     }
 
     #[test]
