@@ -177,7 +177,7 @@ pub struct WebRtcConnection {
     peer: PeerId,
 
     /// Endpoint.
-    _endpoint: Endpoint,
+    endpoint: Endpoint,
 
     /// Peer address
     peer_address: SocketAddr,
@@ -220,7 +220,7 @@ impl WebRtcConnection {
             peer_address,
             local_address,
             socket,
-            _endpoint: endpoint,
+            endpoint,
             dgram_rx,
             pending_outbound: HashMap::new(),
             channels: HashMap::new(),
