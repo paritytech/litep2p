@@ -663,6 +663,7 @@ impl Stream for WebSocketTransport {
                         return Poll::Ready(Some(TransportEvent::ConnectionOpened {
                             connection_id,
                             address,
+                            errors,
                         }));
                     }
                 }

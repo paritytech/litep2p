@@ -1343,8 +1343,12 @@ impl TransportManager {
                                 }
                             }
                         }
-                        TransportEvent::ConnectionOpened { connection_id, address } => {
+                        TransportEvent::ConnectionOpened { connection_id, address, errors } => {
                             self.opening_errors.remove(&connection_id);
+
+                            for (addr, error) in &errors {
+                                self.update_address_on_dial_failure(addr.clone(), error);
+                            }
 
                             if let Err(error) = self.on_connection_opened(transport, connection_id, address) {
                                 tracing::debug!(
