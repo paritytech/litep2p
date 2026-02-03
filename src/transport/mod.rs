@@ -54,7 +54,7 @@ pub(crate) const SUBSTREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Maximum number of parallel dial attempts.
-pub(crate) const MAX_PARALLEL_DIALS: usize = 8;
+pub(crate) const MAX_PARALLEL_DIALS: usize = 256;
 
 /// Connection endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
