@@ -453,12 +453,9 @@ impl WebSocketConnection {
         })
     }
 
-    /// Start connection event loop.
+    /// Start the connection event loop without notifying protocols.
+    /// This is used when protocols have already been notified during accept().
     pub(crate) async fn start(mut self) -> crate::Result<()> {
-        self.protocol_set
-            .report_connection_established(self.peer, self.endpoint)
-            .await?;
-
         loop {
             tokio::select! {
                 substream = self.connection.next() => match substream {
