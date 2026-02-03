@@ -155,7 +155,7 @@ pub(crate) struct WebSocketConnection {
     peer: PeerId,
 
     /// Endpoint.
-    endpoint: Endpoint,
+    _endpoint: Endpoint,
 
     /// Substream open timeout.
     substream_open_timeout: Duration,
@@ -192,7 +192,7 @@ impl WebSocketConnection {
             connection,
             control,
             peer,
-            endpoint,
+            _endpoint: endpoint,
             bandwidth_sink,
             substream_open_timeout,
             pending_substreams: FuturesUnordered::new(),
