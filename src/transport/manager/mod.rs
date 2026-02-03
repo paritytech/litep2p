@@ -39,7 +39,7 @@ use crate::{
 };
 
 use address::{scores, AddressStore};
-use futures::{future::BoxFuture, Stream, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use indexmap::IndexMap;
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
@@ -253,10 +253,9 @@ pub struct TransportManager {
     /// Opening connections errors.
     opening_errors: HashMap<ConnectionId, Vec<(Multiaddr, DialError)>>,
 
-    /// Pending accept future with associated connection information.
-    /// When a connection is accepted, we must wait for the accept future to complete
-    /// (which notifies all protocols) before emitting the ConnectionEstablished event.
-    pending_accept: Option<(PeerId, Endpoint, BoxFuture<'static, crate::Result<()>>)>,
+    /// Pending accept futures with associated connection information.
+    /// The manager will emit a `TransportEvent::ConnectionEstablished` when complete.
+    pending_accept: FuturesUnordered<BoxFuture<'static, (PeerId, Endpoint, crate::Result<()>)>>,
 }
 
 /// Builder for [`crate::transport::manager::TransportManager`].
@@ -370,7 +369,7 @@ impl TransportManagerBuilder {
             pending_connections: HashMap::new(),
             connection_limits: limits::ConnectionLimits::new(self.connection_limits_config),
             opening_errors: HashMap::new(),
-            pending_accept: None,
+            pending_accept: FuturesUnordered::new(),
         }
     }
 }
@@ -1096,33 +1095,34 @@ impl TransportManager {
     /// Poll next event from [`crate::transport::manager::TransportManager`].
     pub async fn next(&mut self) -> Option<TransportEvent> {
         loop {
-            // First, check if we have a pending accept future to poll
-            if let Some((peer, endpoint, mut future)) = self.pending_accept.take() {
-                match future.as_mut().await {
-                    Ok(()) => {
-                        tracing::trace!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?endpoint,
-                            "connection accepted and protocols notified",
-                        );
+            tokio::select! {
+                result = self.pending_accept.next(), if !self.pending_accept.is_empty() => {
+                    let Some((peer, endpoint, result)) = result else {
+                        continue;
+                    };
 
-                        return Some(TransportEvent::ConnectionEstablished { peer, endpoint });
-                    }
-                    Err(error) => {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?endpoint,
-                            ?error,
-                            "failed to notify protocols about connection",
-                        );
-                        // If notification failed, we don't emit the ConnectionEstablished event
+                    match result {
+                        Ok(()) => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?endpoint,
+                                "connection accepted and protocols notified",
+                            );
+
+                            return Some(TransportEvent::ConnectionEstablished { peer, endpoint });
+                        }
+                        Err(error) => {
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?endpoint,
+                                ?error,
+                                "failed to notify protocols about connection",
+                            );
+                        }
                     }
                 }
-            }
-
-            tokio::select! {
                 event = self.event_rx.recv() => {
                     let Some(event) = event else {
                         tracing::error!(
@@ -1309,9 +1309,12 @@ impl TransportManager {
                                         .accept(endpoint.connection_id())
                                     {
                                         Ok(future) => {
-                                            // Store the accept future to be polled in the next iteration
-                                            // This ensures protocols are notified before we emit ConnectionEstablished
-                                            self.pending_accept = Some((peer, endpoint, future));
+                                            // A ConnectionEstablished is propagated to the user once
+                                            // all protocols have been notified.
+                                            self.pending_accept.push(Box::pin(async move {
+                                                let result = future.await;
+                                                (peer, endpoint, result)
+                                            }));
                                         }
                                         Err(error) => {
                                             tracing::debug!(
@@ -1513,8 +1516,11 @@ mod tests {
                 Ok(())
             }
 
-            fn accept(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
-                Ok(())
+            fn accept(
+                &mut self,
+                _connection_id: ConnectionId,
+            ) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
+                Ok(Box::pin(async { Ok(()) }))
             }
 
             fn accept_pending(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
