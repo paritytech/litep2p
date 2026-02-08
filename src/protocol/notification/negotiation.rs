@@ -79,6 +79,7 @@ pub enum HandshakeEvent {
 }
 
 /// Outbound substream's handshake state
+#[derive(Debug)]
 enum HandshakeState {
     /// Send handshake to remote peer.
     SendHandshake,
@@ -218,6 +219,13 @@ impl Stream for HandshakeService {
             inner.substreams.iter_mut()
         {
             if let Poll::Ready(()) = timer.poll_unpin(cx) {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?direction,
+                    ?state,
+                    "handshake negotiation timed out",
+                );
                 return Poll::Ready(Some((
                     *peer,
                     HandshakeEvent::NegotiationError {
@@ -285,10 +293,36 @@ impl Stream for HandshakeService {
                     },
                     HandshakeState::ReadHandshake => match pinned.poll_next(cx) {
                         Poll::Ready(Some(Ok(handshake))) => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                handshake_len = handshake.len(),
+                                "successfully read handshake from substream",
+                            );
                             inner.ready.push_back((*peer, *direction, handshake.freeze().into()));
                             continue 'outer;
                         }
-                        Poll::Ready(Some(Err(_))) | Poll::Ready(None) => {
+                        Poll::Ready(Some(Err(error))) => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?error,
+                                "error reading handshake from substream",
+                            );
+                            return Poll::Ready(Some((
+                                *peer,
+                                HandshakeEvent::NegotiationError {
+                                    peer: *peer,
+                                    direction: *direction,
+                                },
+                            )));
+                        }
+                        Poll::Ready(None) => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                "substream closed while reading handshake",
+                            );
                             return Poll::Ready(Some((
                                 *peer,
                                 HandshakeEvent::NegotiationError {
