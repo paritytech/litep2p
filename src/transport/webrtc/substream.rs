@@ -171,6 +171,11 @@ impl SubstreamHandle {
         // This ensures that if a FIN message contains data, we deliver it before closing.
         if let Some(payload) = message.payload {
             if !payload.is_empty() {
+                tracing::trace!(
+                    target: "litep2p::webrtc::substream",
+                    payload_len = payload.len(),
+                    "forwarding payload to substream",
+                );
                 self.inbound_tx
                     .send(Event::Message {
                         payload,
