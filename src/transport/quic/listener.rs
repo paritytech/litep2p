@@ -61,9 +61,9 @@ impl QuicListener {
 
         for address in addresses.into_iter() {
             let (listen_address, _) = Self::get_socket_address(&address)?;
-            let crypto_config = Arc::new(make_server_config(keypair).expect("to succeed"));
+            let crypto_config = Arc::new(make_server_config(keypair)?);
             let server_config = ServerConfig::with_crypto(crypto_config);
-            let listener = Endpoint::server(server_config, listen_address).unwrap();
+            let listener = Endpoint::server(server_config, listen_address)?;
 
             let listen_address = listener.local_addr()?;
             listen_addresses.push(listen_address);

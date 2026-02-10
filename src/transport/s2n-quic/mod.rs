@@ -153,9 +153,10 @@ impl QuicTransport {
     /// Accept QUIC conenction.
     async fn accept_connection(&mut self, connection: Connection) -> crate::Result<()> {
         let connection_id = self.context.next_connection_id();
-        let address = socket_addr_to_multi_addr(
-            &connection.remote_addr().expect("remote address to be known"),
-        );
+        let remote_addr = connection
+            .remote_addr()
+            .map_err(|_| Error::AddressError(AddressError::AddressNotAvailable))?;
+        let address = socket_addr_to_multi_addr(&remote_addr);
 
         let Ok(peer) = self.rx.try_recv() else {
             tracing::error!(target: LOG_TARGET, "failed to receive client `PeerId` from tls verifier");
@@ -257,12 +258,12 @@ impl QuicTransport {
             return Err(Error::AddressError(AddressError::PeerIdMissing));
         };
 
-        let (certificate, key) = generate(&self.context.keypair).unwrap();
+        let (certificate, key) = generate(&self.context.keypair)?;
         let provider = TlsProvider::new(key, certificate, Some(peer), None);
 
         let client = Client::builder()
             .with_tls(provider)
-            .expect("TLS provider to be enabled successfully")
+            .map_err(|e| Error::Other(e.to_string()))?
             .with_io(self.client_listen_address)?
             .start()?;
 
@@ -299,7 +300,7 @@ impl Transport for QuicTransport {
         let provider = TlsProvider::new(key, certificate, None, Some(_tx.clone()));
         let server = Server::builder()
             .with_tls(provider)
-            .expect("TLS provider to be enabled successfully")
+            .map_err(|e| Error::Other(e.to_string()))?
             .with_io(listen_address)?
             .start()?;
 
