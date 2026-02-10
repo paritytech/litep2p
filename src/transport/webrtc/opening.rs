@@ -339,13 +339,13 @@ impl OpeningWebRtcConnection {
             .rtc
             .direct_api()
             .remote_dtls_fingerprint()
-            .expect("fingerprint to exist")
+            .ok_or(Error::InvalidState)?
             .clone()
             .bytes;
 
         let certificate =
             multihash::Multihash::<64>::wrap(Code::Sha2_256.into(), &remote_fingerprint)
-                .expect("fingerprint's len to be 32 bytes");
+                .map_err(|_| Error::InvalidData)?;
 
         let address = Multiaddr::empty()
             .with(Protocol::from(self.peer_address.ip()))

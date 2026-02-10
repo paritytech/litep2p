@@ -571,8 +571,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                         }
                     },
                     None => {
-                        let frame_size =
-                            this.current_frame_size.take().expect("`frame_size` to exist");
+                        let frame_size = this.current_frame_size.take().ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::InvalidData, "frame_size missing")
+                        })?;
 
                         match buf.len() >= frame_size - NOISE_EXTRA_ENCRYPT_SPACE {
                             true => match this.noise.read_message(
@@ -600,7 +601,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                             },
                             false => {
                                 let mut buffer =
-                                    this.decrypt_buffer.take().expect("buffer to exist");
+                                    this.decrypt_buffer.take().ok_or_else(|| {
+                                        io::Error::new(
+                                            io::ErrorKind::InvalidData,
+                                            "decrypt buffer missing",
+                                        )
+                                    })?;
 
                                 match this.noise.read_message(
                                     &this.read_buffer[this.offset..this.offset + frame_size],
