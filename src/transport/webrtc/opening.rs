@@ -268,13 +268,13 @@ impl OpeningWebRtcConnection {
             .rtc
             .direct_api()
             .remote_dtls_fingerprint()
-            .expect("fingerprint to exist")
+            .ok_or(Error::InvalidState)?
             .clone()
             .bytes;
 
         const MULTIHASH_SHA256_CODE: u64 = 0x12;
         let certificate = Multihash::wrap(MULTIHASH_SHA256_CODE, &remote_fingerprint)
-            .expect("fingerprint's len to be 32 bytes");
+            .map_err(|_| Error::InvalidData)?;
 
         let address = Multiaddr::empty()
             .with(Protocol::from(self.peer_address.ip()))
