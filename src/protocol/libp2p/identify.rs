@@ -486,14 +486,19 @@ mod tests {
         // Create two instances of litep2p
         let (mut litep2p1, mut event_stream1, peer1) = create_litep2p();
         let (mut litep2p2, mut event_stream2, _peer2) = create_litep2p();
-        let litep2p1_address = litep2p1.listen_addresses().next().unwrap();
+        let litep2p1_address = litep2p1
+            .listen_addresses()
+            .next()
+            .unwrap()
+            .clone()
+            .with(Protocol::P2p(peer1.into()));
 
         let multiaddr: Multiaddr = "/ip6/::9/tcp/111".parse().unwrap();
         // Litep2p1 is now reporting the new address.
         assert!(litep2p1.public_addresses().add_address(multiaddr.clone()).unwrap());
 
         // Dial `litep2p1`
-        litep2p2.dial_address(litep2p1_address.clone()).await.unwrap();
+        litep2p2.dial_address(litep2p1_address).await.unwrap();
 
         let expected_multiaddr = multiaddr.with(Protocol::P2p(peer1.into()));
 

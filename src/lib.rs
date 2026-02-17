@@ -331,7 +331,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with(Protocol::P2p(*local_peer_id.as_ref())));
+                listen_addresses.push(address);
             }
 
             transport_manager.register_transport(SupportedTransport::Tcp, Box::new(transport));
@@ -346,7 +346,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with(Protocol::P2p(*local_peer_id.as_ref())));
+                listen_addresses.push(address);
             }
 
             transport_manager.register_transport(SupportedTransport::Quic, Box::new(transport));
@@ -361,7 +361,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with(Protocol::P2p(*local_peer_id.as_ref())));
+                listen_addresses.push(address);
             }
 
             transport_manager.register_transport(SupportedTransport::WebRtc, Box::new(transport));
@@ -376,7 +376,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with(Protocol::P2p(*local_peer_id.as_ref())));
+                listen_addresses.push(address);
             }
 
             transport_manager
@@ -385,7 +385,13 @@ impl Litep2p {
 
         // enable mdns if the config exists
         if let Some(config) = litep2p_config.mdns.take() {
-            let mdns = Mdns::new(transport_handle, config, listen_addresses.clone());
+            // mDNS needs addresses with `/p2p/` suffix for DNS-SD TXT records
+            let mdns_addresses: Vec<Multiaddr> = listen_addresses
+                .iter()
+                .cloned()
+                .map(|a| a.with(Protocol::P2p(*local_peer_id.as_ref())))
+                .collect();
+            let mdns = Mdns::new(transport_handle, config, mdns_addresses);
 
             litep2p_config.executor.run(Box::pin(async move {
                 let _ = mdns.start().await;
@@ -464,6 +470,9 @@ impl Litep2p {
     }
 
     /// Get the list of listen addresses of the node.
+    ///
+    /// Returned addresses do not include the trailing `/p2p/<peer-id>` component.
+    /// Use [`Litep2p::local_peer_id()`] to obtain the local peer ID if needed.
     pub fn listen_addresses(&self) -> impl Iterator<Item = &Multiaddr> {
         self.listen_addresses.iter()
     }

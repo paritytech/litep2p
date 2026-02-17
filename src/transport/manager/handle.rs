@@ -145,19 +145,22 @@ impl TransportManagerHandle {
         match iter.next() {
             None => false,
             Some(Protocol::Tcp(_)) => match (iter.next(), iter.next(), iter.next()) {
-                (Some(Protocol::P2p(_)), None, None) =>
+                (Some(Protocol::P2p(_)), None, None) | (None, None, None) =>
                     self.supported_transport.contains(&SupportedTransport::Tcp),
                 #[cfg(feature = "websocket")]
-                (Some(Protocol::Ws(_)), Some(Protocol::P2p(_)), None) =>
+                (Some(Protocol::Ws(_)), Some(Protocol::P2p(_)), None)
+                | (Some(Protocol::Ws(_)), None, None) =>
                     self.supported_transport.contains(&SupportedTransport::WebSocket),
                 #[cfg(feature = "websocket")]
-                (Some(Protocol::Wss(_)), Some(Protocol::P2p(_)), None) =>
+                (Some(Protocol::Wss(_)), Some(Protocol::P2p(_)), None)
+                | (Some(Protocol::Wss(_)), None, None) =>
                     self.supported_transport.contains(&SupportedTransport::WebSocket),
                 _ => false,
             },
             #[cfg(feature = "quic")]
             Some(Protocol::Udp(_)) => match (iter.next(), iter.next(), iter.next()) {
-                (Some(Protocol::QuicV1), Some(Protocol::P2p(_)), None) =>
+                (Some(Protocol::QuicV1), Some(Protocol::P2p(_)), None)
+                | (Some(Protocol::QuicV1), None, None) =>
                     self.supported_transport.contains(&SupportedTransport::Quic),
                 _ => false,
             },
