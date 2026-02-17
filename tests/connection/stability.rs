@@ -35,7 +35,7 @@ use litep2p::{
 
 use futures::{future::BoxFuture, StreamExt};
 
-use crate::common::{add_transport, Transport};
+use crate::common::{add_transport, dial_address, Transport};
 
 const PROTOCOL_NAME: &str = "/litep2p-stability/1.0.0";
 
@@ -285,8 +285,7 @@ async fn stability_litep2p_transport(transport1: Transport, transport2: Transpor
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
 
-    let address = litep2p2.listen_addresses().next().unwrap().clone();
-    litep2p1.dial_address(address).await.unwrap();
+    litep2p1.dial_address(dial_address(&litep2p2)).await.unwrap();
 
     let mut litep2p1_exit = false;
     let mut litep2p2_exit = false;

@@ -29,7 +29,7 @@ use litep2p::{
     Litep2p, Litep2pEvent,
 };
 
-use crate::common::{add_transport, Transport};
+use crate::common::{add_transport, dial_address, Transport};
 
 #[tokio::test]
 async fn identify_supported_tcp() {
@@ -82,8 +82,8 @@ async fn identify_supported(transport1: Transport, transport2: Transport) {
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
 
-    let address1 = litep2p1.listen_addresses().next().unwrap().clone();
-    let address2 = litep2p2.listen_addresses().next().unwrap().clone();
+    let address1 = dial_address(&litep2p1);
+    let address2 = dial_address(&litep2p2);
 
     tracing::info!("listen address of peer1: {address1}");
     tracing::info!("listen address of peer2: {address2}");
@@ -189,9 +189,7 @@ async fn identify_not_supported(transport1: Transport, transport2: Transport) {
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
-    let address = litep2p2.listen_addresses().next().unwrap().clone();
-
-    litep2p1.dial_address(address).await.unwrap();
+    litep2p1.dial_address(dial_address(&litep2p2)).await.unwrap();
 
     let mut litep2p1_done = false;
     let mut litep2p2_done = false;

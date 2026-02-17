@@ -36,7 +36,10 @@ use litep2p::{
         ConfigBuilder, KademliaEvent, KademliaHandle, Quorum, Record, RecordKey,
     },
     transport::tcp::config::Config as TcpConfig,
-    types::multiaddr::{Multiaddr, Protocol},
+    types::{
+        multiaddr::{Multiaddr, Protocol},
+        multihash::Multihash,
+    },
     Litep2p,
 };
 use std::time::Duration;
@@ -123,7 +126,12 @@ async fn find_node() {
 
     let mut libp2p = initialize_libp2p();
     let (mut litep2p, mut kad_handle) = initialize_litep2p();
-    let address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p
+        .listen_addresses()
+        .next()
+        .unwrap()
+        .clone()
+        .with(Protocol::P2p(Multihash::from(*litep2p.local_peer_id())));
 
     for i in 0..addresses.len() {
         libp2p.dial(addresses[i].clone()).unwrap();
@@ -225,7 +233,12 @@ async fn put_record() {
 
     let mut libp2p = initialize_libp2p();
     let (mut litep2p, mut kad_handle) = initialize_litep2p();
-    let address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p
+        .listen_addresses()
+        .next()
+        .unwrap()
+        .clone()
+        .with(Protocol::P2p(Multihash::from(*litep2p.local_peer_id())));
 
     for i in 0..addresses.len() {
         libp2p.dial(addresses[i].clone()).unwrap();

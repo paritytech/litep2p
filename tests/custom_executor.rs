@@ -37,6 +37,7 @@ use litep2p::{
 
 use bytes::BytesMut;
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use multiaddr::{multihash::Multihash, Protocol};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{future::Future, pin::Pin, sync::Arc};
@@ -158,7 +159,12 @@ async fn custom_executor() {
     let peer2 = *litep2p2.local_peer_id();
 
     // wait until peers have connected and spawn the litep2p objects in the background
-    let address = litep2p2.listen_addresses().next().unwrap().clone();
+    let address = litep2p2
+        .listen_addresses()
+        .next()
+        .unwrap()
+        .clone()
+        .with(Protocol::P2p(Multihash::from(peer2)));
     litep2p1.dial_address(address).await.unwrap();
 
     let mut litep2p1_connected = false;

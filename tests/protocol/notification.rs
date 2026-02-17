@@ -43,11 +43,10 @@ use multihash::Multihash;
 use std::net::Ipv4Addr;
 use std::{net::Ipv6Addr, task::Poll, time::Duration};
 
-use crate::common::{add_transport, Transport};
+use crate::common::{add_transport, dial_address, Transport};
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
-    let address = litep2p2.listen_addresses().next().unwrap().clone();
-    litep2p1.dial_address(address).await.unwrap();
+    litep2p1.dial_address(dial_address(litep2p2)).await.unwrap();
 
     let mut litep2p1_connected = false;
     let mut litep2p2_connected = false;

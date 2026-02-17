@@ -36,6 +36,7 @@ use litep2p::transport::websocket::config::Config as WebSocketConfig;
 
 use bytes::Bytes;
 use futures::{Sink, SinkExt, StreamExt};
+use multiaddr::{multihash::Multihash, Protocol};
 use tokio::{
     io::AsyncWrite,
     sync::{
@@ -219,7 +220,12 @@ impl UserProtocol for CustomProtocol {
 }
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
-    let listen_address = litep2p1.listen_addresses().next().unwrap().clone();
+    let listen_address = litep2p1
+        .listen_addresses()
+        .next()
+        .unwrap()
+        .clone()
+        .with(Protocol::P2p(Multihash::from(*litep2p1.local_peer_id())));
     litep2p2.dial_address(listen_address).await.unwrap();
 
     let mut litep2p1_ready = false;

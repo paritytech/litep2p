@@ -32,6 +32,7 @@ use litep2p::{
     transport::tcp::config::Config as TcpConfig,
     Litep2p,
 };
+use multiaddr::{multihash::Multihash, Protocol};
 
 #[derive(NetworkBehaviour, Default)]
 struct Behaviour {
@@ -81,7 +82,12 @@ async fn libp2p_dials() {
 
     let mut libp2p = initialize_libp2p();
     let (mut litep2p, mut ping_event_stream) = initialize_litep2p();
-    let address = litep2p.listen_addresses().next().unwrap().clone();
+    let address = litep2p
+        .listen_addresses()
+        .next()
+        .unwrap()
+        .clone()
+        .with(Protocol::P2p(Multihash::from(*litep2p.local_peer_id())));
 
     libp2p.dial(address).unwrap();
 

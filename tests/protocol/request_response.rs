@@ -47,10 +47,10 @@ use std::{
     time::Duration,
 };
 
-use crate::common::{add_transport, Transport};
+use crate::common::{add_transport, dial_address, Transport};
 
 async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
-    let address = litep2p2.listen_addresses().next().unwrap().clone();
+    let address = dial_address(litep2p2);
     tracing::info!("address: {address}");
     litep2p1.dial_address(address).await.unwrap();
 

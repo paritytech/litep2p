@@ -18,7 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use litep2p::{config::ConfigBuilder, transport::tcp::config::Config as TcpConfig};
+use litep2p::{config::ConfigBuilder, transport::tcp::config::Config as TcpConfig, Litep2p};
+use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 
 #[cfg(feature = "quic")]
 use litep2p::transport::quic::config::Config as QuicConfig;
@@ -31,6 +32,17 @@ pub(crate) enum Transport {
     Quic(QuicConfig),
     #[cfg(feature = "websocket")]
     WebSocket(WebSocketConfig),
+}
+
+/// Get the first listen address of a [`Litep2p`] instance with the peer ID appended,
+/// suitable for dialing.
+pub(crate) fn dial_address(litep2p: &Litep2p) -> Multiaddr {
+    litep2p
+        .listen_addresses()
+        .next()
+        .expect("at least one listen address")
+        .clone()
+        .with(Protocol::P2p(Multihash::from(*litep2p.local_peer_id())))
 }
 
 pub(crate) fn add_transport(config: ConfigBuilder, transport: Transport) -> ConfigBuilder {

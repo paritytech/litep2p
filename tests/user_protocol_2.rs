@@ -29,7 +29,7 @@ use litep2p::{
 };
 
 use futures::StreamExt;
-use multiaddr::Multiaddr;
+use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::collections::HashSet;
@@ -122,7 +122,12 @@ async fn user_protocol_2() {
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
-    let address = litep2p2.listen_addresses().next().unwrap().clone();
+    let address = litep2p2
+        .listen_addresses()
+        .next()
+        .unwrap()
+        .clone()
+        .with(Protocol::P2p(Multihash::from(*litep2p2.local_peer_id())));
 
     sender1.send(address).await.unwrap();
 

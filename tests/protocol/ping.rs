@@ -23,7 +23,7 @@ use litep2p::{
     config::ConfigBuilder, protocol::libp2p::ping::ConfigBuilder as PingConfigBuilder, Litep2p,
 };
 
-use crate::common::{add_transport, Transport};
+use crate::common::{add_transport, dial_address, Transport};
 
 #[tokio::test]
 async fn ping_supported_tcp() {
@@ -70,9 +70,7 @@ async fn ping_supported(transport1: Transport, transport2: Transport) {
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
-    let address = litep2p2.listen_addresses().next().unwrap().clone();
-
-    litep2p1.dial_address(address).await.unwrap();
+    litep2p1.dial_address(dial_address(&litep2p2)).await.unwrap();
 
     let mut litep2p1_done = false;
     let mut litep2p2_done = false;
