@@ -234,24 +234,21 @@ impl Message {
 ///
 /// This implementation may not be compliant with the multistream-select protocol spec.
 /// The only purpose of this was to get the `multistream-select` protocol working with smoldot.
-pub fn webrtc_encode_multistream_message(
-    messages: impl IntoIterator<Item = Message>,
-) -> crate::Result<BytesMut> {
+pub fn webrtc_encode_multistream_message(message: Message) -> crate::Result<BytesMut> {
     // encode `/multistream-select/1.0.0` header
     let mut bytes = BytesMut::with_capacity(32);
-    let message = Message::Header(HeaderLine::V1);
-    message.encode(&mut bytes).map_err(|_| Litep2pError::InvalidData)?;
-    let mut header = UnsignedVarint::encode(bytes)?;
+    Message::Header(HeaderLine::V1)
+        .encode(&mut bytes)
+        .map_err(|_| Litep2pError::InvalidData)?;
+    let mut output = UnsignedVarint::encode(bytes)?;
 
-    // encode each message
-    for message in messages {
-        let mut proto_bytes = BytesMut::with_capacity(256);
-        message.encode(&mut proto_bytes).map_err(|_| Litep2pError::InvalidData)?;
-        let mut proto_bytes = UnsignedVarint::encode(proto_bytes)?;
-        header.append(&mut proto_bytes);
-    }
+    // encode the message
+    let mut msg_bytes = BytesMut::with_capacity(256);
+    message.encode(&mut msg_bytes).map_err(|_| Litep2pError::InvalidData)?;
+    let mut msg_bytes = UnsignedVarint::encode(msg_bytes)?;
+    output.append(&mut msg_bytes);
 
-    Ok(BytesMut::from(&header[..]))
+    Ok(BytesMut::from(&output[..]))
 }
 
 /// A `MessageIO` implements a [`Stream`] and [`Sink`] of [`Message`]s.
