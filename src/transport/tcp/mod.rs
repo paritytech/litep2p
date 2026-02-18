@@ -605,6 +605,7 @@ impl Stream for TcpTransport {
                         return Poll::Ready(Some(TransportEvent::ConnectionOpened {
                             connection_id,
                             address,
+                            errors,
                         }));
                     }
                 }
