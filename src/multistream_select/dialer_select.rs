@@ -339,9 +339,9 @@ impl WebRtcDialerState {
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
     ) -> crate::Result<(Self, Vec<u8>)> {
-        let message = webrtc_encode_multistream_message(std::iter::once(Message::Protocol(
+        let message = webrtc_encode_multistream_message(Message::Protocol(
             Protocol::try_from(protocol.as_ref()).map_err(|_| Error::InvalidData)?,
-        )))?
+        ))?
         .freeze()
         .to_vec();
 
@@ -368,9 +368,9 @@ impl WebRtcDialerState {
         self.protocol = next;
         self.state = HandshakeState::WaitingResponse;
 
-        let message = webrtc_encode_multistream_message(std::iter::once(Message::Protocol(
+        let message = webrtc_encode_multistream_message(Message::Protocol(
             Protocol::try_from(self.protocol.as_ref()).map_err(|_| Error::InvalidData)?,
-        )))?
+        ))?
         .freeze()
         .to_vec();
 
@@ -931,9 +931,9 @@ mod tests {
 
     #[test]
     fn negotiate_main_protocol() {
-        let message = webrtc_encode_multistream_message(vec![Message::Protocol(
+        let message = webrtc_encode_multistream_message(Message::Protocol(
             Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
-        )])
+        ))
         .unwrap()
         .freeze();
 
@@ -953,9 +953,9 @@ mod tests {
 
     #[test]
     fn negotiate_fallback_protocol() {
-        let message = webrtc_encode_multistream_message(vec![Message::Protocol(
+        let message = webrtc_encode_multistream_message(Message::Protocol(
             Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
-        )])
+        ))
         .unwrap()
         .freeze();
 
