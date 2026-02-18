@@ -21,7 +21,8 @@
 use crate::{
     error::{Error, ParseError, SubstreamError},
     multistream_select::{
-        webrtc_listener_negotiate, HandshakeResult, ListenerSelectResult, WebRtcDialerState,
+        webrtc_listener_negotiate, HandshakeResult, ListenerSelectResult, NegotiationError,
+        WebRtcDialerState,
     },
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
     substream::Substream,
@@ -396,23 +397,75 @@ impl WebRtcConnection {
             ParseError::InvalidData.into(),
         ))?;
 
-        let HandshakeResult::Succeeded(protocol) = dialer_state.register_response(message)? else {
-            tracing::trace!(
-                target: LOG_TARGET,
-                peer = ?self.peer,
-                ?channel_id,
-                "multistream-select handshake not ready",
-            );
+        let protocol = match dialer_state.register_response(message)? {
+            HandshakeResult::Succeeded(protocol) => protocol,
+            HandshakeResult::NotReady => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    peer = ?self.peer,
+                    ?channel_id,
+                    "multistream-select handshake not ready",
+                );
 
-            self.channels.insert(
-                channel_id,
-                ChannelState::OutboundOpening {
-                    context,
-                    dialer_state,
-                },
-            );
+                self.channels.insert(
+                    channel_id,
+                    ChannelState::OutboundOpening {
+                        context,
+                        dialer_state,
+                    },
+                );
 
-            return Ok(None);
+                return Ok(None);
+            }
+            HandshakeResult::Rejected => match dialer_state.propose_next_fallback() {
+                Ok(Some(message)) => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        peer = ?self.peer,
+                        ?channel_id,
+                        "protocol rejected, trying next fallback",
+                    );
+
+                    let message = WebRtcMessage::encode(message, None);
+                    self.rtc
+                        .channel(channel_id)
+                        .ok_or(Error::ChannelDoesntExist)
+                        .map_err(|_| {
+                            SubstreamError::NegotiationError(NegotiationError::Failed.into())
+                        })?
+                        .write(true, message.as_ref())
+                        .map_err(|_| {
+                            SubstreamError::NegotiationError(NegotiationError::Failed.into())
+                        })?;
+
+                    self.channels.insert(
+                        channel_id,
+                        ChannelState::OutboundOpening {
+                            context,
+                            dialer_state,
+                        },
+                    );
+
+                    return Ok(None);
+                }
+                Ok(None) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        peer = ?self.peer,
+                        ?channel_id,
+                        "all protocols rejected by remote peer",
+                    );
+
+                    return Err(SubstreamError::NegotiationError(
+                        NegotiationError::Failed.into(),
+                    ));
+                }
+                Err(_) => {
+                    return Err(SubstreamError::NegotiationError(
+                        NegotiationError::Failed.into(),
+                    ));
+                }
+            },
         };
 
         let ChannelContext {
@@ -452,13 +505,13 @@ impl WebRtcConnection {
     ) -> crate::Result<()> {
         let message = WebRtcMessage::decode(&data)?;
 
-        tracing::trace!(
+        tracing::debug!(
             target: LOG_TARGET,
             peer = ?self.peer,
             ?channel_id,
             flag = ?message.flag,
             data_len = message.payload.as_ref().map_or(0usize, |payload| payload.len()),
-            "handle inbound message",
+            "handle inbound message on open channel",
         );
 
         self.handles
@@ -479,6 +532,15 @@ impl WebRtcConnection {
 
     /// Handle data received from a channel.
     async fn on_inbound_data(&mut self, channel_id: ChannelId, data: Vec<u8>) -> crate::Result<()> {
+        tracing::debug!(
+            target: LOG_TARGET,
+            peer = ?self.peer,
+            ?channel_id,
+            data_len = data.len(),
+            channel_state = ?self.channels.get(&channel_id),
+            "received channel data",
+        );
+
         let Some(state) = self.channels.remove(&channel_id) else {
             tracing::warn!(
                 target: LOG_TARGET,
@@ -692,7 +754,19 @@ impl WebRtcConnection {
 
         loop {
             // poll output until we get a timeout
-            let timeout = match self.rtc.poll_output().unwrap() {
+            let output = match self.rtc.poll_output() {
+                Ok(output) => output,
+                Err(error) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        peer = ?self.peer,
+                        ?error,
+                        "poll_output failed, closing connection",
+                    );
+                    return self.on_connection_closed().await;
+                }
+            };
+            let timeout = match output {
                 Output::Timeout(v) => v,
                 Output::Transmit(v) => {
                     tracing::trace!(
@@ -834,6 +908,20 @@ impl WebRtcConnection {
                         return self.on_connection_closed().await;
                     }
                     Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit, .. }) => {
+                        // Check if the connection is still healthy before opening new substreams.
+                        // This prevents panics when trying to open channels on a shutting-down
+                        // SCTP association.
+                        if !self.rtc.is_alive() || !self.rtc.is_connected() {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                peer = ?self.peer,
+                                ?protocol,
+                                is_alive = self.rtc.is_alive(),
+                                is_connected = self.rtc.is_connected(),
+                                "rejecting substream open: connection not healthy",
+                            );
+                            continue;
+                        }
                         self.on_open_substream(protocol, fallback_names, substream_id, permit);
                     }
                 },
