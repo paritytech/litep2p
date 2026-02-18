@@ -303,16 +303,22 @@ impl WebRtcConnection {
     /// Handle data received to an opening inbound channel.
     ///
     /// The first message received over an inbound channel is the `multistream-select` handshake.
-    /// This handshake contains the protocol (and potentially fallbacks for that protocol) that
-    /// remote peer wants to use for this channel. Parse the handshake and check if any of the
-    /// proposed protocols are supported by the local node. If not, send rejection to remote peer
-    /// and close the channel. If the local node supports one of the protocols, send confirmation
-    /// for the protocol to remote peer and report an opened substream to the selected protocol.
+    /// This handshake contains the protocol the remote peer wants to use for this channel. Parse
+    /// the handshake and check whether the proposed protocol is supported by the local node.
+    /// If not, send rejection to remote peer and but keep the channel open so that the peer can
+    /// propose a fallback. If the local node support the protocol, send confirmation for the
+    /// protocol to remote peer and report an opened substream to the selected protocol.
+    ///
+    /// Returns `Ok(Some(...))` if the protocol was accepted and the substream opened,
+    /// `Ok(None)` if the proposed protocol was rejected (the `na` response has been sent
+    /// and the channel should remain in [`ChannelState::InboundOpening`] so the dialer can
+    /// propose another protocol per back-and-forth multistream-select negotiation),
+    /// or `Err(...)` on a fatal error (channel should be closed).
     async fn on_inbound_opening_channel_data(
         &mut self,
         channel_id: ChannelId,
         data: Vec<u8>,
-    ) -> crate::Result<(SubstreamId, SubstreamHandle, Permit)> {
+    ) -> crate::Result<Option<(SubstreamId, SubstreamHandle, Permit)>> {
         tracing::trace!(
             target: LOG_TARGET,
             peer = ?self.peer,
@@ -338,7 +344,16 @@ impl WebRtcConnection {
             )
             .map_err(Error::WebRtc)?;
 
-        let protocol = negotiated.ok_or(Error::SubstreamDoesntExist)?;
+        let Some(protocol) = negotiated else {
+            tracing::trace!(
+                target: LOG_TARGET,
+                peer = ?self.peer,
+                ?channel_id,
+                "inbound protocol rejected, keeping channel open for back-and-forth negotiation",
+            );
+            return Ok(None);
+        };
+
         let substream_id = self.protocol_set.next_substream_id();
         let codec = self.protocol_set.protocol_codec(&protocol);
         let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
@@ -357,7 +372,7 @@ impl WebRtcConnection {
         self.protocol_set
             .report_substream_open(self.peer, protocol.clone(), Direction::Inbound, substream)
             .await
-            .map(|_| (substream_id, handle, permit))
+            .map(|_| Some((substream_id, handle, permit)))
             .map_err(Into::into)
     }
 
@@ -555,7 +570,7 @@ impl WebRtcConnection {
         match state {
             ChannelState::InboundOpening => {
                 match self.on_inbound_opening_channel_data(channel_id, data).await {
-                    Ok((substream_id, handle, permit)) => {
+                    Ok(Some((substream_id, handle, permit))) => {
                         self.handles.insert(channel_id, handle);
                         self.channels.insert(
                             channel_id,
@@ -565,6 +580,12 @@ impl WebRtcConnection {
                                 permit,
                             },
                         );
+                    }
+                    Ok(None) => {
+                        // Protocol was rejected but `na` response was sent. Keep the
+                        // channel open in `InboundOpening` so the dialer can propose
+                        // another protocol (back-and-forth multistream-select).
+                        self.channels.insert(channel_id, ChannelState::InboundOpening);
                     }
                     Err(error) => {
                         tracing::debug!(
