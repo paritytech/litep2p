@@ -374,9 +374,7 @@ pub fn webrtc_listener_negotiate<'a>(
             if protocol.as_ref() == supported.as_bytes() {
                 return Ok(ListenerSelectResult::Accepted {
                     protocol: supported.clone(),
-                    message: webrtc_encode_multistream_message(std::iter::once(
-                        Message::Protocol(protocol),
-                    ))?,
+                    message: webrtc_encode_multistream_message(Message::Protocol(protocol))?,
                 });
             }
         }
@@ -388,7 +386,7 @@ pub fn webrtc_listener_negotiate<'a>(
     );
 
     Ok(ListenerSelectResult::Rejected {
-        message: webrtc_encode_multistream_message(std::iter::once(Message::NotAvailable))?,
+        message: webrtc_encode_multistream_message(Message::NotAvailable)?,
     })
 }
 
@@ -407,10 +405,9 @@ mod tests {
             ProtocolName::from("/13371338/proto/3"),
             ProtocolName::from("/13371338/proto/4"),
         ];
-        let message = webrtc_encode_multistream_message(vec![
-            Message::Protocol(Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap()),
-            Message::Protocol(Protocol::try_from(&b"/sup/proto/1"[..]).unwrap()),
-        ])
+        let message = webrtc_encode_multistream_message(Message::Protocol(
+            Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
+        ))
         .unwrap()
         .freeze();
 
@@ -447,10 +444,10 @@ mod tests {
         // `webrtc_listener_negotiate()` should reject this invalid message. The error can either be
         // `InvalidData` because the message is malformed or `StateMismatch` because the message is
         // not expected at this point in the protocol.
-        let message = webrtc_encode_multistream_message(std::iter::once(Message::Protocols(vec![
+        let message = webrtc_encode_multistream_message(Message::Protocols(vec![
             Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
             Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
-        ])))
+        ]))
         .unwrap()
         .freeze();
 
@@ -534,9 +531,9 @@ mod tests {
             ProtocolName::from("/13371338/proto/3"),
             ProtocolName::from("/13371338/proto/4"),
         ];
-        let message = webrtc_encode_multistream_message(vec![Message::Protocol(
+        let message = webrtc_encode_multistream_message(Message::Protocol(
             Protocol::try_from(&b"/13371339/proto/1"[..]).unwrap(),
-        )])
+        ))
         .unwrap()
         .freeze();
 
@@ -545,8 +542,7 @@ mod tests {
             Ok(ListenerSelectResult::Rejected { message }) => {
                 assert_eq!(
                     message,
-                    webrtc_encode_multistream_message(std::iter::once(Message::NotAvailable))
-                        .unwrap()
+                    webrtc_encode_multistream_message(Message::NotAvailable).unwrap()
                 );
             }
             Ok(ListenerSelectResult::Accepted { protocol, message }) => panic!("message accepted"),
