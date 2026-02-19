@@ -486,26 +486,58 @@ impl Transport for TcpTransport {
 
         // Future that will resolve to the first successful connection.
         let future = async move {
-            futures::pin_mut!(futures);
             let mut errors = Vec::with_capacity(num_addresses);
-            while let Some(result) = futures.next().await {
-                match result {
-                    Ok(negotiated) => return RawConnectionResult::Connected { negotiated, errors },
-                    Err(error) => {
+            // Deadline for the overall dial attempt, including all retries. This is to prevent
+            // retry attempts from indefinitely delaying the dial result.
+            //
+            // The 2x timeout is needed by TcpTransport::dial_peer and
+            // TcpConnection::open_connection, which both have their own timeouts and run
+            // sequentially.
+            let deadline = tokio::time::sleep(2 * connection_open_timeout);
+
+            tokio::pin!(deadline);
+            tokio::pin!(futures);
+
+            loop {
+                tokio::select! {
+                    result = futures.next() => {
+                        match result {
+                            Some(Ok(negotiated)) => {
+                                return RawConnectionResult::Connected {
+                                    negotiated,
+                                    errors,
+                                };
+                            }
+                            Some(Err(error)) => {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?connection_id,
+                                    ?error,
+                                    "failed to open connection",
+                                );
+                                errors.push(error);
+                            }
+                            None => {
+                                return RawConnectionResult::Failed {
+                                    connection_id,
+                                    errors,
+                                };
+                            }
+                        }
+                    }
+                    _ = &mut deadline => {
                         tracing::debug!(
                             target: LOG_TARGET,
                             ?connection_id,
-                            ?error,
-                            "failed to open connection",
+                            ?connection_open_timeout,
+                            "overall dial timeout exceeded",
                         );
-                        errors.push(error)
+                        return RawConnectionResult::Failed {
+                            connection_id,
+                            errors,
+                        };
                     }
                 }
-            }
-
-            RawConnectionResult::Failed {
-                connection_id,
-                errors,
             }
         };
 
