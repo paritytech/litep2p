@@ -30,7 +30,7 @@ use crate::{
             config::Config,
             connection::{NegotiatedConnection, TcpConnection},
         },
-        Transport, TransportBuilder, TransportEvent,
+        Transport, TransportBuilder, TransportEvent, MAX_PARALLEL_DIALS,
     },
     types::ConnectionId,
     utils::futures_stream::FuturesStream,
@@ -38,7 +38,7 @@ use crate::{
 
 use futures::{
     future::BoxFuture,
-    stream::{AbortHandle, FuturesUnordered, Stream, StreamExt},
+    stream::{AbortHandle, Stream, StreamExt},
     TryFutureExt,
 };
 use hickory_resolver::TokioResolver;
@@ -434,54 +434,59 @@ impl Transport for TcpTransport {
         addresses: Vec<Multiaddr>,
     ) -> crate::Result<()> {
         let num_addresses = addresses.len();
-        let mut futures: FuturesUnordered<_> = addresses
-            .into_iter()
-            .map(|address| {
-                let yamux_config = self.config.yamux_config.clone();
-                let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
-                let max_write_buffer_size = self.config.noise_write_buffer_size;
-                let connection_open_timeout = self.config.connection_open_timeout;
-                let substream_open_timeout = self.config.substream_open_timeout;
-                let dial_addresses = self.dial_addresses.clone();
-                let keypair = self.context.keypair.clone();
-                let nodelay = self.config.nodelay;
-                let resolver = self.resolver.clone();
 
-                async move {
-                    let (address, stream) = TcpTransport::dial_peer(
-                        address.clone(),
-                        dial_addresses,
-                        connection_open_timeout,
-                        nodelay,
-                        resolver,
-                    )
-                    .await
-                    .map_err(|error| (address, error))?;
+        let yamux_config = self.config.yamux_config.clone();
+        let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
+        let max_write_buffer_size = self.config.noise_write_buffer_size;
+        let connection_open_timeout = self.config.connection_open_timeout;
+        let substream_open_timeout = self.config.substream_open_timeout;
+        let dial_addresses = self.dial_addresses.clone();
+        let keypair = self.context.keypair.clone();
+        let nodelay = self.config.nodelay;
+        let resolver = self.resolver.clone();
 
-                    let open_address = address.clone();
-                    let (socket_address, peer) = TcpAddress::multiaddr_to_socket_address(&address)
-                        .map_err(|error| (address, error.into()))?;
+        let futures = futures::stream::iter(addresses.into_iter().map(move |address| {
+            let yamux_config = yamux_config.clone();
+            let dial_addresses = dial_addresses.clone();
+            let keypair = keypair.clone();
+            let resolver = resolver.clone();
 
-                    TcpConnection::open_connection(
-                        connection_id,
-                        keypair,
-                        stream,
-                        socket_address,
-                        peer,
-                        yamux_config,
-                        max_read_ahead_factor,
-                        max_write_buffer_size,
-                        connection_open_timeout,
-                        substream_open_timeout,
-                    )
-                    .await
-                    .map_err(|error| (open_address, error.into()))
-                }
-            })
-            .collect();
+            async move {
+                let (address, stream) = TcpTransport::dial_peer(
+                    address.clone(),
+                    dial_addresses,
+                    connection_open_timeout,
+                    nodelay,
+                    resolver,
+                )
+                .await
+                .map_err(|error| (address, error))?;
+
+                let open_address = address.clone();
+                let (socket_address, peer) = TcpAddress::multiaddr_to_socket_address(&address)
+                    .map_err(|error| (address, error.into()))?;
+
+                TcpConnection::open_connection(
+                    connection_id,
+                    keypair,
+                    stream,
+                    socket_address,
+                    peer,
+                    yamux_config,
+                    max_read_ahead_factor,
+                    max_write_buffer_size,
+                    connection_open_timeout,
+                    substream_open_timeout,
+                )
+                .await
+                .map_err(|error| (open_address, error.into()))
+            }
+        }))
+        .buffer_unordered(MAX_PARALLEL_DIALS);
 
         // Future that will resolve to the first successful connection.
         let future = async move {
+            futures::pin_mut!(futures);
             let mut errors = Vec::with_capacity(num_addresses);
             while let Some(result) = futures.next().await {
                 match result {
