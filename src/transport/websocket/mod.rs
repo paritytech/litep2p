@@ -29,18 +29,14 @@ use crate::{
             config::Config,
             connection::{NegotiatedConnection, WebSocketConnection},
         },
-        Transport, TransportBuilder, TransportEvent,
+        Transport, TransportBuilder, TransportEvent, MAX_PARALLEL_DIALS,
     },
     types::ConnectionId,
     utils::futures_stream::FuturesStream,
     DialError, PeerId,
 };
 
-use futures::{
-    future::BoxFuture,
-    stream::{AbortHandle, FuturesUnordered},
-    Stream, StreamExt, TryFutureExt,
-};
+use futures::{future::BoxFuture, stream::AbortHandle, Stream, StreamExt, TryFutureExt};
 use hickory_resolver::TokioResolver;
 use multiaddr::{Multiaddr, Protocol};
 use socket2::{Domain, Socket, Type};
@@ -479,73 +475,108 @@ impl Transport for WebSocketTransport {
     ) -> crate::Result<()> {
         let num_addresses = addresses.len();
 
-        let mut futures: FuturesUnordered<_> = addresses
-            .into_iter()
-            .map(|address| {
-                let yamux_config = self.config.yamux_config.clone();
-                let keypair = self.context.keypair.clone();
-                let connection_open_timeout = self.config.connection_open_timeout;
-                let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
-                let max_write_buffer_size = self.config.noise_write_buffer_size;
-                let substream_open_timeout = self.config.substream_open_timeout;
-                let dial_addresses = self.dial_addresses.clone();
-                let nodelay = self.config.nodelay;
-                let resolver = self.resolver.clone();
+        let yamux_config = self.config.yamux_config.clone();
+        let keypair = self.context.keypair.clone();
+        let connection_open_timeout = self.config.connection_open_timeout;
+        let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
+        let max_write_buffer_size = self.config.noise_write_buffer_size;
+        let substream_open_timeout = self.config.substream_open_timeout;
+        let dial_addresses = self.dial_addresses.clone();
+        let nodelay = self.config.nodelay;
+        let resolver = self.resolver.clone();
 
-                async move {
-                    let (address, stream) = WebSocketTransport::dial_peer(
-                        address.clone(),
-                        dial_addresses,
-                        connection_open_timeout,
-                        nodelay,
-                        resolver,
-                    )
-                    .await
-                    .map_err(|error| (address, error))?;
+        let futures = futures::stream::iter(addresses.into_iter().map(move |address| {
+            let yamux_config = yamux_config.clone();
+            let keypair = keypair.clone();
+            let dial_addresses = dial_addresses.clone();
+            let resolver = resolver.clone();
 
-                    let open_address = address.clone();
-                    let (ws_address, peer) = Self::multiaddr_into_url(address.clone())
-                        .map_err(|error| (address.clone(), error.into()))?;
+            async move {
+                let (address, stream) = WebSocketTransport::dial_peer(
+                    address.clone(),
+                    dial_addresses,
+                    connection_open_timeout,
+                    nodelay,
+                    resolver,
+                )
+                .await
+                .map_err(|error| (address, error))?;
 
-                    WebSocketConnection::open_connection(
-                        connection_id,
-                        keypair,
-                        stream,
-                        address,
-                        peer,
-                        ws_address,
-                        yamux_config,
-                        max_read_ahead_factor,
-                        max_write_buffer_size,
-                        substream_open_timeout,
-                    )
-                    .await
-                    .map_err(|error| (open_address, error.into()))
-                }
-            })
-            .collect();
+                let open_address = address.clone();
+                let (ws_address, peer) = Self::multiaddr_into_url(address.clone())
+                    .map_err(|error| (address.clone(), error.into()))?;
+
+                WebSocketConnection::open_connection(
+                    connection_id,
+                    keypair,
+                    stream,
+                    address,
+                    peer,
+                    ws_address,
+                    yamux_config,
+                    max_read_ahead_factor,
+                    max_write_buffer_size,
+                    substream_open_timeout,
+                )
+                .await
+                .map_err(|error| (open_address, error.into()))
+            }
+        }))
+        .buffer_unordered(MAX_PARALLEL_DIALS);
 
         // Future that will resolve to the first successful connection.
+        //
+        // The overall deadline caps the total time spent dialing across all addresses,
+        // preventing unbounded dialing when many addresses are provided.
         let future = async move {
             let mut errors = Vec::with_capacity(num_addresses);
-            while let Some(result) = futures.next().await {
-                match result {
-                    Ok(negotiated) => return RawConnectionResult::Connected { negotiated, errors },
-                    Err(error) => {
+            // Deadline for the overall dial attempt, including all retries. This is to prevent
+            // retry attempts from indefinitely delaying the dial result.
+            let deadline = tokio::time::sleep(2 * connection_open_timeout);
+
+            tokio::pin!(deadline);
+            tokio::pin!(futures);
+
+            loop {
+                tokio::select! {
+                    result = futures.next() => {
+                        match result {
+                            Some(Ok(negotiated)) => {
+                                return RawConnectionResult::Connected {
+                                    negotiated,
+                                    errors,
+                                };
+                            }
+                            Some(Err(error)) => {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?connection_id,
+                                    ?error,
+                                    "failed to open connection",
+                                );
+                                errors.push(error);
+                            }
+                            None => {
+                                return RawConnectionResult::Failed {
+                                    connection_id,
+                                    errors,
+                                };
+                            }
+                        }
+                    }
+                    _ = &mut deadline => {
                         tracing::debug!(
                             target: LOG_TARGET,
                             ?connection_id,
-                            ?error,
-                            "failed to open connection",
+                            ?connection_open_timeout,
+                            "overall dial timeout exceeded",
                         );
-                        errors.push(error)
+                        return RawConnectionResult::Failed {
+                            connection_id,
+                            errors,
+                        };
                     }
                 }
-            }
-
-            RawConnectionResult::Failed {
-                connection_id,
-                errors,
             }
         };
 
