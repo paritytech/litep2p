@@ -367,8 +367,7 @@ impl WebRtcTransport {
                 );
                 return Err(Error::InvalidState);
             };
-            if let Err(error) = opening.on_input(contents)
-            {
+            if let Err(error) = opening.on_input(contents) {
                 tracing::error!(
                     target: LOG_TARGET,
                     ?error,
@@ -400,8 +399,7 @@ impl WebRtcTransport {
 
         // create new `Rtc` object for the peer and give it the received STUN message
         let local_addr = self.socket.local_addr()?;
-        let (mut rtc, noise_channel_id) =
-            self.make_rtc_client(ufrag, pass, source, local_addr);
+        let (mut rtc, noise_channel_id) = self.make_rtc_client(ufrag, pass, source, local_addr);
 
         rtc.handle_input(Input::Receive(
             Instant::now(),

@@ -600,13 +600,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for NoiseSocket<S> {
                                 }
                             },
                             false => {
-                                let mut buffer =
-                                    this.decrypt_buffer.take().ok_or_else(|| {
-                                        io::Error::new(
-                                            io::ErrorKind::InvalidData,
-                                            "decrypt buffer missing",
-                                        )
-                                    })?;
+                                let mut buffer = this.decrypt_buffer.take().ok_or_else(|| {
+                                    io::Error::new(
+                                        io::ErrorKind::InvalidData,
+                                        "decrypt buffer missing",
+                                    )
+                                })?;
 
                                 match this.noise.read_message(
                                     &this.read_buffer[this.offset..this.offset + frame_size],

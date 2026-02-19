@@ -257,8 +257,7 @@ impl Transport for QuicTransport {
             return Err(Error::AddressError(AddressError::PeerIdMissing));
         };
 
-        let crypto_config =
-            Arc::new(make_client_config(&self.context.keypair, Some(peer))?);
+        let crypto_config = Arc::new(make_client_config(&self.context.keypair, Some(peer))?);
         let mut transport_config = quinn::TransportConfig::default();
         let timeout = IdleTimeout::try_from(self.config.connection_open_timeout)
             .map_err(|e| Error::Other(e.to_string()))?;
@@ -380,11 +379,10 @@ impl Transport for QuicTransport {
                     let peer =
                         peer.ok_or_else(|| DialError::AddressError(AddressError::PeerIdMissing))?;
 
-                    let crypto_config = Arc::new(
-                        make_client_config(&keypair, Some(peer)).map_err(|_| {
+                    let crypto_config =
+                        Arc::new(make_client_config(&keypair, Some(peer)).map_err(|_| {
                             DialError::NegotiationError(QuicError::InvalidCertificate.into())
-                        })?,
-                    );
+                        })?);
                     let mut transport_config = quinn::TransportConfig::default();
                     let timeout = IdleTimeout::try_from(connection_open_timeout)
                         .map_err(|_| DialError::Timeout)?;
