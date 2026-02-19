@@ -254,7 +254,6 @@ pub struct TransportManager {
     opening_errors: HashMap<ConnectionId, Vec<(Multiaddr, DialError)>>,
 
     /// Pending accept futures with associated connection information.
-    /// The manager will emit a `TransportEvent::ConnectionEstablished` when complete.
     pending_accept: FuturesUnordered<BoxFuture<'static, (PeerId, Endpoint, crate::Result<()>)>>,
 }
 
@@ -1096,11 +1095,7 @@ impl TransportManager {
     pub async fn next(&mut self) -> Option<TransportEvent> {
         loop {
             tokio::select! {
-                result = self.pending_accept.next(), if !self.pending_accept.is_empty() => {
-                    let Some((peer, endpoint, result)) = result else {
-                        continue;
-                    };
-
+                (peer, endpoint, result) = self.pending_accept.select_next_some(), if !self.pending_accept.is_empty() => {
                     match result {
                         Ok(()) => {
                             tracing::trace!(
