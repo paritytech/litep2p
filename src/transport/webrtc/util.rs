@@ -18,74 +18,97 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{codec::unsigned_varint::UnsignedVarint, error::ParseError, transport::webrtc::schema};
+use crate::{
+    error::ParseError,
+    transport::webrtc::schema::{self, webrtc::message::Flag},
+};
 
 use prost::Message;
-use tokio_util::codec::{Decoder, Encoder};
 
-/// WebRTC mesage.
+/// WebRTC message.
 #[derive(Debug)]
 pub struct WebRtcMessage {
     /// Payload.
     pub payload: Option<Vec<u8>>,
 
-    // Flags.
-    pub flags: Option<i32>,
+    /// Flag.
+    pub flag: Option<Flag>,
 }
 
 impl WebRtcMessage {
-    /// Encode WebRTC message.
-    pub fn encode(payload: Vec<u8>) -> Vec<u8> {
+    /// Encode WebRTC message with optional flag.
+    ///
+    /// Uses a single allocation by pre-calculating the total size and encoding
+    /// the varint length prefix and protobuf message directly into the output buffer.
+    pub fn encode(payload: Vec<u8>, flag: Option<Flag>) -> Vec<u8> {
         let protobuf_payload = schema::webrtc::Message {
             message: (!payload.is_empty()).then_some(payload),
-            flag: None,
+            flag: flag.map(|f| f as i32),
         };
-        let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
+
+        // Calculate sizes upfront for single allocation with exact capacity
+        let protobuf_len = protobuf_payload.encoded_len();
+        // Varint uses 7 bits per byte, so calculate exact length needed
+        // ilog2 gives the position of the highest set bit (0-indexed), divide by 7 for varint bytes
+        let varint_len = if protobuf_len == 0 {
+            1
+        } else {
+            (protobuf_len.ilog2() as usize / 7) + 1
+        };
+
+        // Single allocation for the entire output with exact size
+        let mut out_buf = Vec::with_capacity(varint_len + protobuf_len);
+
+        // Encode varint length prefix directly
+        let mut varint_buf = unsigned_varint::encode::usize_buffer();
+        let varint_slice = unsigned_varint::encode::usize(protobuf_len, &mut varint_buf);
+        out_buf.extend_from_slice(varint_slice);
+
+        // Encode protobuf directly into output buffer
         protobuf_payload
-            .encode(&mut payload)
+            .encode(&mut out_buf)
             .expect("Vec<u8> to provide needed capacity");
 
-        let mut out_buf = bytes::BytesMut::with_capacity(payload.len() + 4);
-        let mut codec = UnsignedVarint::new(None);
-        let _result = codec.encode(payload.into(), &mut out_buf);
-
-        out_buf.into()
-    }
-
-    /// Encode WebRTC message with flags.
-    #[allow(unused)]
-    pub fn encode_with_flags(payload: Vec<u8>, flags: i32) -> Vec<u8> {
-        let protobuf_payload = schema::webrtc::Message {
-            message: (!payload.is_empty()).then_some(payload),
-            flag: Some(flags),
-        };
-        let mut payload = Vec::with_capacity(protobuf_payload.encoded_len());
-        protobuf_payload
-            .encode(&mut payload)
-            .expect("Vec<u8> to provide needed capacity");
-
-        let mut out_buf = bytes::BytesMut::with_capacity(payload.len() + 4);
-        let mut codec = UnsignedVarint::new(None);
-        let _result = codec.encode(payload.into(), &mut out_buf);
-
-        out_buf.into()
+        out_buf
     }
 
     /// Decode payload into [`WebRtcMessage`].
+    ///
+    /// Decodes the varint length prefix directly from the slice without allocations,
+    /// then decodes the protobuf message from the remaining bytes.
+    ///
+    /// # Flag handling
+    ///
+    /// Unknown flag values (e.g., from a newer protocol version) are logged as warnings
+    /// and treated as `None` for forward compatibility. This allows the message payload
+    /// to still be processed even if the flag is not recognized.
     pub fn decode(payload: &[u8]) -> Result<Self, ParseError> {
-        // TODO: https://github.com/paritytech/litep2p/issues/352 set correct size
-        let mut codec = UnsignedVarint::new(None);
-        let mut data = bytes::BytesMut::from(payload);
-        let result = codec
-            .decode(&mut data)
-            .map_err(|_| ParseError::InvalidData)?
-            .ok_or(ParseError::InvalidData)?;
+        // Decode varint length prefix directly from slice (no allocation)
+        // Returns (decoded_length, remaining_bytes_after_varint)
+        let (len, remaining) =
+            unsigned_varint::decode::usize(payload).map_err(|_| ParseError::InvalidData)?;
 
-        match schema::webrtc::Message::decode(result) {
-            Ok(message) => Ok(Self {
-                payload: message.message,
-                flags: message.flag,
-            }),
+        // Get exactly `len` bytes of protobuf data (no allocation)
+        let protobuf_data = remaining.get(..len).ok_or(ParseError::InvalidData)?;
+
+        match schema::webrtc::Message::decode(protobuf_data) {
+            Ok(message) => {
+                let flag = message.flag.and_then(|f| match Flag::try_from(f) {
+                    Ok(flag) => Some(flag),
+                    Err(_) => {
+                        tracing::warn!(
+                            target: "litep2p::webrtc",
+                            ?f,
+                            "received message with unknown flag value, ignoring flag"
+                        );
+                        None
+                    }
+                });
+                Ok(Self {
+                    payload: message.message,
+                    flag,
+                })
+            }
             Err(_) => Err(ParseError::InvalidData),
         }
     }
@@ -96,29 +119,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn with_payload_no_flags() {
-        let message = WebRtcMessage::encode("Hello, world!".as_bytes().to_vec());
+    fn with_payload_no_flag() {
+        let message = WebRtcMessage::encode("Hello, world!".as_bytes().to_vec(), None);
         let decoded = WebRtcMessage::decode(&message).unwrap();
 
         assert_eq!(decoded.payload, Some("Hello, world!".as_bytes().to_vec()));
-        assert_eq!(decoded.flags, None);
+        assert_eq!(decoded.flag, None);
     }
 
     #[test]
-    fn with_payload_and_flags() {
-        let message = WebRtcMessage::encode_with_flags("Hello, world!".as_bytes().to_vec(), 1i32);
+    fn with_payload_and_flag() {
+        let message =
+            WebRtcMessage::encode("Hello, world!".as_bytes().to_vec(), Some(Flag::StopSending));
         let decoded = WebRtcMessage::decode(&message).unwrap();
 
         assert_eq!(decoded.payload, Some("Hello, world!".as_bytes().to_vec()));
-        assert_eq!(decoded.flags, Some(1i32));
+        assert_eq!(decoded.flag, Some(Flag::StopSending));
     }
 
     #[test]
-    fn no_payload_with_flags() {
-        let message = WebRtcMessage::encode_with_flags(vec![], 2i32);
+    fn no_payload_with_flag() {
+        let message = WebRtcMessage::encode(vec![], Some(Flag::ResetStream));
         let decoded = WebRtcMessage::decode(&message).unwrap();
 
         assert_eq!(decoded.payload, None);
-        assert_eq!(decoded.flags, Some(2i32));
+        assert_eq!(decoded.flag, Some(Flag::ResetStream));
     }
 }
