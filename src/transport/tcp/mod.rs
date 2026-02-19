@@ -30,7 +30,7 @@ use crate::{
             config::Config,
             connection::{NegotiatedConnection, TcpConnection},
         },
-        Transport, TransportBuilder, TransportEvent, MAX_PARALLEL_DIALS,
+        Transport, TransportBuilder, TransportEvent,
     },
     types::ConnectionId,
     utils::futures_stream::FuturesStream,
@@ -440,6 +440,7 @@ impl Transport for TcpTransport {
         let max_write_buffer_size = self.config.noise_write_buffer_size;
         let connection_open_timeout = self.config.connection_open_timeout;
         let substream_open_timeout = self.config.substream_open_timeout;
+        let max_parallel_dials = self.config.max_parallel_dials;
         let dial_addresses = self.dial_addresses.clone();
         let keypair = self.context.keypair.clone();
         let nodelay = self.config.nodelay;
@@ -482,7 +483,7 @@ impl Transport for TcpTransport {
                 .map_err(|error| (open_address, error.into()))
             }
         }))
-        .buffer_unordered(MAX_PARALLEL_DIALS);
+        .buffer_unordered(max_parallel_dials);
 
         // Future that will resolve to the first successful connection.
         let future = async move {

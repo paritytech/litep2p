@@ -29,7 +29,7 @@ use crate::{
             config::Config,
             connection::{NegotiatedConnection, WebSocketConnection},
         },
-        Transport, TransportBuilder, TransportEvent, MAX_PARALLEL_DIALS,
+        Transport, TransportBuilder, TransportEvent,
     },
     types::ConnectionId,
     utils::futures_stream::FuturesStream,
@@ -481,6 +481,7 @@ impl Transport for WebSocketTransport {
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
         let substream_open_timeout = self.config.substream_open_timeout;
+        let max_parallel_dials = self.config.max_parallel_dials;
         let dial_addresses = self.dial_addresses.clone();
         let nodelay = self.config.nodelay;
         let resolver = self.resolver.clone();
@@ -522,7 +523,7 @@ impl Transport for WebSocketTransport {
                 .map_err(|error| (open_address, error.into()))
             }
         }))
-        .buffer_unordered(MAX_PARALLEL_DIALS);
+        .buffer_unordered(max_parallel_dials);
 
         // Future that will resolve to the first successful connection.
         //
