@@ -22,7 +22,6 @@
 //! TCP transport.
 
 use crate::{
-    config::Role,
     error::{DialError, Error},
     transport::{
         common::listener::{DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
@@ -78,9 +77,8 @@ struct PendingInboundConnection {
 enum RawConnectionResult {
     /// The first successful connection.
     Connected {
-        connection_id: ConnectionId,
-        address: Multiaddr,
-        stream: TcpStream,
+        negotiated: NegotiatedConnection,
+        errors: Vec<(Multiaddr, DialError)>,
     },
 
     /// All connection attempts failed.
@@ -121,7 +119,7 @@ pub(crate) struct TcpTransport {
     pending_raw_connections: FuturesStream<BoxFuture<'static, RawConnectionResult>>,
 
     /// Opened raw connection, waiting for approval/rejection from `TransportManager`.
-    opened_raw: HashMap<ConnectionId, (TcpStream, Multiaddr)>,
+    opened: HashMap<ConnectionId, NegotiatedConnection>,
 
     /// Cancel raw connections futures.
     ///
@@ -300,7 +298,7 @@ impl TransportBuilder for TcpTransport {
                 config,
                 context,
                 dial_addresses,
-                opened_raw: HashMap::new(),
+                opened: HashMap::new(),
                 pending_open: HashMap::new(),
                 pending_dials: HashMap::new(),
                 pending_inbound_connections: HashMap::new(),
@@ -360,6 +358,37 @@ impl Transport for TcpTransport {
         Ok(())
     }
 
+    fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        let pending = self.pending_inbound_connections.remove(&connection_id).ok_or_else(|| {
+            tracing::error!(
+                target: LOG_TARGET,
+                ?connection_id,
+                "Cannot accept non existent pending connection",
+            );
+
+            Error::ConnectionDoesntExist(connection_id)
+        })?;
+
+        self.on_inbound_connection(connection_id, pending.connection, pending.address);
+
+        Ok(())
+    }
+
+    fn reject_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+        self.pending_inbound_connections.remove(&connection_id).map_or_else(
+            || {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?connection_id,
+                    "Cannot reject non existent pending connection",
+                );
+
+                Err(Error::ConnectionDoesntExist(connection_id))
+            },
+            |_| Ok(()),
+        )
+    }
+
     fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
         let context = self
             .pending_open
@@ -393,37 +422,6 @@ impl Transport for TcpTransport {
         Ok(())
     }
 
-    fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
-        let pending = self.pending_inbound_connections.remove(&connection_id).ok_or_else(|| {
-            tracing::error!(
-                target: LOG_TARGET,
-                ?connection_id,
-                "Cannot accept non existent pending connection",
-            );
-
-            Error::ConnectionDoesntExist(connection_id)
-        })?;
-
-        self.on_inbound_connection(connection_id, pending.connection, pending.address);
-
-        Ok(())
-    }
-
-    fn reject_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
-        self.pending_inbound_connections.remove(&connection_id).map_or_else(
-            || {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?connection_id,
-                    "Cannot reject non existent pending connection",
-                );
-
-                Err(Error::ConnectionDoesntExist(connection_id))
-            },
-            |_| Ok(()),
-        )
-    }
-
     fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
         self.pending_open
             .remove(&connection_id)
@@ -439,13 +437,18 @@ impl Transport for TcpTransport {
         let mut futures: FuturesUnordered<_> = addresses
             .into_iter()
             .map(|address| {
-                let dial_addresses = self.dial_addresses.clone();
+                let yamux_config = self.config.yamux_config.clone();
+                let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
+                let max_write_buffer_size = self.config.noise_write_buffer_size;
                 let connection_open_timeout = self.config.connection_open_timeout;
+                let substream_open_timeout = self.config.substream_open_timeout;
+                let dial_addresses = self.dial_addresses.clone();
+                let keypair = self.context.keypair.clone();
                 let nodelay = self.config.nodelay;
                 let resolver = self.resolver.clone();
 
                 async move {
-                    TcpTransport::dial_peer(
+                    let (address, stream) = TcpTransport::dial_peer(
                         address.clone(),
                         dial_addresses,
                         connection_open_timeout,
@@ -453,7 +456,26 @@ impl Transport for TcpTransport {
                         resolver,
                     )
                     .await
-                    .map_err(|error| (address, error))
+                    .map_err(|error| (address, error))?;
+
+                    let open_address = address.clone();
+                    let (socket_address, peer) = TcpAddress::multiaddr_to_socket_address(&address)
+                        .map_err(|error| (address, error.into()))?;
+
+                    TcpConnection::open_connection(
+                        connection_id,
+                        keypair,
+                        stream,
+                        socket_address,
+                        peer,
+                        yamux_config,
+                        max_read_ahead_factor,
+                        max_write_buffer_size,
+                        connection_open_timeout,
+                        substream_open_timeout,
+                    )
+                    .await
+                    .map_err(|error| (open_address, error.into()))
                 }
             })
             .collect();
@@ -463,12 +485,7 @@ impl Transport for TcpTransport {
             let mut errors = Vec::with_capacity(num_addresses);
             while let Some(result) = futures.next().await {
                 match result {
-                    Ok((address, stream)) =>
-                        return RawConnectionResult::Connected {
-                            connection_id,
-                            address,
-                            stream,
-                        },
+                    Ok(negotiated) => return RawConnectionResult::Connected { negotiated, errors },
                     Err(error) => {
                         tracing::debug!(
                             target: LOG_TARGET,
@@ -496,52 +513,12 @@ impl Transport for TcpTransport {
     }
 
     fn negotiate(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
-        let (stream, address) = self
-            .opened_raw
+        let negotiated = self
+            .opened
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
 
-        let (socket_address, peer) = TcpAddress::multiaddr_to_socket_address(&address)?;
-        let yamux_config = self.config.yamux_config.clone();
-        let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
-        let max_write_buffer_size = self.config.noise_write_buffer_size;
-        let connection_open_timeout = self.config.connection_open_timeout;
-        let substream_open_timeout = self.config.substream_open_timeout;
-        let keypair = self.context.keypair.clone();
-
-        tracing::trace!(
-            target: LOG_TARGET,
-            ?peer,
-            ?connection_id,
-            ?address,
-            "negotiate connection",
-        );
-
-        self.pending_dials.insert(connection_id, address);
-        self.pending_connections.push(Box::pin(async move {
-            match tokio::time::timeout(connection_open_timeout, async move {
-                TcpConnection::negotiate_connection(
-                    stream,
-                    peer,
-                    connection_id,
-                    keypair,
-                    Role::Dialer,
-                    socket_address,
-                    yamux_config,
-                    max_read_ahead_factor,
-                    max_write_buffer_size,
-                    substream_open_timeout,
-                )
-                .await
-                .map_err(|error| (connection_id, error.into()))
-            })
-            .await
-            {
-                Err(_) => Err((connection_id, DialError::Timeout)),
-                Ok(Err(error)) => Err(error),
-                Ok(Ok(connection)) => Ok(connection),
-            }
-        }));
+        self.pending_connections.push(Box::pin(async move { Ok(negotiated) }));
 
         Ok(())
     }
@@ -606,27 +583,29 @@ impl Stream for TcpTransport {
             tracing::trace!(target: LOG_TARGET, ?result, "raw connection result");
 
             match result {
-                RawConnectionResult::Connected {
-                    connection_id,
-                    address,
-                    stream,
-                } => {
-                    let Some(handle) = self.cancel_futures.remove(&connection_id) else {
+                RawConnectionResult::Connected { negotiated, errors } => {
+                    let Some(handle) = self.cancel_futures.remove(&negotiated.connection_id())
+                    else {
                         tracing::warn!(
                             target: LOG_TARGET,
-                            ?connection_id,
-                            ?address,
+                            connection_id = ?negotiated.connection_id(),
+                            address = ?negotiated.endpoint().address(),
+                            ?errors,
                             "raw connection without a cancel handle",
                         );
                         continue;
                     };
 
                     if !handle.is_aborted() {
-                        self.opened_raw.insert(connection_id, (stream, address.clone()));
+                        let connection_id = negotiated.connection_id();
+                        let address = negotiated.endpoint().address().clone();
+
+                        self.opened.insert(connection_id, negotiated);
 
                         return Poll::Ready(Some(TransportEvent::ConnectionOpened {
                             connection_id,
                             address,
+                            errors,
                         }));
                     }
                 }
@@ -702,15 +681,13 @@ mod tests {
         codec::ProtocolCodec,
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
-        transport::manager::{
-            limits::ConnectionLimitsConfig, ProtocolContext, SupportedTransport, TransportManager,
-        },
+        transport::manager::{ProtocolContext, SupportedTransport, TransportManagerBuilder},
         types::protocol::ProtocolName,
         BandwidthSink, PeerId,
     };
     use multiaddr::Protocol;
     use multihash::Multihash;
-    use std::{collections::HashSet, sync::Arc};
+    use std::sync::Arc;
     use tokio::sync::mpsc::channel;
 
     #[tokio::test]
@@ -996,13 +973,7 @@ mod tests {
 
     #[tokio::test]
     async fn dial_error_reported_for_outbound_connections() {
-        let (mut manager, _handle) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let mut manager = TransportManagerBuilder::new().build();
         let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
         manager.register_transport(

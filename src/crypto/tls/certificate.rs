@@ -23,7 +23,7 @@
 //! This module handles generation, signing, and verification of certificates.
 
 use crate::{
-    crypto::{ed25519::Keypair, PublicKey},
+    crypto::{ed25519::Keypair, RemotePublicKey},
     PeerId,
 };
 
@@ -57,22 +57,20 @@ pub fn generate(
     // Endpoints MAY generate a new key and certificate
     // for every connection attempt, or they MAY reuse the same key
     // and certificate for multiple connections.
-    let certificate_keypair = rcgen::KeyPair::generate(P2P_SIGNATURE_ALGORITHM)?;
+    let certificate_keypair = rcgen::KeyPair::generate_for(P2P_SIGNATURE_ALGORITHM)?;
     let rustls_key = rustls::PrivateKey(certificate_keypair.serialize_der());
 
     let certificate = {
-        let mut params = rcgen::CertificateParams::new(vec![]);
+        let mut params = rcgen::CertificateParams::new(vec![])?;
         params.distinguished_name = rcgen::DistinguishedName::new();
         params.custom_extensions.push(make_libp2p_extension(
             identity_keypair,
             &certificate_keypair,
         )?);
-        params.alg = P2P_SIGNATURE_ALGORITHM;
-        params.key_pair = Some(certificate_keypair);
-        rcgen::Certificate::from_params(params)?
+        params.self_signed(&certificate_keypair)?
     };
 
-    let rustls_certificate = rustls::Certificate(certificate.serialize_der()?);
+    let rustls_certificate = rustls::Certificate(certificate.der().to_vec());
 
     Ok((rustls_certificate, rustls_key))
 }
@@ -102,15 +100,18 @@ pub struct P2pCertificate<'a> {
 /// The contents of the specific libp2p extension, containing the public host key
 /// and a signature performed using the private host key.
 pub struct P2pExtension {
-    public_key: PublicKey,
+    public_key: RemotePublicKey,
     /// This signature provides cryptographic proof that the peer was
     /// in possession of the private host key at the time the certificate was signed.
     signature: Vec<u8>,
+    /// PeerId derived from the public key. While not being part of the extension, we store it to
+    /// avoid the need to serialize the public key back to protobuf.
+    peer_id: PeerId,
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
-pub struct GenError(#[from] rcgen::RcgenError);
+pub struct GenError(#[from] rcgen::Error);
 
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
@@ -123,7 +124,7 @@ pub struct VerificationError(#[from] pub(crate) webpki::Error);
 /// Internal function that only parses but does not verify the certificate.
 ///
 /// Useful for testing but unsuitable for production.
-fn parse_unverified(der_input: &[u8]) -> Result<P2pCertificate, webpki::Error> {
+fn parse_unverified<'a>(der_input: &'a [u8]) -> Result<P2pCertificate<'a>, webpki::Error> {
     let x509 = X509Certificate::from_der(der_input)
         .map(|(_rest_input, x509)| x509)
         .map_err(|_| webpki::Error::BadDer)?;
@@ -148,7 +149,7 @@ fn parse_unverified(der_input: &[u8]) -> Result<P2pCertificate, webpki::Error> {
             //    publicKey OCTET STRING,
             //    signature OCTET STRING
             // }
-            let (public_key, signature): (Vec<u8>, Vec<u8>) =
+            let (public_key_protobuf, signature): (Vec<u8>, Vec<u8>) =
                 yasna::decode_der(ext.value).map_err(|_| webpki::Error::ExtensionValueInvalid)?;
             // The publicKey field of SignedKey contains the public host key
             // of the endpoint, encoded using the following protobuf:
@@ -162,11 +163,13 @@ fn parse_unverified(der_input: &[u8]) -> Result<P2pCertificate, webpki::Error> {
             //    required KeyType Type = 1;
             //    required bytes Data = 2;
             // }
-            let public_key = PublicKey::from_protobuf_encoding(&public_key)
+            let public_key = RemotePublicKey::from_protobuf_encoding(&public_key_protobuf)
                 .map_err(|_| webpki::Error::UnknownIssuer)?;
+            let peer_id = PeerId::from_public_key_protobuf(&public_key_protobuf);
             let ext = P2pExtension {
                 public_key,
                 signature,
+                peer_id,
             };
             libp2p_extension = Some(ext);
             continue;
@@ -195,15 +198,15 @@ fn parse_unverified(der_input: &[u8]) -> Result<P2pCertificate, webpki::Error> {
 
 fn make_libp2p_extension(
     identity_keypair: &Keypair,
-    certificate_keypair: &rcgen::KeyPair,
-) -> Result<rcgen::CustomExtension, rcgen::RcgenError> {
+    certificate_pubkey: &impl rcgen::PublicKeyData,
+) -> Result<rcgen::CustomExtension, rcgen::Error> {
     // The peer signs the concatenation of the string `libp2p-tls-handshake:`
-    // and the public key that it used to generate the certificate carrying
+    // and the public key (in SPKI DER format) that it used to generate the certificate carrying
     // the libp2p Public Key Extension, using its private host key.
     let signature = {
         let mut msg = vec![];
         msg.extend(P2P_SIGNING_PREFIX);
-        msg.extend(certificate_keypair.public_key_der());
+        msg.extend(certificate_pubkey.subject_public_key_info());
 
         identity_keypair.sign(&msg)
     };
@@ -231,7 +234,7 @@ fn make_libp2p_extension(
 impl P2pCertificate<'_> {
     /// The [`PeerId`] of the remote peer.
     pub fn peer_id(&self) -> PeerId {
-        self.extension.public_key.to_peer_id()
+        self.extension.peer_id
     }
 
     /// Verify the `signature` of the `message` signed by the private key corresponding to the
@@ -453,7 +456,7 @@ mod tests {
 
         assert!(parsed_cert.verify().is_ok());
         assert_eq!(
-            crate::crypto::PublicKey::Ed25519(keypair.public()),
+            crate::crypto::RemotePublicKey::Ed25519(keypair.public()),
             parsed_cert.extension.public_key
         );
     }

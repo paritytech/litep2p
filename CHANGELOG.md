@@ -5,6 +5,132 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-01-21
+
+This release brings multiple fixes to both the transport and application-level protocols.
+
+Specifically, it enhances WebSocket stability by resolving AsyncWrite errors and ensuring that partial writes during the negotiation phase no longer trigger connection failures.
+
+At the same time, Bitswap client functionality is introduced, which makes this release semver breaking.
+
+### Added
+
+- Add Bitswap client ([#501](https://github.com/paritytech/litep2p/pull/501))
+
+### Fixed
+
+- notif/fix: Avoid CPU busy loops on litep2p full shutdown ([#521](https://github.com/paritytech/litep2p/pull/521))
+- protocol: Ensure transport manager knows about closed connections ([#515](https://github.com/paritytech/litep2p/pull/515))
+- substream: Decrement the bytes counter to avoid excessive flushing ([#511](https://github.com/paritytech/litep2p/pull/511))
+- crypto/noise: Improve stability of websockets by fixing AsyncWrite implementation ([#518](https://github.com/paritytech/litep2p/pull/518))
+- bitswap: Split block responses into batches under 2 MiB ([#516](https://github.com/paritytech/litep2p/pull/516))
+- crypto/noise: Fix connection negotiation logic on partial writes ([#519](https://github.com/paritytech/litep2p/pull/519))
+- substream/fix: Fix partial reads for ProtocolCodec::Identity ([#512](https://github.com/paritytech/litep2p/pull/512))
+- webrtc: Avoid panics returning error instead ([#509](https://github.com/paritytech/litep2p/pull/509))
+- bitswap: e2e test & max payload fix ([#508](https://github.com/paritytech/litep2p/pull/508))
+- tcp: Exit connections when events fail to propagate to protocols ([#506](https://github.com/paritytech/litep2p/pull/506))
+- webrtc: Avoid future being dropped when channel is full ([#483](https://github.com/paritytech/litep2p/pull/483))
+
+## [0.12.3] - 2025-12-16
+
+This release improves the robustness of the multistream-select negotiation over WebRTC transport and fixes inbound bandwidth metering on substreams. It also enhances the dialing success rate by improving the transport dialing logic. Additionally, it re-exports CID's multihash to facilitate the construction of CID V1.
+
+### Changed
+
+- transports: Improves the robustness and success rate of connection dialing  ([#495](https://github.com/paritytech/litep2p/pull/495))
+- types: Re-export cid's multihash to construct CID V1  ([#491](https://github.com/paritytech/litep2p/pull/491))
+
+### Fixed
+
+- fix: multistream-select negotiation on outbound substream over webrtc  ([#465](https://github.com/paritytech/litep2p/pull/465))
+- substream: Fix inbound bandwidth metering  ([#499](https://github.com/paritytech/litep2p/pull/499))
+
+## [0.12.2] - 2025-11-28
+
+This release allows all Bitswap CIDs (v1) to pass regardless of the used hash. It also enhances local address checks in the transport manager.
+
+### Changed
+
+- transport-service: Enhance logging with protocol names  ([#485](https://github.com/paritytech/litep2p/pull/485))
+- bitswap: Reexports for CID  ([#486](https://github.com/paritytech/litep2p/pull/486))
+- Allow all the Bitswap CIDs (v1) to pass regardless of used hash  ([#482](https://github.com/paritytech/litep2p/pull/482))
+- transport/manager: Enhance local address checks  ([#480](https://github.com/paritytech/litep2p/pull/480))
+
+## [0.12.1] - 2025-11-21
+
+This release adds support for connecting to multiple Kademlia DHT networks. The change is backward-compatible, no client code modifications should be needed compared to v0.12.0.
+
+### Changed
+
+- kad: Allow connecting to more than one DHT network ([#473](https://github.com/paritytech/litep2p/pull/473))
+- service: Log services that have closed ([#474](https://github.com/paritytech/litep2p/pull/474))
+
+### Fixed
+
+- update simple-dns ([#470](https://github.com/paritytech/litep2p/pull/470))
+
+## [0.12.0] - 2025-11-11
+
+This release adds `KademliaEvent::PutRecordSuccess` & `KademliaEvent::AddProviderSuccess` events to Kademlia, allowing to track whether publishing a record or a provider was successfull. While `PutRecordSuccess` was present in the previous versions of litep2p, it was actually never emitted. Note that `AddProviderSuccess` and `QueryFailed` are also generated during automatic provider refresh, so those may be emitted for `QueryId`s not known to the client code.
+
+### Added
+
+- kademlia: Track success of `ADD_PROVIDER` queries ([#432](https://github.com/paritytech/litep2p/pull/432))
+- kademlia: Workaround for dealing with not implemented `PUT_VALUE` ACKs ([#430](https://github.com/paritytech/litep2p/pull/430))
+- kademlia: Track success of `PUT_VALUE` queries ([#427](https://github.com/paritytech/litep2p/pull/427))
+
+### Fixed
+
+- Identify: gracefully close substream after sending payload ([#466](https://github.com/paritytech/litep2p/pull/466))
+- fix: transport context polling order ([#456](https://github.com/paritytech/litep2p/pull/456))
+
+### Changed
+
+- refactor: implement builder pattern for TransportManager ([#453](https://github.com/paritytech/litep2p/pull/453))
+
+## [0.11.1] - 2025-10-28
+
+This release ensures that polling the yamux controller after an error does not lead to unexpected behavior.
+
+### Fixed
+
+- yamux/control: Ensure poll next inbound is not called after errors  ([#445](https://github.com/paritytech/litep2p/pull/445))
+
+## [0.11.0] - 2025-10-20
+
+This release adds support for RSA remote network identity keys gated behind `rsa` feature. It also fixes mDNS initialization in the environment with no multicast addresses available and Bitswap compatibility with kubo IPFS client >= v0.37.0.
+
+### Added
+
+- Support RSA remote network identity keys ([#423](https://github.com/paritytech/litep2p/pull/423))
+
+### Fixed
+
+- bitswap: Reuse inbound substream for subsequent requests ([#447](https://github.com/paritytech/litep2p/pull/447))
+- mDNS: Do not fail initialization if the socket could not be created ([#434](https://github.com/paritytech/litep2p/pull/434))
+- Make RemotePublicKey public to enable signature verification ([#435](https://github.com/paritytech/litep2p/pull/435))
+- improve error handling in webRTC-related noise function ([#377](https://github.com/paritytech/litep2p/pull/377))
+
+### Changed
+
+- Upgrade rcgen 0.10.0 -> 0.14.5 ([#450](https://github.com/paritytech/litep2p/pull/450))
+- chore: update str0m dependency, update code based on breaking changes ([#422](https://github.com/paritytech/litep2p/pull/422))
+
+## [0.10.0] - 2025-07-22
+
+This release adds the ability to use system DNS resolver and change Kademlia DNS memory store capacity. It also fixes the Bitswap protocol implementation and correctly handles the dropped notification substreams by unregistering them from the protocol list.
+
+### Added
+
+- kad: Expose memory store configuration ([#407](https://github.com/paritytech/litep2p/pull/407))
+- transport: Allow changing DNS resolver config ([#384](https://github.com/paritytech/litep2p/pull/384))
+
+### Fixed
+
+- notification: Unregister dropped protocols ([#391](https://github.com/paritytech/litep2p/pull/391))
+- bitswap: Fix protocol implementation ([#402](https://github.com/paritytech/litep2p/pull/402))
+- transport-manager: stricter supported multiaddress check ([#403](https://github.com/paritytech/litep2p/pull/403))
+
 ## [0.9.5] - 2025-05-26
 
 This release primarily focuses on strengthening the stability of the websocket transport. We've resolved an issue where higher-level buffering was causing the Noise protocol to fail when decoding messages.

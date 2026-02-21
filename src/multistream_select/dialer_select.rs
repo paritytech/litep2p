@@ -22,18 +22,19 @@
 
 use crate::{
     codec::unsigned_varint::UnsignedVarint,
-    error::{self, Error, ParseError},
+    error::{self, Error, ParseError, SubstreamError},
     multistream_select::{
+        drain_trailing_protocols,
         protocol::{
             webrtc_encode_multistream_message, HeaderLine, Message, MessageIO, Protocol,
-            ProtocolError,
+            ProtocolError, PROTO_MULTISTREAM_1_0,
         },
         Negotiated, NegotiationError, Version,
     },
     types::protocol::ProtocolName,
 };
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use futures::prelude::*;
 use std::{
     convert::TryFrom as _,
@@ -357,13 +358,51 @@ impl WebRtcDialerState {
         &mut self,
         payload: Vec<u8>,
     ) -> Result<HandshakeResult, crate::error::NegotiationError> {
-        let Message::Protocols(protocols) =
-            Message::decode(payload.into()).map_err(|_| ParseError::InvalidData)?
-        else {
-            return Err(crate::error::NegotiationError::MultistreamSelectError(
-                NegotiationError::Failed,
-            ));
+        // All multistream-select messages are length-prefixed. Since this code path is not using
+        // multistream_select::protocol::MessageIO, we need to decode and remove the length here.
+        let remaining: &[u8] = &payload;
+        let (len, tail) = unsigned_varint::decode::usize(remaining).map_err(|error| {
+            tracing::debug!(
+                    target: LOG_TARGET,
+                    ?error,
+                    message = ?payload,
+                    "Failed to decode length-prefix in multistream message");
+            error::NegotiationError::ParseError(ParseError::InvalidData)
+        })?;
+
+        let len_size = remaining.len() - tail.len();
+        let bytes = Bytes::from(payload);
+        let payload = bytes.slice(len_size..len_size + len);
+        let remaining = bytes.slice(len_size + len..);
+        let message = Message::decode(payload);
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?message,
+            "Decoded message while registering response",
+        );
+
+        let mut protocols = match message {
+            Ok(Message::Header(HeaderLine::V1)) => {
+                vec![PROTO_MULTISTREAM_1_0]
+            }
+            Ok(Message::Protocol(protocol)) => vec![protocol],
+            Ok(Message::Protocols(protocols)) => protocols,
+            Ok(Message::NotAvailable) =>
+                return match &self.state {
+                    HandshakeState::WaitingProtocol => Err(
+                        error::NegotiationError::MultistreamSelectError(NegotiationError::Failed),
+                    ),
+                    _ => Err(error::NegotiationError::StateMismatch),
+                },
+            Ok(Message::ListProtocols) => return Err(error::NegotiationError::StateMismatch),
+            Err(_) => return Err(error::NegotiationError::ParseError(ParseError::InvalidData)),
         };
+
+        match drain_trailing_protocols(remaining) {
+            Ok(protos) => protocols.extend(protos),
+            Err(error) => return Err(error),
+        }
 
         let mut protocol_iter = protocols.into_iter();
         loop {
@@ -371,10 +410,7 @@ impl WebRtcDialerState {
                 (HandshakeState::WaitingResponse, None) =>
                     return Err(crate::error::NegotiationError::StateMismatch),
                 (HandshakeState::WaitingResponse, Some(protocol)) => {
-                    let header = Protocol::try_from(&b"/multistream/1.0.0"[..])
-                        .expect("valid multitstream-select header");
-
-                    if protocol == header {
+                    if protocol == PROTO_MULTISTREAM_1_0 {
                         self.state = HandshakeState::WaitingProtocol;
                     } else {
                         return Err(crate::error::NegotiationError::MultistreamSelectError(
@@ -383,6 +419,10 @@ impl WebRtcDialerState {
                     }
                 }
                 (HandshakeState::WaitingProtocol, Some(protocol)) => {
+                    if protocol == PROTO_MULTISTREAM_1_0 {
+                        return Err(crate::error::NegotiationError::StateMismatch);
+                    }
+
                     if self.protocol.as_bytes() == protocol.as_ref() {
                         return Ok(HandshakeResult::Succeeded(self.protocol.clone()));
                     }
@@ -408,10 +448,9 @@ impl WebRtcDialerState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::multistream_select::listener_select_proto;
+    use crate::multistream_select::{listener_select_proto, protocol::MSG_MULTISTREAM_1_0};
+    use bytes::BufMut;
     use std::time::Duration;
-    use tokio::net::{TcpListener, TcpStream};
-
     #[tokio::test]
     async fn select_proto_basic() {
         async fn run(version: Version) {
@@ -755,23 +794,18 @@ mod tests {
     fn propose() {
         let (mut dialer_state, message) =
             WebRtcDialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
-        let message = bytes::BytesMut::from(&message[..]).freeze();
 
-        let Message::Protocols(protocols) = Message::decode(message).unwrap() else {
-            panic!("invalid message type");
-        };
+        let mut bytes = BytesMut::with_capacity(32);
+        bytes.put_u8(MSG_MULTISTREAM_1_0.len() as u8);
+        let _ = Message::Header(HeaderLine::V1).encode(&mut bytes).unwrap();
 
-        assert_eq!(protocols.len(), 2);
-        assert_eq!(
-            protocols[0],
-            Protocol::try_from(&b"/multistream/1.0.0"[..])
-                .expect("valid multitstream-select header")
-        );
-        assert_eq!(
-            protocols[1],
-            Protocol::try_from(&b"/13371338/proto/1"[..])
-                .expect("valid multitstream-select header")
-        );
+        let proto = Protocol::try_from(&b"/13371338/proto/1"[..]).expect("valid protocol name");
+        bytes.put_u8((proto.as_ref().len() + 1) as u8); // + 1 for \n
+        let _ = Message::Protocol(proto).encode(&mut bytes).unwrap();
+
+        let expected_message = bytes.freeze().to_vec();
+
+        assert_eq!(message, expected_message);
     }
 
     #[test]
@@ -781,33 +815,29 @@ mod tests {
             vec![ProtocolName::from("/sup/proto/1")],
         )
         .unwrap();
-        let message = bytes::BytesMut::from(&message[..]).freeze();
 
-        let Message::Protocols(protocols) = Message::decode(message).unwrap() else {
-            panic!("invalid message type");
-        };
+        let mut bytes = BytesMut::with_capacity(32);
+        bytes.put_u8(MSG_MULTISTREAM_1_0.len() as u8);
+        let _ = Message::Header(HeaderLine::V1).encode(&mut bytes).unwrap();
 
-        assert_eq!(protocols.len(), 3);
-        assert_eq!(
-            protocols[0],
-            Protocol::try_from(&b"/multistream/1.0.0"[..])
-                .expect("valid multitstream-select header")
-        );
-        assert_eq!(
-            protocols[1],
-            Protocol::try_from(&b"/13371338/proto/1"[..])
-                .expect("valid multitstream-select header")
-        );
-        assert_eq!(
-            protocols[2],
-            Protocol::try_from(&b"/sup/proto/1"[..]).expect("valid multitstream-select header")
-        );
+        let proto1 = Protocol::try_from(&b"/13371338/proto/1"[..]).expect("valid protocol name");
+        bytes.put_u8((proto1.as_ref().len() + 1) as u8); // + 1 for \n
+        let _ = Message::Protocol(proto1).encode(&mut bytes).unwrap();
+
+        let proto2 = Protocol::try_from(&b"/sup/proto/1"[..]).expect("valid protocol name");
+        bytes.put_u8((proto2.as_ref().len() + 1) as u8); // + 1 for \n
+        let _ = Message::Protocol(proto2).encode(&mut bytes).unwrap();
+
+        let expected_message = bytes.freeze().to_vec();
+
+        assert_eq!(message, expected_message);
     }
 
     #[test]
-    fn register_response_invalid_message() {
-        // send only header line
+    fn register_response_header_only() {
         let mut bytes = BytesMut::with_capacity(32);
+        bytes.put_u8(MSG_MULTISTREAM_1_0.len() as u8);
+
         let message = Message::Header(HeaderLine::V1);
         message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
 
@@ -815,7 +845,8 @@ mod tests {
             WebRtcDialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
 
         match dialer_state.register_response(bytes.freeze().to_vec()) {
-            Err(error::NegotiationError::MultistreamSelectError(NegotiationError::Failed)) => {}
+            Ok(HandshakeResult::NotReady) => {}
+            Err(err) => panic!("unexpected error: {:?}", err),
             event => panic!("invalid event: {event:?}"),
         }
     }
@@ -823,17 +854,20 @@ mod tests {
     #[test]
     fn header_line_missing() {
         // header line missing
-        let mut bytes = BytesMut::with_capacity(256);
-        let message = Message::Protocols(vec![
-            Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
-            Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
-        ]);
-        message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
+        let proto = b"/13371338/proto/1";
+        let mut bytes = BytesMut::with_capacity(proto.len() + 2);
+        bytes.put_u8((proto.len() + 1) as u8);
+
+        let response = Message::Protocol(Protocol::try_from(&proto[..]).unwrap())
+            .encode(&mut bytes)
+            .expect("valid message encodes");
+
+        let response = bytes.freeze().to_vec();
 
         let (mut dialer_state, _message) =
             WebRtcDialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
 
-        match dialer_state.register_response(bytes.freeze().to_vec()) {
+        match dialer_state.register_response(response) {
             Err(error::NegotiationError::MultistreamSelectError(NegotiationError::Failed)) => {}
             event => panic!("invalid event: {event:?}"),
         }

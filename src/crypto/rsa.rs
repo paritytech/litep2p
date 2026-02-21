@@ -1,4 +1,4 @@
-// Copyright 2023 litep2p developers
+// Copyright 2025 litep2p developers
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
 // copy of this software and associated documentation files (the "Software"),
@@ -18,15 +18,27 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#[cfg(test)]
-mod bitswap;
-#[cfg(test)]
-mod identify;
-#[cfg(test)]
-mod kademlia;
-#[cfg(test)]
-mod notification;
-#[cfg(test)]
-mod ping;
-#[cfg(test)]
-mod request_response;
+//! RSA public key.
+
+use crate::error::ParseError;
+use ring::signature::{UnparsedPublicKey, RSA_PKCS1_2048_8192_SHA256};
+use x509_parser::{prelude::FromDer, x509::SubjectPublicKeyInfo};
+
+/// An RSA public key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicKey(Vec<u8>);
+
+impl PublicKey {
+    /// Decode an RSA public key from a DER-encoded X.509 SubjectPublicKeyInfo structure.
+    pub fn try_decode_x509(spki: &[u8]) -> Result<Self, ParseError> {
+        SubjectPublicKeyInfo::from_der(spki)
+            .map(|(_, spki)| Self(spki.subject_public_key.as_ref().to_vec()))
+            .map_err(|_| ParseError::InvalidPublicKey)
+    }
+
+    /// Verify the RSA signature on a message using the public key.
+    pub fn verify(&self, msg: &[u8], sig: &[u8]) -> bool {
+        let key = UnparsedPublicKey::new(&RSA_PKCS1_2048_8192_SHA256, &self.0);
+        key.verify(msg, sig).is_ok()
+    }
+}

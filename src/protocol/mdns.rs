@@ -91,9 +91,6 @@ impl Config {
 
 /// Main mDNS object.
 pub(crate) struct Mdns {
-    /// UDP socket for multicast requests/responses.
-    socket: UdpSocket,
-
     /// Query interval.
     query_interval: tokio::time::Interval,
 
@@ -125,23 +122,11 @@ impl Mdns {
         _transport_handle: TransportManagerHandle,
         config: Config,
         listen_addresses: Vec<Multiaddr>,
-    ) -> crate::Result<Self> {
-        let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-        socket.set_reuse_address(true)?;
-        #[cfg(unix)]
-        socket.set_reuse_port(true)?;
-        socket.bind(
-            &SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), IPV4_MULTICAST_PORT).into(),
-        )?;
-        socket.set_multicast_loop_v4(true)?;
-        socket.set_multicast_ttl_v4(255)?;
-        socket.join_multicast_v4(&IPV4_MULTICAST_ADDRESS, &Ipv4Addr::UNSPECIFIED)?;
-        socket.set_nonblocking(true)?;
-
+    ) -> Self {
         let mut query_interval = tokio::time::interval(config.query_interval);
         query_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-        Ok(Self {
+        Self {
             _transport_handle,
             event_tx: config.tx,
             next_query_id: 1337u16,
@@ -153,12 +138,11 @@ impl Mdns {
                 .take(32)
                 .map(char::from)
                 .collect(),
-            socket: UdpSocket::from_std(net::UdpSocket::from(socket))?,
             listen_addresses: listen_addresses
                 .into_iter()
                 .map(|address| format!("dnsaddr={address}").into())
                 .collect(),
-        })
+        }
     }
 
     /// Get next query ID.
@@ -170,7 +154,7 @@ impl Mdns {
     }
 
     /// Send mDNS query on the network.
-    async fn on_outbound_request(&mut self) -> crate::Result<()> {
+    async fn on_outbound_request(&mut self, socket: &UdpSocket) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, "send outbound query");
 
         let mut packet = Packet::new_query(self.next_query_id());
@@ -182,7 +166,7 @@ impl Mdns {
             unicast_response: false,
         });
 
-        self.socket
+        socket
             .send_to(
                 &packet.build_bytes_vec().expect("valid packet"),
                 (IPV4_MULTICAST_ADDRESS, IPV4_MULTICAST_PORT),
@@ -279,21 +263,60 @@ impl Mdns {
             .collect()
     }
 
+    /// Setup the socket.
+    fn setup_socket() -> crate::Result<UdpSocket> {
+        let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+        socket.set_reuse_address(true)?;
+        #[cfg(unix)]
+        socket.set_reuse_port(true)?;
+        socket.bind(
+            &SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), IPV4_MULTICAST_PORT).into(),
+        )?;
+        socket.set_multicast_loop_v4(true)?;
+        socket.set_multicast_ttl_v4(255)?;
+        socket.join_multicast_v4(&IPV4_MULTICAST_ADDRESS, &Ipv4Addr::UNSPECIFIED)?;
+        socket.set_nonblocking(true)?;
+
+        UdpSocket::from_std(net::UdpSocket::from(socket)).map_err(Into::into)
+    }
+
     /// Event loop for [`Mdns`].
     pub(crate) async fn start(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting mdns event loop");
 
+        let mut socket_opt = None;
+
         loop {
+            let socket = match socket_opt.take() {
+                Some(s) => s,
+                None => {
+                    let _ = self.query_interval.tick().await;
+                    match Self::setup_socket() {
+                        Ok(s) => s,
+                        Err(error) => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?error,
+                                "failed to setup mDNS socket, will try again"
+                            );
+                            continue;
+                        }
+                    }
+                }
+            };
+
             tokio::select! {
                 _ = self.query_interval.tick() => {
                     tracing::trace!(target: LOG_TARGET, "query interval ticked");
 
-                    if let Err(error) = self.on_outbound_request().await {
-                        tracing::error!(target: LOG_TARGET, ?error, "failed to send mdns query");
+                    if let Err(error) = self.on_outbound_request(&socket).await {
+                        tracing::debug!(target: LOG_TARGET, ?error, "failed to send mdns query");
+                        // Let's recreate the socket
+                        continue;
                     }
                 },
 
-                result = self.socket.recv_from(&mut self.receive_buffer) => match result {
+                result = socket.recv_from(&mut self.receive_buffer) => match result {
                     Ok((nread, address)) => match Packet::parse(&self.receive_buffer[..nread]) {
                         Ok(packet) => match packet.has_flags(PacketFlag::RESPONSE) {
                             true => {
@@ -307,10 +330,12 @@ impl Mdns {
                                 }
                             }
                             false => if let Some(response) = self.on_inbound_request(packet) {
-                                if let Err(error) = self.socket
+                                if let Err(error) = socket
                                     .send_to(&response, (IPV4_MULTICAST_ADDRESS, IPV4_MULTICAST_PORT))
                                     .await {
-                                    tracing::error!(target: LOG_TARGET, ?error, "failed to send mdns response");
+                                    tracing::debug!(target: LOG_TARGET, ?error, "failed to send mdns response");
+                                    // Let's recreate the socket
+                                    continue;
                                 }
                             }
                         }
@@ -323,10 +348,14 @@ impl Mdns {
                         ),
                     }
                     Err(error) => {
-                        tracing::error!(target: LOG_TARGET, ?error, "failed to read from socket");
+                        tracing::debug!(target: LOG_TARGET, ?error, "failed to read from socket");
+                        // Let's recreate the socket
+                        continue;
                     }
                 },
-            }
+            };
+
+            socket_opt = Some(socket);
         }
     }
 }
@@ -334,11 +363,7 @@ impl Mdns {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        crypto::ed25519::Keypair,
-        transport::manager::{limits::ConnectionLimitsConfig, TransportManager},
-        BandwidthSink,
-    };
+    use crate::transport::manager::TransportManagerBuilder;
     use futures::StreamExt;
     use multiaddr::Protocol;
 
@@ -349,16 +374,10 @@ mod tests {
             .try_init();
 
         let (config1, mut stream1) = Config::new(Duration::from_secs(5));
-        let (_manager1, handle1) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
-        );
+        let manager1 = TransportManagerBuilder::new().build();
 
         let mdns1 = Mdns::new(
-            handle1,
+            manager1.transport_manager_handle(),
             config1,
             vec![
                 "/ip6/::1/tcp/8888/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTaaaa"
@@ -368,20 +387,13 @@ mod tests {
                     .parse()
                     .unwrap(),
             ],
-        )
-        .unwrap();
-
-        let (config2, mut stream2) = Config::new(Duration::from_secs(5));
-        let (_manager1, handle2) = TransportManager::new(
-            Keypair::generate(),
-            HashSet::new(),
-            BandwidthSink::new(),
-            8usize,
-            ConnectionLimitsConfig::default(),
         );
 
+        let (config2, mut stream2) = Config::new(Duration::from_secs(5));
+        let manager2 = TransportManagerBuilder::new().build();
+
         let mdns2 = Mdns::new(
-            handle2,
+            manager2.transport_manager_handle(),
             config2,
             vec![
                 "/ip6/::1/tcp/9999/p2p/12D3KooWNP463TyS3vUpmekjjZ2dg7xy1WHNMM7MqfsMevMTbbbb"
@@ -391,8 +403,7 @@ mod tests {
                     .parse()
                     .unwrap(),
             ],
-        )
-        .unwrap();
+        );
 
         tokio::spawn(mdns1.start());
         tokio::spawn(mdns2.start());

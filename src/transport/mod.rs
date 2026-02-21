@@ -37,7 +37,9 @@ pub mod webrtc;
 #[cfg(feature = "websocket")]
 pub mod websocket;
 
+#[cfg(test)]
 pub(crate) mod dummy;
+
 pub(crate) mod manager;
 
 pub use manager::limits::{ConnectionLimitsConfig, ConnectionLimitsError};
@@ -139,6 +141,9 @@ pub(crate) enum TransportEvent {
 
         /// Address that was dialed.
         address: Multiaddr,
+
+        /// Errors from unsuccessful dial attempts.
+        errors: Vec<(Multiaddr, DialError)>,
     },
 
     /// Connection closed to remote peer.
