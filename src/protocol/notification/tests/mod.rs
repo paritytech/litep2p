@@ -58,6 +58,7 @@ fn make_notification_protocol() -> (
         std::sync::Arc::new(Default::default()),
         manager.transport_manager_handle(),
         KEEP_ALIVE_TIMEOUT,
+        true,
     );
     let (config, handle) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),

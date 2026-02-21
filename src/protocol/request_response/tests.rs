@@ -58,6 +58,7 @@ fn protocol() -> (
         std::sync::Arc::new(Default::default()),
         manager.transport_manager_handle(),
         KEEP_ALIVE_TIMEOUT,
+        true,
     );
     let (config, handle) =
         ConfigBuilder::new(ProtocolName::from("/req/1")).with_max_size(1024).build();

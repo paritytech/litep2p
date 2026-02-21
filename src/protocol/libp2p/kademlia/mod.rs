@@ -1445,6 +1445,7 @@ mod tests {
             Default::default(),
             manager.transport_manager_handle(),
             KEEP_ALIVE_TIMEOUT,
+            true,
         );
         let (event_tx, event_rx) = channel(64);
         let (_cmd_tx, cmd_rx) = channel(64);
