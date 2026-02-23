@@ -10,4 +10,4 @@ litep2p = {path = "../..", features = ["websocket"]}
 futures = "0.3.31"
 tokio-util = { version = "0.7.14", features = ["codec"] }
 async-trait = "0.1.88"
-bytes = "1.10.1"
+bytes = "1.11.1"
