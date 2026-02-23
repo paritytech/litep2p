@@ -37,7 +37,10 @@ const PING_PAYLOAD_SIZE: usize = 32;
 /// Maximum PING failures.
 const MAX_FAILURES: usize = 3;
 
-pub const PING_INTERVAL: Duration = Duration::from_secs(15);
+/// Ping interval must be set to < 10 secs, because litep2p versions before
+/// <https://github.com/paritytech/litep2p/pull/416> reset the inbound substream if not receive
+/// the paiload within 10 seconds of opening the substream.
+pub const PING_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Ping configuration.
 pub struct Config {
@@ -86,6 +89,8 @@ pub struct ConfigBuilder {
 
     /// Maximum failures before the peer is considered unreachable.
     max_failures: usize,
+
+    /// Interval between outbound pings.
     ping_interval: Duration,
 }
 
