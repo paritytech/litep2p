@@ -260,6 +260,15 @@ impl Stream for KeepAliveTracker {
     }
 }
 
+/// Whether this protocol substream activity can keep connection alive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubstreamKeepAlive {
+    /// Yes.
+    Yes,
+    /// No.
+    No,
+}
+
 /// Provides an interfaces for [`Litep2p`](crate::Litep2p) protocols to interact
 /// with the underlying transport protocols.
 #[derive(Debug)]
@@ -288,7 +297,7 @@ pub struct TransportService {
     /// Close the connection if no substreams are open within this time frame.
     keep_alive_tracker: KeepAliveTracker,
 
-    counts_towards_keep_alive: bool,
+    substream_keep_alive: SubstreamKeepAlive,
 }
 
 impl TransportService {
@@ -300,7 +309,7 @@ impl TransportService {
         next_substream_id: Arc<AtomicUsize>,
         transport_handle: TransportManagerHandle,
         keep_alive_timeout: Duration,
-        counts_towards_keep_alive: bool,
+        substream_keep_alive: SubstreamKeepAlive,
     ) -> (Self, Sender<InnerTransportEvent>) {
         let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
 
@@ -316,7 +325,7 @@ impl TransportService {
                 next_substream_id,
                 connections: HashMap::new(),
                 keep_alive_tracker,
-                counts_towards_keep_alive,
+                substream_keep_alive,
             },
             tx,
         )
@@ -564,7 +573,7 @@ impl TransportService {
             "open substream",
         );
 
-        if self.counts_towards_keep_alive {
+        if self.substream_keep_alive == SubstreamKeepAlive::Yes {
             self.keep_alive_tracker.substream_activity(peer, connection_id);
             connection.try_upgrade();
         }
@@ -618,7 +627,7 @@ impl Stream for TransportService {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let protocol_name = self.protocol.clone();
-        let duration = self.keep_alive_tracker.keep_alive_timeout;
+        let keep_alive_timeout = self.keep_alive_tracker.keep_alive_timeout;
 
         while let Poll::Ready(event) = self.rx.poll_recv(cx) {
             match event {
@@ -655,7 +664,9 @@ impl Stream for TransportService {
                     substream,
                     connection_id,
                 }) => {
-                    if protocol == self.protocol && self.counts_towards_keep_alive {
+                    if protocol == self.protocol
+                        && self.substream_keep_alive == SubstreamKeepAlive::Yes
+                    {
                         self.keep_alive_tracker.substream_activity(peer, connection_id);
                         if let Some(context) = self.connections.get_mut(&peer) {
                             context.try_upgrade(&connection_id);
@@ -683,7 +694,7 @@ impl Stream for TransportService {
                     ?peer,
                     ?connection_id,
                     protocol = ?protocol_name,
-                    ?duration,
+                    timeout = ?keep_alive_timeout,
                     "keep-alive timeout over, downgrade connection",
                 );
 
@@ -699,7 +710,7 @@ impl Stream for TransportService {
 mod tests {
     use super::*;
     use crate::{
-        protocol::{ProtocolCommand, TransportService},
+        protocol::{ProtocolCommand, SubstreamKeepAlive, TransportService},
         transport::{
             manager::{handle::InnerTransportManagerCommand, TransportManagerHandle},
             KEEP_ALIVE_TIMEOUT,
@@ -734,7 +745,7 @@ mod tests {
             Arc::new(AtomicUsize::new(0usize)),
             handle,
             KEEP_ALIVE_TIMEOUT,
-            true,
+            SubstreamKeepAlive::Yes,
         );
 
         (service, sender, cmd_rx)

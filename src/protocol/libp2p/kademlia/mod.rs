@@ -1417,7 +1417,7 @@ mod tests {
     use crate::{
         codec::ProtocolCodec,
         transport::{
-            manager::{TransportManager, TransportManagerBuilder},
+            manager::{SubstreamKeepAlive, TransportManager, TransportManagerBuilder},
             KEEP_ALIVE_TIMEOUT,
         },
         types::protocol::ProtocolName,
@@ -1445,7 +1445,7 @@ mod tests {
             Default::default(),
             manager.transport_manager_handle(),
             KEEP_ALIVE_TIMEOUT,
-            true,
+            SubstreamKeepAlive::Yes,
         );
         let (event_tx, event_rx) = channel(64);
         let (_cmd_tx, cmd_rx) = channel(64);

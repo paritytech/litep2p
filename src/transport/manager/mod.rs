@@ -57,6 +57,7 @@ use std::{
     time::Duration,
 };
 
+pub use crate::protocol::SubstreamKeepAlive;
 pub use handle::{TransportHandle, TransportManagerHandle};
 pub use types::SupportedTransport;
 
@@ -402,6 +403,7 @@ impl TransportManager {
         fallback_names: Vec<ProtocolName>,
         codec: ProtocolCodec,
         keep_alive_timeout: Duration,
+        substream_keep_alive: SubstreamKeepAlive,
     ) -> TransportService {
         assert!(!self.protocol_names.contains(&protocol));
 
@@ -418,7 +420,7 @@ impl TransportManager {
             self.next_substream_id.clone(),
             self.transport_manager_handle(),
             keep_alive_timeout,
-            false,
+            substream_keep_alive,
         );
 
         self.protocols.insert(
@@ -1656,12 +1658,14 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
     }
 
@@ -1676,6 +1680,7 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/2"),
@@ -1685,6 +1690,7 @@ mod tests {
             ],
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
     }
 
@@ -1702,6 +1708,7 @@ mod tests {
             ],
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/2"),
@@ -1711,6 +1718,7 @@ mod tests {
             ],
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
     }
 

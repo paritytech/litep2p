@@ -25,7 +25,7 @@ use crate::{
             ConfigBuilder, DialOptions, RequestResponseError, RequestResponseEvent,
             RequestResponseHandle, RequestResponseProtocol,
         },
-        InnerTransportEvent, SubstreamError, TransportService,
+        InnerTransportEvent, SubstreamError, SubstreamKeepAlive, TransportService,
     },
     substream::Substream,
     transport::{
@@ -58,7 +58,7 @@ fn protocol() -> (
         std::sync::Arc::new(Default::default()),
         manager.transport_manager_handle(),
         KEEP_ALIVE_TIMEOUT,
-        true,
+        SubstreamKeepAlive::Yes,
     );
     let (config, handle) =
         ConfigBuilder::new(ProtocolName::from("/req/1")).with_max_size(1024).build();
