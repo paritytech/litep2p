@@ -35,6 +35,7 @@ use std::{
         Arc,
     },
     task::{Context, Poll},
+    time::Instant,
 };
 
 /// Quorum.
@@ -174,6 +175,25 @@ pub enum KademliaCommand {
         // Record.
         record: Record,
     },
+
+    /// Resume providing a key without publishing it to the network immediately.
+    ///
+    /// This restores provider state after a node restart. The provider is inserted into the local
+    /// store and a refresh is scheduled for `next_refresh_at`. If that instant is already in the
+    /// past the refresh is triggered as soon as possible.
+    ResumeProviding {
+        /// Provided key.
+        key: RecordKey,
+
+        /// [`Quorum`] for the query when the refresh fires.
+        quorum: Quorum,
+
+        /// Absolute instant at which the next network refresh should be sent.
+        next_refresh_at: Instant,
+    },
+
+    /// Request all local providers and their next scheduled refresh times.
+    GetLocalProviders,
 }
 
 /// Kademlia events.
@@ -275,6 +295,17 @@ pub enum KademliaEvent {
 
         /// Provider.
         provider: ContentProvider,
+    },
+
+    /// Response to [`KademliaCommand::GetLocalProviders`].
+    ///
+    /// Contains every key that this node is currently providing along with the [`Instant`] at
+    /// which the next network refresh for that key is scheduled.  Persist these before shutting
+    /// down the node and restore them on the next start via
+    /// [`KademliaHandle::resume_providing()`].
+    LocalProviders {
+        /// List of `(key, next_refresh_at)` pairs for all local providers.
+        providers: Vec<(RecordKey, Instant)>,
     },
 }
 
@@ -424,6 +455,35 @@ impl KademliaHandle {
         let _ = self.cmd_tx.send(KademliaCommand::StoreRecord { record }).await;
     }
 
+    /// Resume providing `key` without publishing it to the network.
+    ///
+    /// Intended to be used on node restart to restore provider state that was previously saved via
+    /// [`KademliaHandle::local_providers()`]. The provider is inserted into the local store and a
+    /// network refresh is scheduled for `next_refresh_at`. If `next_refresh_at` is already in the
+    /// past, the refresh fires as soon as possible.
+    ///
+    /// This avoids the overhead of immediately re-publishing every provider on every restart when
+    /// there are hundreds of thousands or millions of keys.
+    pub async fn resume_providing(&self, key: RecordKey, quorum: Quorum, next_refresh_at: Instant) {
+        let _ = self
+            .cmd_tx
+            .send(KademliaCommand::ResumeProviding {
+                key,
+                quorum,
+                next_refresh_at,
+            })
+            .await;
+    }
+
+    /// Request the list of local providers and their next refresh times.
+    ///
+    /// The result is delivered asynchronously as [`KademliaEvent::LocalProviders`].  Use this
+    /// before shutting down the node to persist provider state, then call
+    /// [`KademliaHandle::resume_providing()`] on the next start to restore it.
+    pub async fn local_providers(&self) {
+        let _ = self.cmd_tx.send(KademliaCommand::GetLocalProviders).await;
+    }
+
     /// Try to add known peer and if the channel is clogged, return an error.
     pub fn try_add_known_peer(&self, peer: PeerId, addresses: Vec<Multiaddr>) -> Result<(), ()> {
         self.cmd_tx
@@ -492,6 +552,23 @@ impl KademliaHandle {
     /// Used in combination with [`IncomingRecordValidationMode::Manual`].
     pub fn try_store_record(&mut self, record: Record) -> Result<(), ()> {
         self.cmd_tx.try_send(KademliaCommand::StoreRecord { record }).map_err(|_| ())
+    }
+
+    /// Try to resume providing `key` without publishing immediately.
+    /// If the channel is clogged, returns an error.
+    pub fn try_resume_providing(
+        &self,
+        key: RecordKey,
+        quorum: Quorum,
+        next_refresh_at: Instant,
+    ) -> Result<(), ()> {
+        self.cmd_tx
+            .try_send(KademliaCommand::ResumeProviding {
+                key,
+                quorum,
+                next_refresh_at,
+            })
+            .map_err(|_| ())
     }
 
     #[cfg(feature = "fuzz")]
