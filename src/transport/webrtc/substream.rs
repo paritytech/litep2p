@@ -118,6 +118,8 @@ impl Substream {
             shutdown_waker: Arc::clone(&shutdown_waker),
             write_waker: Arc::clone(&write_waker),
             read_closed: std::sync::atomic::AtomicBool::new(false),
+            fin_delivered: std::sync::atomic::AtomicBool::new(false),
+            sent_reset: false,
         };
 
         (
@@ -157,6 +159,15 @@ pub struct SubstreamHandle {
     /// Whether we've already sent RecvClosed to the inbound channel.
     /// Prevents duplicate RecvClosed events if multiple FIN messages are received.
     read_closed: std::sync::atomic::AtomicBool,
+
+    /// Whether the remote's FIN was successfully delivered to the Substream.
+    /// When true, the Substream acknowledged the close, so dropping without
+    /// explicit shutdown is a clean close (no ResetStream needed).
+    /// When false and the Substream drops without shutdown, emit ResetStream.
+    fin_delivered: std::sync::atomic::AtomicBool,
+
+    /// Whether we've already emitted a ResetStream in poll_next.
+    sent_reset: bool,
 }
 
 impl SubstreamHandle {
@@ -176,12 +187,23 @@ impl SubstreamHandle {
                     payload_len = payload.len(),
                     "forwarding payload to substream",
                 );
-                self.inbound_tx
+                if self
+                    .inbound_tx
                     .send(Event::Message {
                         payload,
                         flag: None,
                     })
-                    .await?;
+                    .await
+                    .is_err()
+                {
+                    tracing::debug!(
+                        target: "litep2p::webrtc::substream",
+                        "substream dropped, cannot deliver inbound payload",
+                    );
+                    // Don't return error — outbound data may still need to be flushed.
+                    // The SubstreamHandle will detect the drop via inbound_tx.is_closed()
+                    // in poll_next() and clean up naturally.
+                }
             }
         }
 
@@ -199,8 +221,18 @@ impl SubstreamHandle {
                         return Ok(());
                     }
 
-                    // Received FIN from remote, close our read half
-                    self.inbound_tx.send(Event::RecvClosed).await?;
+                    // Notify the Substream that the remote closed its write half.
+                    // If the Substream is already dropped, this is expected for
+                    // request-response protocols where the handler writes the response
+                    // and drops before the FIN arrives. Fall through to still send FIN_ACK.
+                    if self.inbound_tx.send(Event::RecvClosed).await.is_err() {
+                        tracing::debug!(
+                            target: "litep2p::webrtc::substream",
+                            "substream already dropped, skipping RecvClosed notification",
+                        );
+                    } else {
+                        self.fin_delivered.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
 
                     // Send FIN_ACK back to remote using try_send to avoid blocking.
                     // If the channel is full, the remote will timeout waiting for FIN_ACK
@@ -275,10 +307,22 @@ impl Stream for SubstreamHandle {
         }
 
         // Check if Substream has been dropped (inbound channel closed)
-        // When Substream is dropped, there will be no more outbound messages
-        // Since we've already tried to recv above and got Pending, we know the queue is empty
-        // Therefore, it's safe to signal closure
+        // When Substream is dropped, there will be no more outbound messages.
+        // Since we've already tried to recv above and got Pending, we know the queue is empty.
         if self.inbound_tx.is_closed() {
+            // If the Substream was dropped without graceful shutdown AND the remote's
+            // FIN was never delivered (substream dropped before FIN arrived), emit
+            // ResetStream to tell the remote that this side closed unexpectedly.
+            if !self.sent_reset && !self.fin_delivered.load(std::sync::atomic::Ordering::SeqCst) {
+                let state = *self.state.lock();
+                if !matches!(state, State::FinSent | State::FinAcked) {
+                    self.sent_reset = true;
+                    return Poll::Ready(Some(Event::Message {
+                        payload: vec![],
+                        flag: Some(Flag::ResetStream),
+                    }));
+                }
+            }
             return Poll::Ready(None);
         }
 
@@ -1511,5 +1555,61 @@ mod tests {
             }
             other => panic!("Expected BrokenPipe error, got: {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn fin_after_handler_drop_preserves_response() {
+        // Regression test for the race condition where a FIN arrives after the
+        // request-response handler has written its response and dropped the Substream.
+        // Previously, this caused EssentialTaskClosed which killed the data channel
+        // before the buffered response could be flushed, causing silent response loss.
+
+        let (mut substream, mut handle) = Substream::new();
+
+        // Handler writes response data, then drops the Substream (simulates a
+        // request-response handler that's done processing).
+        substream.write_all(b"response data").await.unwrap();
+        drop(substream);
+
+        // Remote peer sends FIN (half-close: "I'm done sending my request").
+        // This must succeed even though the Substream is already dropped.
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::Fin),
+            })
+            .await
+            .unwrap();
+
+        // Drain the handle — response data must still be available.
+        // 1. Response data written by the handler
+        assert_eq!(
+            handle.next().await,
+            Some(Event::Message {
+                payload: b"response data".to_vec(),
+                flag: None,
+            })
+        );
+
+        // 2. FIN_ACK sent in response to the remote's FIN
+        assert_eq!(
+            handle.next().await,
+            Some(Event::Message {
+                payload: vec![],
+                flag: Some(Flag::FinAck),
+            })
+        );
+
+        // 3. RESET_STREAM because Substream was dropped without graceful shutdown
+        assert_eq!(
+            handle.next().await,
+            Some(Event::Message {
+                payload: vec![],
+                flag: Some(Flag::ResetStream),
+            })
+        );
+
+        // 4. Stream terminates
+        assert_eq!(handle.next().await, None);
     }
 }
