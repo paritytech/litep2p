@@ -1108,6 +1108,12 @@ impl TransportManager {
                             return Some(TransportEvent::ConnectionEstablished { peer, endpoint });
                         }
                         Err(error) => {
+                            // The pending accept future has failed to inform one of the
+                            // installed protocols about the connection. This can happen when the
+                            // node is shutting down or when the user has dropped the long running protocol.
+                            // To err on the safe side, roll back the state modification done in `on_connection_established`.
+                            self.on_connection_closed(peer, endpoint.connection_id());
+
                             tracing::error!(
                                 target: LOG_TARGET,
                                 ?peer,
