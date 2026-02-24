@@ -174,7 +174,6 @@ impl Litep2p {
             .with_keypair(litep2p_config.keypair.clone())
             .with_supported_transports(supported_transports)
             .with_bandwidth_sink(bandwidth_sink.clone())
-            .with_max_parallel_dials(litep2p_config.max_parallel_dials)
             .with_connection_limits_config(litep2p_config.connection_limits)
             .build();
 
