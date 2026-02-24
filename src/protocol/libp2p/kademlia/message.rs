@@ -268,7 +268,7 @@ impl KademliaMessage {
                 4 => {
                     let peers = message
                         .closer_peers
-                        .iter()
+                        .into_iter()
                         .filter_map(|peer| KademliaPeer::try_from(peer).ok())
                         .take(replication_factor)
                         .collect();
@@ -306,7 +306,7 @@ impl KademliaMessage {
                         record,
                         peers: message
                             .closer_peers
-                            .iter()
+                            .into_iter()
                             .filter_map(|peer| KademliaPeer::try_from(peer).ok())
                             .take(replication_factor)
                             .collect(),
@@ -317,7 +317,7 @@ impl KademliaMessage {
                     let key = (!message.key.is_empty()).then_some(message.key.into())?;
                     let providers = message
                         .provider_peers
-                        .iter()
+                        .into_iter()
                         .filter_map(|peer| KademliaPeer::try_from(peer).ok())
                         .take(replication_factor)
                         .collect();
@@ -329,13 +329,13 @@ impl KademliaMessage {
                     let key = (!message.key.is_empty()).then_some(message.key.into());
                     let peers = message
                         .closer_peers
-                        .iter()
+                        .into_iter()
                         .filter_map(|peer| KademliaPeer::try_from(peer).ok())
                         .take(replication_factor)
                         .collect();
                     let providers = message
                         .provider_peers
-                        .iter()
+                        .into_iter()
                         .filter_map(|peer| KademliaPeer::try_from(peer).ok())
                         .take(replication_factor)
                         .collect();
