@@ -1312,6 +1312,12 @@ impl TransportManager {
                                             }));
                                         }
                                         Err(error) => {
+                                            // Roll back the state modification done in `on_connection_established` by
+                                            // simulating a closed connection. The transport returns an error
+                                            // while accepting the connection, which can happen if the transport is
+                                            // already closed or the connection is dropped before the accept call.
+                                            self.on_connection_closed(peer, endpoint.connection_id());
+
                                             tracing::debug!(
                                                 target: LOG_TARGET,
                                                 ?peer,
