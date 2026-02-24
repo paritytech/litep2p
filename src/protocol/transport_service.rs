@@ -560,7 +560,11 @@ impl TransportService {
 
         let connection_id = *connection.connection_id();
 
+        // This permit will be passed on until the substream is reported back to
+        // [`TransportService`] in [`InnerTransportEvent::SubstreamOpened`] and connection
+        // upgraded.
         let permit = connection.try_get_permit().ok_or(SubstreamError::ConnectionClosed)?;
+
         let substream_id =
             SubstreamId::from(self.next_substream_id.fetch_add(1usize, Ordering::Relaxed));
 
@@ -663,6 +667,7 @@ impl Stream for TransportService {
                     direction,
                     substream,
                     connection_id,
+                    permit,
                 }) => {
                     if protocol == self.protocol
                         && self.substream_keep_alive == SubstreamKeepAlive::Yes
@@ -672,6 +677,10 @@ impl Stream for TransportService {
                             context.try_upgrade(&connection_id);
                         }
                     }
+
+                    // Connection is upgraded, we must now drop the permit.
+                    // This is for the reader, not for compiler.
+                    drop(permit);
 
                     return Poll::Ready(Some(TransportEvent::SubstreamOpened {
                         peer,

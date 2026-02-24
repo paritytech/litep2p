@@ -127,6 +127,10 @@ pub enum InnerTransportEvent {
 
         /// Substream.
         substream: Substream,
+
+        /// Permit that was held while this substream was opening. Must be dropped by
+        /// [`TransportService`] once connection is upgraded.
+        permit: Permit,
     },
 
     /// Failed to open substream.
@@ -284,6 +288,7 @@ impl ProtocolSet {
         protocol: ProtocolName,
         direction: Direction,
         substream: Substream,
+        permit: Permit,
     ) -> Result<(), SubstreamError> {
         tracing::debug!(target: LOG_TARGET, %protocol, ?peer, ?direction, "substream opened");
 
@@ -308,6 +313,7 @@ impl ProtocolSet {
             direction,
             substream,
             connection_id: *self.connection.connection_id(),
+            permit,
         };
 
         protocol_context

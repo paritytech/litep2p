@@ -76,7 +76,8 @@ pub struct NegotiatedSubstream {
     /// Yamux substream.
     io: crate::yamux::Stream,
 
-    /// Permit.
+    /// Permit held until the negotiated substream is reported back to `TransportService` and
+    /// connection upgraded.
     permit: Permit,
 }
 
@@ -518,6 +519,9 @@ impl TcpConnection {
                     SubstreamId::from(substream_id)
                 };
                 let protocols = self.protocol_set.protocols();
+                // This permit will be passed on until the substream is reported to the
+                // `TransportService`, where the connection will be upgraded and the permit won't
+                // be needed anymore.
                 let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
                 let open_timeout = self.substream_open_timeout;
 
@@ -625,16 +629,23 @@ impl TcpConnection {
                 let substream_id = substream.substream_id;
                 let socket = FuturesAsyncReadCompatExt::compat(substream.io);
                 let bandwidth_sink = self.bandwidth_sink.clone();
+                let permit = substream.permit;
 
                 let substream = substream::Substream::new_tcp(
                     self.peer,
                     substream_id,
-                    Substream::new(socket, bandwidth_sink, substream.permit),
+                    Substream::new(socket, bandwidth_sink),
                     self.protocol_set.protocol_codec(&protocol),
                 );
 
                 self.protocol_set
-                    .report_substream_open(self.peer, protocol.clone(), direction, substream)
+                    .report_substream_open(
+                        self.peer,
+                        protocol.clone(),
+                        direction,
+                        substream,
+                        permit,
+                    )
                     .await
                     .inspect_err(|error| {
                         tracing::error!(
@@ -747,7 +758,17 @@ impl TcpConnection {
                     self.handle_negotiated_substream(substream).await?;
                 }
                 protocol = self.protocol_set.next() => {
+                    if protocol.is_none() {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            "protocol set terminated",
+                        );
+                    }
                     if self.handle_protocol_command(protocol).await? {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            "tcp connection terminated",
+                        );
                         return Ok(())
                     }
                 }

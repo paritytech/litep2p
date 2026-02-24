@@ -158,7 +158,9 @@ impl ConnectionHandle {
     }
 }
 
-/// Type which allows the connection to be kept open.
+/// Type which allows the connection to be kept open while it exists.
+///
+/// Every use of a permit must be short-lived, don't store it anywhere!
 #[derive(Debug, Clone)]
 pub struct Permit {
     /// Active connection.
