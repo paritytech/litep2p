@@ -498,6 +498,7 @@ mod tests {
             assert!(expected_protocols.contains(protocol));
         }
 
+        let permit = protocol_set.try_get_permit().unwrap();
         protocol_set
             .report_substream_open(
                 PeerId::random(),
@@ -508,6 +509,7 @@ mod tests {
                     SubstreamId::from(0usize),
                     Box::new(MockSubstream::new()),
                 ),
+                permit,
             )
             .await
             .unwrap();
@@ -535,6 +537,7 @@ mod tests {
             )]),
         );
 
+        let permit = protocol_set.try_get_permit().unwrap();
         protocol_set
             .report_substream_open(
                 PeerId::random(),
@@ -545,6 +548,7 @@ mod tests {
                     SubstreamId::from(0usize),
                     Box::new(MockSubstream::new()),
                 ),
+                permit,
             )
             .await
             .unwrap();
@@ -582,6 +586,7 @@ mod tests {
             )]),
         );
 
+        let permit = protocol_set.try_get_permit().unwrap();
         protocol_set
             .report_substream_open(
                 PeerId::random(),
@@ -592,6 +597,7 @@ mod tests {
                     SubstreamId::from(0usize),
                     Box::new(MockSubstream::new()),
                 ),
+                permit,
             )
             .await
             .unwrap();
