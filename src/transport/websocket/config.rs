@@ -83,9 +83,10 @@ pub struct Config {
 
     /// Maximum number of parallel dial attempts for a single peer.
     ///
-    /// Controlled via
-    /// [`ConfigBuilder::with_max_parallel_dials`](crate::config::ConfigBuilder::with_max_parallel_dials).
-    pub(crate) max_parallel_dials: usize,
+    /// **Note:** This value is overridden by the top-level
+    /// [`ConfigBuilder::with_max_parallel_dials`](crate::config::ConfigBuilder::with_max_parallel_dials)
+    /// when building `Litep2p`.
+    pub max_parallel_dials: usize,
 }
 
 impl Default for Config {
