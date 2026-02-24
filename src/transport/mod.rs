@@ -22,7 +22,7 @@
 
 use crate::{error::DialError, transport::manager::TransportHandle, types::ConnectionId, PeerId};
 
-use futures::Stream;
+use futures::{future::BoxFuture, Stream};
 use hickory_resolver::TokioResolver;
 use multiaddr::Multiaddr;
 
@@ -54,7 +54,7 @@ pub(crate) const SUBSTREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Maximum number of parallel dial attempts.
-pub(crate) const MAX_PARALLEL_DIALS: usize = 8;
+pub(crate) const MAX_PARALLEL_DIALS: usize = 256;
 
 /// Connection endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -197,7 +197,15 @@ pub(crate) trait Transport: Stream + Unpin + Send {
     fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()>;
 
     /// Accept negotiated connection.
-    fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
+    ///
+    /// Returns a future that completes when the connection has been fully established
+    /// and all installed protocols have been notified via their event channels.
+    /// This ensures that by the time the caller receives a ConnectionEstablished event,
+    /// protocols are ready to handle substream operations.
+    fn accept(
+        &mut self,
+        connection_id: ConnectionId,
+    ) -> crate::Result<BoxFuture<'static, crate::Result<()>>>;
 
     /// Accept pending connection.
     fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()>;
