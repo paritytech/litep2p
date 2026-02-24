@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{protocol::Permit, BandwidthSink};
+use crate::BandwidthSink;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::compat::Compat;
@@ -29,8 +29,7 @@ use std::{
     task::{Context, Poll},
 };
 
-/// Substream that holds the inner substream provided by the transport
-/// and a permit which keeps the connection open.
+/// Substream that holds the inner substream provided by the transport.
 #[derive(Debug)]
 pub struct Substream {
     /// Underlying socket.
@@ -38,23 +37,12 @@ pub struct Substream {
 
     /// Bandwidth sink.
     bandwidth_sink: BandwidthSink,
-
-    /// Connection permit.
-    _permit: Permit,
 }
 
 impl Substream {
     /// Create new [`Substream`].
-    pub fn new(
-        io: Compat<crate::yamux::Stream>,
-        bandwidth_sink: BandwidthSink,
-        _permit: Permit,
-    ) -> Self {
-        Self {
-            io,
-            bandwidth_sink,
-            _permit,
-        }
+    pub fn new(io: Compat<crate::yamux::Stream>, bandwidth_sink: BandwidthSink) -> Self {
+        Self { io, bandwidth_sink }
     }
 }
 

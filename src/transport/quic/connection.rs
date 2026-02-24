@@ -302,11 +302,11 @@ impl QuicConnection {
                             let substream_id = substream.substream_id;
                             let direction = substream.direction;
                             let bandwidth_sink = self.bandwidth_sink.clone();
+                            let permit = substream.permit;
                             let substream = substream::Substream::new_quic(
                                 self.peer,
                                 substream_id,
                                 Substream::new(
-                                    substream.permit,
                                     substream.sender,
                                     substream.receiver,
                                     bandwidth_sink
@@ -315,7 +315,7 @@ impl QuicConnection {
                             );
 
                             self.protocol_set
-                                .report_substream_open(self.peer, protocol, direction, substream)
+                                .report_substream_open(self.peer, protocol, direction, substream, permit)
                                 .await?;
                         }
                     }

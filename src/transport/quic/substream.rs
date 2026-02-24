@@ -32,12 +32,9 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::protocol::Permit;
-
 /// QUIC substream.
 #[derive(Debug)]
 pub struct Substream {
-    _permit: Permit,
     bandwidth_sink: BandwidthSink,
     send_stream: SendStream,
     recv_stream: RecvStream,
@@ -46,13 +43,11 @@ pub struct Substream {
 impl Substream {
     /// Create new [`Substream`].
     pub fn new(
-        _permit: Permit,
         send_stream: SendStream,
         recv_stream: RecvStream,
         bandwidth_sink: BandwidthSink,
     ) -> Self {
         Self {
-            _permit,
             send_stream,
             recv_stream,
             bandwidth_sink,
