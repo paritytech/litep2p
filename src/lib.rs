@@ -135,6 +135,18 @@ pub enum Litep2pEvent {
     },
 }
 
+/// Configuration for adding protocols at runtime (protocols that are started after the Litep2p
+/// instance is created).
+struct RuntimeConfigs {
+    /// The keep-alive timeout for protocols.
+    ///
+    /// Needed for supporting protocols at runtime.
+    keep_alive_timeout: std::time::Duration,
+
+    /// Executor used to run protocols.
+    executor: Arc<dyn crate::executor::Executor>,
+}
+
 /// [`Litep2p`] object.
 pub struct Litep2p {
     /// Local peer ID.
@@ -148,6 +160,11 @@ pub struct Litep2p {
 
     /// Bandwidth sink.
     bandwidth_sink: BandwidthSink,
+
+    /// The keep-alive timeout for protocols.
+    ///
+    /// Needed for supporting protocols at runtime.
+    runtime_configs: RuntimeConfigs,
 }
 
 impl Litep2p {
@@ -419,6 +436,10 @@ impl Litep2p {
             bandwidth_sink,
             listen_addresses,
             transport_manager,
+            runtime_configs: RuntimeConfigs {
+                keep_alive_timeout: litep2p_config.keep_alive_timeout,
+                executor: litep2p_config.executor,
+            },
         })
     }
 
@@ -493,6 +514,45 @@ impl Litep2p {
         address: impl Iterator<Item = Multiaddr>,
     ) -> usize {
         self.transport_manager.add_known_address(peer, address)
+    }
+
+    /// Register a request-response protocol at runtime.
+    pub fn register_request_response(
+        &mut self,
+        config: crate::protocol::request_response::Config,
+    ) -> crate::Result<()> {
+        let service = self.transport_manager.register_protocol(
+            config.protocol_name.clone(),
+            config.fallback_names.clone(),
+            config.codec,
+            self.runtime_configs.keep_alive_timeout,
+        );
+
+        self.runtime_configs.executor.run(Box::pin(async move {
+            RequestResponseProtocol::new(service, config).run().await
+        }));
+
+        Ok(())
+    }
+
+    /// Register a notification protocol at runtime.
+    pub fn register_notification(
+        &mut self,
+        config: crate::protocol::notification::Config,
+    ) -> crate::Result<()> {
+        let service = self.transport_manager.register_protocol(
+            config.protocol_name.clone(),
+            config.fallback_names.clone(),
+            config.codec,
+            self.runtime_configs.keep_alive_timeout,
+        );
+
+        let executor = Arc::clone(&self.runtime_configs.executor);
+        self.runtime_configs.executor.run(Box::pin(async move {
+            NotificationProtocol::new(service, config, executor).run().await
+        }));
+
+        Ok(())
     }
 
     /// Poll next event.
