@@ -490,8 +490,7 @@ impl Transport for TcpTransport {
             let mut errors = Vec::with_capacity(num_addresses);
             // Deadline for the overall dial attempt, including all retries. This is to prevent
             // retry attempts from indefinitely delaying the dial result.
-            let deadline =
-                tokio::time::sleep(DIAL_DEADLINE_MULTIPLIER * connection_open_timeout);
+            let deadline = tokio::time::sleep(DIAL_DEADLINE_MULTIPLIER * connection_open_timeout);
 
             tokio::pin!(deadline);
             tokio::pin!(futures);
