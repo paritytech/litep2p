@@ -83,8 +83,9 @@ pub struct Config {
 
     /// Maximum number of parallel dial attempts for a single peer.
     ///
-    /// Defaults to `8`.
-    pub max_parallel_dials: usize,
+    /// Controlled via
+    /// [`ConfigBuilder::with_max_parallel_dials`](crate::config::ConfigBuilder::with_max_parallel_dials).
+    pub(crate) max_parallel_dials: usize,
 }
 
 impl Default for Config {
