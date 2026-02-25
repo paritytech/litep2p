@@ -520,8 +520,8 @@ impl TcpConnection {
                 };
                 let protocols = self.protocol_set.protocols();
                 // This permit will be passed on until the substream is reported to the
-                // `TransportService`, where the connection will be upgraded and the permit won't
-                // be needed anymore.
+                // [`TransportService`](crate::protocol::TransportService), where the connection
+                // will be upgraded and the permit won't be needed anymore.
                 let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
                 let open_timeout = self.substream_open_timeout;
 

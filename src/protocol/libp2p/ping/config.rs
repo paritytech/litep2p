@@ -39,7 +39,7 @@ const MAX_FAILURES: usize = 3;
 
 /// Ping interval must be set to < 10 secs, because litep2p versions before
 /// <https://github.com/paritytech/litep2p/pull/416> reset the inbound substream if not receive
-/// the paiload within 10 seconds of opening the substream.
+/// the payload within 10 seconds of opening the substream.
 pub const PING_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Ping configuration.

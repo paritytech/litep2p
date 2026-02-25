@@ -188,9 +188,9 @@ impl Ping {
 
                         tracing::trace!(target: LOG_TARGET, ?peer, "sending ping");
 
-                        // Due to buggy implementtation of litep2p before
-                        // <https://github.com/paritytech/litep2p/pull/416>
-                        // we will:
+                        // Due to buggy implementation of ping protocol in litep2p before
+                        // <https://github.com/paritytech/litep2p/pull/416>,
+                        // when talking to older litep2p we will:
                         //  1. Successfully send first ping and receive pong.
                         //  2. Successfully send second ping, but won't receive a response.
                         //  3. Fail to send the third ping and reopen a substream, going to (1).
