@@ -71,7 +71,8 @@ struct ChannelContext {
     substream_id: SubstreamId,
 
     /// Permit which keeps the connection open while we are opening a substream. Must be returned
-    /// to `TransportService`, where it can be safely dropped after upgrading the connection.
+    /// to [`TransportService`](crate::protocol::TransportService), where it can be safely dropped
+    /// after upgrading the connection.
     permit: Permit,
 }
 

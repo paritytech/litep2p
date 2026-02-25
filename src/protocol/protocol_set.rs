@@ -129,7 +129,7 @@ pub enum InnerTransportEvent {
         substream: Substream,
 
         /// Permit that was held while this substream was opening. Must be dropped by
-        /// [`TransportService`] once connection is upgraded.
+        /// [`TransportService`](crate::protocol::TransportService) once connection is upgraded.
         permit: Permit,
     },
 

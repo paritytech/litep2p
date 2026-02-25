@@ -158,9 +158,14 @@ impl ConnectionHandle {
     }
 }
 
-/// Type which allows the connection to be kept open while it exists.
+/// Type which allows to keep the connection opened and not allow the keep-alive mechanism to close
+/// it.
 ///
-/// Every use of a permit must be short-lived, don't store it anywhere!
+/// The [`Permit`] is created when beginning to open a substream and passed on until it reaches
+/// [`TransportService`](crate::protocol::TransportService), where the connection is upgraded (what
+/// means it won't be closed) and the permit is not needed anymore and dropped.
+///
+/// Every use of a permit must be short-lived, make sure to drop it!
 #[derive(Debug, Clone)]
 pub struct Permit {
     /// Active connection.

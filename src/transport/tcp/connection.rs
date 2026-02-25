@@ -76,8 +76,8 @@ pub struct NegotiatedSubstream {
     /// Yamux substream.
     io: crate::yamux::Stream,
 
-    /// Permit held until the negotiated substream is reported back to `TransportService` and
-    /// connection upgraded.
+    /// Permit held until the negotiated substream is reported back to
+    /// [`TransportService`](crate::protocol::TransportService) and connection upgraded.
     permit: Permit,
 }
 
