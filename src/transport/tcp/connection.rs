@@ -758,17 +758,7 @@ impl TcpConnection {
                     self.handle_negotiated_substream(substream).await?;
                 }
                 protocol = self.protocol_set.next() => {
-                    if protocol.is_none() {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            "protocol set terminated",
-                        );
-                    }
                     if self.handle_protocol_command(protocol).await? {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            "tcp connection terminated",
-                        );
                         return Ok(())
                     }
                 }

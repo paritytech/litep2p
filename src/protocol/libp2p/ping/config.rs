@@ -117,6 +117,10 @@ impl ConfigBuilder {
         self
     }
 
+    /// Set ping interval.
+    ///
+    /// The default is 5 seconds and should be kept like this for compatibility
+    /// with litep2p <= v0.13.0.
     pub fn with_ping_interval(mut self, ping_interval: Duration) -> Self {
         self.ping_interval = ping_interval;
         self

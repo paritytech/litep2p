@@ -162,10 +162,11 @@ impl ConnectionHandle {
 /// it.
 ///
 /// The [`Permit`] is created when beginning to open a substream and passed on until it reaches
-/// [`TransportService`](crate::protocol::TransportService), where the connection is upgraded (what
-/// means it won't be closed) and the permit is not needed anymore and dropped.
+/// [`TransportService`](crate::protocol::TransportService), where the connection is upgraded
+/// (which means it won't be closed) and the permit is not needed anymore and dropped.
 ///
-/// Every use of a permit must be short-lived, make sure to drop it!
+/// The permit is designed to be short-lived, please ensure it is dropped as soon as it is no longer
+/// relevant
 #[derive(Debug, Clone)]
 pub struct Permit {
     /// Active connection.
