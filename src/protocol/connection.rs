@@ -167,7 +167,7 @@ impl ConnectionHandle {
 /// [`TransportService`](crate::protocol::TransportService), where the connection is upgraded
 /// (which means it won't be closed) and the permit is not needed anymore and dropped.
 ///
-/// The [`Permmit`] as also stored in the context of substreams that need to keep the connection
+/// The [`Permit`] as also stored in the context of substreams that need to keep the connection
 /// alive while they exist (i.e., marked with [`SubstreamKeepAlive::Yes`]).
 ///
 /// The permit is designed to be short-lived, please ensure it is dropped as soon as it is no longer
