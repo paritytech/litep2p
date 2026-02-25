@@ -269,6 +269,13 @@ pub enum SubstreamKeepAlive {
     No,
 }
 
+impl SubstreamKeepAlive {
+    // Whether this substream keeps connection alive while it exists.
+    pub fn yes(&self) -> bool {
+        matches!(self, SubstreamKeepAlive::Yes)
+    }
+}
+
 /// Provides an interfaces for [`Litep2p`](crate::Litep2p) protocols to interact
 /// with the underlying transport protocols.
 #[derive(Debug)]
@@ -588,6 +595,7 @@ impl TransportService {
                 self.fallback_names.clone(),
                 substream_id,
                 permit,
+                self.substream_keep_alive,
             )
             .map(|_| substream_id)
     }

@@ -107,6 +107,9 @@ pub struct ProtocolContext {
 
     /// Fallback names for the protocol.
     pub fallback_names: Vec<ProtocolName>,
+
+    /// Whether this protocol existing substreams should keep connection alive.
+    pub keep_alive: SubstreamKeepAlive,
 }
 
 impl ProtocolContext {
@@ -115,11 +118,13 @@ impl ProtocolContext {
         codec: ProtocolCodec,
         tx: Sender<InnerTransportEvent>,
         fallback_names: Vec<ProtocolName>,
+        keep_alive: SubstreamKeepAlive,
     ) -> Self {
         Self {
             tx,
             codec,
             fallback_names,
+            keep_alive,
         }
     }
 }
@@ -425,7 +430,7 @@ impl TransportManager {
 
         self.protocols.insert(
             protocol.clone(),
-            ProtocolContext::new(codec, sender, fallback_names.clone()),
+            ProtocolContext::new(codec, sender, fallback_names.clone(), substream_keep_alive),
         );
         self.protocol_names.insert(protocol);
         self.protocol_names.extend(fallback_names);

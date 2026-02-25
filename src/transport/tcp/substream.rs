@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::BandwidthSink;
+use crate::{protocol::Permit, BandwidthSink};
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::compat::Compat;
@@ -40,12 +40,25 @@ pub struct Substream {
 
     /// Bandwidth sink.
     bandwidth_sink: BandwidthSink,
+
+    /// Permit holding the connection alive while the substream exists.
+    ///
+    /// `None` for ping & identify substreams, `Some` for others.
+    _permit: Option<Permit>,
 }
 
 impl Substream {
     /// Create new [`Substream`].
-    pub fn new(io: Compat<crate::yamux::Stream>, bandwidth_sink: BandwidthSink) -> Self {
-        Self { io, bandwidth_sink }
+    pub fn new(
+        io: Compat<crate::yamux::Stream>,
+        bandwidth_sink: BandwidthSink,
+        permit: Option<Permit>,
+    ) -> Self {
+        Self {
+            io,
+            bandwidth_sink,
+            _permit: permit,
+        }
     }
 }
 

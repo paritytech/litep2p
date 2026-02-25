@@ -537,11 +537,12 @@ impl WebSocketConnection {
                             let socket = FuturesAsyncReadCompatExt::compat(substream.io);
                             let bandwidth_sink = self.bandwidth_sink.clone();
                             let permit = substream.permit;
+                            let keep_alive = substream.keep_alive,
 
                             let substream = substream::Substream::new_websocket(
                                 self.peer,
                                 substream_id,
-                                Substream::new(socket, bandwidth_sink),
+                                Substream::new(socket, bandwidth_sink, keep_alive),
                                 self.protocol_set.protocol_codec(&protocol)
                             );
 

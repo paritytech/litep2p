@@ -681,6 +681,7 @@ mod tests {
         codec::ProtocolCodec,
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
+        protocol::SubstreamKeepAlive,
         transport::manager::{ProtocolContext, SupportedTransport, TransportManagerBuilder},
         types::protocol::ProtocolName,
         BandwidthSink, PeerId,
@@ -715,6 +716,7 @@ mod tests {
                     tx: tx1,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
+                    keep_alive: SubstreamKeepAlive::Yes,
                 },
             )]),
         };
@@ -746,6 +748,7 @@ mod tests {
                     tx: tx2,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
+                    keep_alive: SubstreamKeepAlive::Yes,
                 },
             )]),
         };
@@ -809,6 +812,7 @@ mod tests {
                     tx: tx1,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
+                    keep_alive: SubstreamKeepAlive::Yes,
                 },
             )]),
         };
@@ -840,6 +844,7 @@ mod tests {
                     tx: tx2,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
+                    keep_alive: SubstreamKeepAlive::Yes,
                 },
             )]),
         };
@@ -898,6 +903,7 @@ mod tests {
                     tx: tx1,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
+                    keep_alive: SubstreamKeepAlive::Yes,
                 },
             )]),
         };
@@ -936,6 +942,7 @@ mod tests {
                     tx: tx2,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
+                    keep_alive: SubstreamKeepAlive::Yes,
                 },
             )]),
         };
