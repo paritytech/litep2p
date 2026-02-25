@@ -275,8 +275,7 @@ impl ProtocolSet {
                 )
             })
             .collect::<Vec<_>>();
-        let keep_alives =
-            main_keep_alives.into_iter().chain(fallback_keep_alives.into_iter()).collect();
+        let keep_alives = main_keep_alives.into_iter().chain(fallback_keep_alives).collect();
 
         ProtocolSet {
             rx,
