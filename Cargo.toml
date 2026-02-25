@@ -95,6 +95,7 @@ futures_ringbuf = "0.4.0"
 hex-literal = "1.0.0"
 
 [features]
+default = ["webrtc", "websocket", "quic"]
 # Stable feature flags.
 websocket = ["dep:tokio-tungstenite"]
 

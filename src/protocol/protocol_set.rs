@@ -301,6 +301,7 @@ impl ProtocolSet {
     }
 
     /// Get the list of all supported protocols.
+    #[cfg(test)]
     pub fn protocols(&self) -> Vec<ProtocolName> {
         self.protocols
             .keys()

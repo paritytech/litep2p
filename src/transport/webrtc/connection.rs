@@ -23,7 +23,7 @@ use crate::{
     multistream_select::{
         webrtc_listener_negotiate, HandshakeResult, ListenerSelectResult, WebRtcDialerState,
     },
-    protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
+    protocol::{Direction, Permit, ProtocolCommand, ProtocolSet, SubstreamKeepAlive},
     substream::Substream,
     transport::{
         webrtc::{
@@ -74,6 +74,10 @@ struct ChannelContext {
     /// to [`TransportService`](crate::protocol::TransportService), where it can be safely dropped
     /// after upgrading the connection.
     permit: Permit,
+
+    /// Whether this substream should keep the connection alive while it exists, i.e., whether it
+    /// should store the permit entioned above for the lifetime of the substream.
+    keep_alive: SubstreamKeepAlive,
 }
 
 /// Set of [`SubstreamHandle`]s.
@@ -162,6 +166,9 @@ enum ChannelState {
 
         /// Channel ID.
         channel_id: ChannelId,
+
+        /// Connection permit if this substream needs to keep connection open.
+        permit: Option<Permit>,
     },
 }
 
@@ -310,7 +317,7 @@ impl WebRtcConnection {
         &mut self,
         channel_id: ChannelId,
         data: Vec<u8>,
-    ) -> crate::Result<(SubstreamId, SubstreamHandle)> {
+    ) -> crate::Result<(SubstreamId, SubstreamHandle, Option<Permit>)> {
         tracing::trace!(
             target: LOG_TARGET,
             peer = ?self.peer,
@@ -319,13 +326,13 @@ impl WebRtcConnection {
         );
 
         let payload = WebRtcMessage::decode(&data)?.payload.ok_or(Error::InvalidData)?;
-        let (response, negotiated) = match webrtc_listener_negotiate(
-            &mut self.protocol_set.protocols().iter(),
-            payload.into(),
-        )? {
-            ListenerSelectResult::Accepted { protocol, message } => (message, Some(protocol)),
-            ListenerSelectResult::Rejected { message } => (message, None),
-        };
+        let protocols = self.protocol_set.protocols_with_keep_alives();
+        let protocol_names = protocols.keys().cloned().collect();
+        let (response, negotiated) =
+            match webrtc_listener_negotiate(protocol_names, payload.into())? {
+                ListenerSelectResult::Accepted { protocol, message } => (message, Some(protocol)),
+                ListenerSelectResult::Rejected { message } => (message, None),
+            };
 
         self.rtc
             .channel(channel_id)
@@ -342,6 +349,9 @@ impl WebRtcConnection {
         let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
         let (substream, handle) = WebRtcSubstream::new();
         let substream = Substream::new_webrtc(self.peer, substream_id, substream, codec);
+        let keep_alive =
+            protocols.get(&protocol).expect("negotiated protocol to be one of the keys");
+        let substream_permit = keep_alive.yes().then(|| permit.clone());
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -361,7 +371,7 @@ impl WebRtcConnection {
                 permit,
             )
             .await
-            .map(|_| (substream_id, handle))
+            .map(|_| (substream_id, handle, substream_permit))
             .map_err(Into::into)
     }
 
@@ -499,13 +509,14 @@ impl WebRtcConnection {
         match state {
             ChannelState::InboundOpening => {
                 match self.on_inbound_opening_channel_data(channel_id, data).await {
-                    Ok((substream_id, handle)) => {
+                    Ok((substream_id, handle, permit)) => {
                         self.handles.insert(channel_id, handle);
                         self.channels.insert(
                             channel_id,
                             ChannelState::Open {
                                 substream_id,
                                 channel_id,
+                                permit,
                             },
                         );
                     }
@@ -529,6 +540,7 @@ impl WebRtcConnection {
             } => {
                 let protocol = context.protocol.clone();
                 let substream_id = context.substream_id;
+                let substream_permit = context.keep_alive.yes().then(|| context.permit.clone());
 
                 match self
                     .on_outbound_opening_channel_data(channel_id, data, dialer_state, context)
@@ -541,6 +553,7 @@ impl WebRtcConnection {
                             ChannelState::Open {
                                 substream_id,
                                 channel_id,
+                                permit: substream_permit,
                             },
                         );
                     }
@@ -567,6 +580,7 @@ impl WebRtcConnection {
             ChannelState::Open {
                 substream_id,
                 channel_id,
+                permit,
             } => match self.on_open_channel_data(channel_id, data).await {
                 Ok(()) => {
                     self.channels.insert(
@@ -574,6 +588,7 @@ impl WebRtcConnection {
                         ChannelState::Open {
                             substream_id,
                             channel_id,
+                            permit,
                         },
                     );
                 }
@@ -635,6 +650,7 @@ impl WebRtcConnection {
         fallback_names: Vec<ProtocolName>,
         substream_id: SubstreamId,
         permit: Permit,
+        keep_alive: SubstreamKeepAlive,
     ) {
         let channel_id = self.rtc.direct_api().create_data_channel(ChannelConfig {
             label: "".to_string(),
@@ -661,6 +677,7 @@ impl WebRtcConnection {
                 fallback_names,
                 substream_id,
                 permit,
+                keep_alive,
             },
         );
     }
@@ -835,8 +852,21 @@ impl WebRtcConnection {
                         );
                         return self.on_connection_closed().await;
                     }
-                    Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit, .. }) => {
-                        self.on_open_substream(protocol, fallback_names, substream_id, permit);
+                    Some(ProtocolCommand::OpenSubstream {
+                        protocol,
+                        fallback_names,
+                        substream_id,
+                        permit,
+                        keep_alive,
+                        connection_id: _,
+                    }) => {
+                        self.on_open_substream(
+                            protocol,
+                            fallback_names,
+                            substream_id,
+                            permit,
+                            keep_alive,
+                        );
                     }
                 },
                 _ = tokio::time::sleep(duration) => {
