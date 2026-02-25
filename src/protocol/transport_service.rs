@@ -304,6 +304,7 @@ pub struct TransportService {
     /// Close the connection if no substreams are open within this time frame.
     keep_alive_tracker: KeepAliveTracker,
 
+    /// Whether this protocol susbstreams should keep connection alive.
     substream_keep_alive: SubstreamKeepAlive,
 }
 
