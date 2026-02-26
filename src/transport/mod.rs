@@ -56,6 +56,13 @@ pub(crate) const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Maximum number of parallel dial attempts.
 pub(crate) const MAX_PARALLEL_DIALS: usize = 8;
 
+/// Multiplier applied to `connection_open_timeout` to derive the overall dial deadline.
+///
+/// When dialing multiple addresses concurrently, the total time allowed is
+/// `DIAL_DEADLINE_MULTIPLIER * connection_open_timeout`. This gives enough time
+/// to cycle through addresses without stalling indefinitely.
+pub(crate) const DIAL_DEADLINE_MULTIPLIER: u32 = 2;
+
 /// Connection endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Endpoint {

@@ -32,7 +32,7 @@ use crate::{
             peer_state::{ConnectionRecord, PeerState, StateDialResult},
             types::PeerContext,
         },
-        Endpoint, Transport, TransportEvent, MAX_PARALLEL_DIALS,
+        Endpoint, Transport, TransportEvent,
     },
     types::{protocol::ProtocolName, ConnectionId},
     BandwidthSink, PeerId,
@@ -205,9 +205,6 @@ pub struct TransportManager {
     /// Bandwidth sink.
     bandwidth_sink: BandwidthSink,
 
-    /// Maximum parallel dial attempts per peer.
-    max_parallel_dials: usize,
-
     /// Installed protocols.
     protocols: HashMap<ProtocolName, ProtocolContext>,
 
@@ -268,9 +265,6 @@ pub struct TransportManagerBuilder {
     /// Bandwidth sink.
     bandwidth_sink: Option<BandwidthSink>,
 
-    /// Maximum parallel dial attempts per peer.
-    max_parallel_dials: usize,
-
     /// Connection limits config.
     connection_limits_config: limits::ConnectionLimitsConfig,
 }
@@ -288,7 +282,6 @@ impl TransportManagerBuilder {
             keypair: None,
             supported_transports: HashSet::new(),
             bandwidth_sink: None,
-            max_parallel_dials: MAX_PARALLEL_DIALS,
             connection_limits_config: limits::ConnectionLimitsConfig::default(),
         }
     }
@@ -311,12 +304,6 @@ impl TransportManagerBuilder {
     /// Set the bandwidth sink
     pub fn with_bandwidth_sink(mut self, bandwidth_sink: BandwidthSink) -> Self {
         self.bandwidth_sink = Some(bandwidth_sink);
-        self
-    }
-
-    /// Set the maximum parallel dials per peer
-    pub fn with_max_parallel_dials(mut self, max_parrallel_dials: usize) -> Self {
-        self.max_parallel_dials = max_parrallel_dials;
         self
     }
 
@@ -352,7 +339,6 @@ impl TransportManagerBuilder {
             local_peer_id,
             keypair,
             bandwidth_sink: self.bandwidth_sink.unwrap_or_else(BandwidthSink::new),
-            max_parallel_dials: self.max_parallel_dials,
             protocols: HashMap::new(),
             protocol_names: HashSet::new(),
             listen_addresses,
@@ -536,9 +522,6 @@ impl TransportManager {
     pub async fn dial(&mut self, peer: PeerId) -> crate::Result<()> {
         // Don't alter the peer state if there's no capacity to dial.
         let available_capacity = self.connection_limits.on_dial_address()?;
-        // The available capacity is the maximum number of connections that can be established,
-        // so we limit the number of parallel dials to the minimum of these values.
-        let limit = available_capacity.min(self.max_parallel_dials);
 
         if peer == self.local_peer_id {
             return Err(Error::TriedToDialSelf);
@@ -556,7 +539,9 @@ impl TransportManager {
 
         // The addresses are sorted by score and contain the remote peer ID.
         // We double checked above that the remote peer is not the local peer.
-        let dial_addresses = context.addresses.addresses(limit);
+        // Limit addresses by the available connection capacity. The transport layer
+        // handles dial concurrency via `max_parallel_dials`.
+        let dial_addresses = context.addresses.addresses(available_capacity);
         if dial_addresses.is_empty() {
             return Err(Error::NoAddressAvailable(peer));
         }
