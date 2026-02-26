@@ -39,8 +39,8 @@ pub mod scores {
 
     /// Score for providing an invalid address.
     ///
-    /// This address can never be reached.
-    pub const ADDRESS_FAILURE: i32 = -200i32;
+    /// This address can never be reached and is effectively banned.
+    pub const ADDRESS_FAILURE: i32 = i32::MIN;
 
     /// Initial score for public/global addresses.
     ///
@@ -107,14 +107,7 @@ impl AddressRecord {
     ///
     /// Please consider using [`Self::from_multiaddr`] from the transport manager code.
     pub fn from_raw_multiaddr_with_score(address: Multiaddr, score: i32) -> AddressRecord {
-        if is_global_multiaddr(&address) {
-            Self {
-                address,
-                score: score.saturating_add(scores::PUBLIC_ADDRESS_BONUS),
-            }
-        } else {
-            Self { address, score }
-        }
+        Self { address, score }
     }
 
     /// Get address score.
@@ -248,20 +241,36 @@ impl AddressStore {
 
     /// Insert the address record into [`AddressStore`] with the provided score.
     ///
-    /// If the address is not in the store, it will be inserted.
-    /// Otherwise, the score will be updated only for significant changes (connection events),
-    /// not for re-adding the same address which would incorrectly accumulate the public address
-    /// bonus.
+    /// If the address is not in the store, it will be inserted with a bonus for public addresses.
+    /// Otherwise, the score will be updated only for connection events (non-zero scores),
+    /// not for re-adding the same address which should not overwrite connection history.
     pub fn insert(&mut self, record: AddressRecord) {
+        let is_public = is_global_multiaddr(&record.address);
+
         if let Entry::Occupied(mut occupied) = self.addresses.entry(record.address.clone()) {
-            // Only update score for connection events (score magnitude > PUBLIC_ADDRESS_BONUS).
-            // Re-adding an address has score 0 (private) or 1 (public with bonus), and should
-            // not accumulate the bonus repeatedly.
-            if record.score.abs() > scores::PUBLIC_ADDRESS_BONUS {
-                occupied.get_mut().update_score(record.score);
+            // Only update score for connection events (non-zero scores).
+            // Re-adding an address (score 0) via rediscovery should not wipe out
+            // connection success/failure history.
+            if record.score != 0 {
+                let score = if is_public {
+                    record.score.saturating_add(scores::PUBLIC_ADDRESS_BONUS)
+                } else {
+                    record.score
+                };
+                occupied.get_mut().update_score(score);
             }
             return;
         }
+
+        // Reward public addresses with a bonus.
+        let record = if is_public {
+            AddressRecord {
+                score: record.score.saturating_add(scores::PUBLIC_ADDRESS_BONUS),
+                ..record
+            }
+        } else {
+            record
+        };
 
         // The eviction algorithm favours addresses with higher scores.
         //
@@ -311,10 +320,10 @@ mod tests {
         let peer = PeerId::random();
         let address = std::net::SocketAddr::V4(SocketAddrV4::new(
             Ipv4Addr::new(
+                10,
+                rng.gen_range(0..=255),
+                rng.gen_range(0..=255),
                 rng.gen_range(1..=255),
-                rng.gen_range(0..=255),
-                rng.gen_range(0..=255),
-                rng.gen_range(0..=255),
             ),
             rng.gen_range(1..=65535),
         ));
@@ -333,10 +342,10 @@ mod tests {
         let peer = PeerId::random();
         let address = std::net::SocketAddr::V4(SocketAddrV4::new(
             Ipv4Addr::new(
+                10,
+                rng.gen_range(0..=255),
+                rng.gen_range(0..=255),
                 rng.gen_range(1..=255),
-                rng.gen_range(0..=255),
-                rng.gen_range(0..=255),
-                rng.gen_range(0..=255),
             ),
             rng.gen_range(1..=65535),
         ));
@@ -356,10 +365,10 @@ mod tests {
         let peer = PeerId::random();
         let address = std::net::SocketAddr::V4(SocketAddrV4::new(
             Ipv4Addr::new(
+                10,
+                rng.gen_range(0..=255),
+                rng.gen_range(0..=255),
                 rng.gen_range(1..=255),
-                rng.gen_range(0..=255),
-                rng.gen_range(0..=255),
-                rng.gen_range(0..=255),
             ),
             rng.gen_range(1..=65535),
         ));
@@ -529,7 +538,7 @@ mod tests {
         let peer = PeerId::random();
 
         // Create a public address (8.8.8.8 is global) using from_multiaddr.
-        // This will apply the PUBLIC_ADDRESS_BONUS (+1).
+        // The bonus is NOT applied at construction time, only when first inserted.
         let address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(8, 8, 8, 8)))
             .with(Protocol::Tcp(9999))
@@ -538,10 +547,11 @@ mod tests {
             ));
 
         let record = AddressRecord::from_multiaddr(address.clone()).unwrap();
-        assert_eq!(record.score, scores::PUBLIC_ADDRESS_BONUS);
+        assert_eq!(record.score, 0);
 
         store.insert(record.clone());
         assert_eq!(store.addresses.len(), 1);
+        // Bonus applied on first insert.
         assert_eq!(
             store.addresses.get(&address).unwrap().score,
             scores::PUBLIC_ADDRESS_BONUS
@@ -564,8 +574,7 @@ mod tests {
         store.insert(connection_record);
 
         assert_eq!(store.addresses.len(), 1);
-        // Score should now be 101 (CONNECTION_ESTABLISHED + PUBLIC_ADDRESS_BONUS).
-        // The score replaces rather than accumulates.
+        // Score should now be CONNECTION_ESTABLISHED + PUBLIC_ADDRESS_BONUS.
         assert_eq!(
             store.addresses.get(&address).unwrap().score,
             scores::CONNECTION_ESTABLISHED + scores::PUBLIC_ADDRESS_BONUS
@@ -596,16 +605,16 @@ mod tests {
         // Dial failure occurs.
         let failure_record = AddressRecord::new(&peer, address.clone(), scores::CONNECTION_FAILURE);
         store.insert(failure_record);
-        let failure_score = scores::CONNECTION_FAILURE + scores::PUBLIC_ADDRESS_BONUS; // -99
+        let failure_score = scores::CONNECTION_FAILURE + scores::PUBLIC_ADDRESS_BONUS;
         assert_eq!(store.addresses.get(&address).unwrap().score, failure_score);
 
-        // Address is rediscovered via Kademlia (creates record with score 0 or 1).
+        // Address is rediscovered via Kademlia (creates record with score 0).
         // This should NOT wipe out the dial failure score.
         let rediscovered = AddressRecord::from_multiaddr(address.clone()).unwrap();
-        assert_eq!(rediscovered.score, scores::PUBLIC_ADDRESS_BONUS); // score = 1
+        assert_eq!(rediscovered.score, 0);
         store.insert(rediscovered);
 
-        // Score should still be -99, not 1.
+        // Score should still reflect the failure, not 0.
         assert_eq!(store.addresses.get(&address).unwrap().score, failure_score);
     }
 
