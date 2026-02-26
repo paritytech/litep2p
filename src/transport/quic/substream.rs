@@ -37,7 +37,7 @@ use crate::protocol::Permit;
 /// QUIC substream.
 #[derive(Debug)]
 pub struct Substream {
-    _permit: Option<Permit>,
+    _lifetime_permit: Option<Permit>,
     bandwidth_sink: BandwidthSink,
     send_stream: SendStream,
     recv_stream: RecvStream,
@@ -46,13 +46,13 @@ pub struct Substream {
 impl Substream {
     /// Create new [`Substream`].
     pub fn new(
-        _permit: Option<Permit>,
+        _lifetime_permit: Option<Permit>,
         send_stream: SendStream,
         recv_stream: RecvStream,
         bandwidth_sink: BandwidthSink,
     ) -> Self {
         Self {
-            _permit,
+            _lifetime_permit,
             send_stream,
             recv_stream,
             bandwidth_sink,

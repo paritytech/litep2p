@@ -39,7 +39,7 @@ pub struct Substream {
     bandwidth_sink: BandwidthSink,
 
     /// Connection permit if this substream keeps connection alive.
-    _permit: Option<Permit>,
+    _lifetime_permit: Option<Permit>,
 }
 
 impl Substream {
@@ -47,12 +47,12 @@ impl Substream {
     pub fn new(
         io: Compat<crate::yamux::Stream>,
         bandwidth_sink: BandwidthSink,
-        _permit: Option<Permit>,
+        _lifetime_permit: Option<Permit>,
     ) -> Self {
         Self {
             io,
             bandwidth_sink,
-            _permit,
+            _lifetime_permit,
         }
     }
 }

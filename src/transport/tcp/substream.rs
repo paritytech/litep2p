@@ -44,7 +44,7 @@ pub struct Substream {
     /// Permit holding the connection alive while the substream exists.
     ///
     /// `None` for ping & identify substreams, `Some` for others.
-    _permit: Option<Permit>,
+    _lifetime_permit: Option<Permit>,
 }
 
 impl Substream {
@@ -52,12 +52,12 @@ impl Substream {
     pub fn new(
         io: Compat<crate::yamux::Stream>,
         bandwidth_sink: BandwidthSink,
-        permit: Option<Permit>,
+        lifetime_permit: Option<Permit>,
     ) -> Self {
         Self {
             io,
             bandwidth_sink,
-            _permit: permit,
+            _lifetime_permit: lifetime_permit,
         }
     }
 }

@@ -270,9 +270,10 @@ pub enum SubstreamKeepAlive {
 }
 
 impl SubstreamKeepAlive {
-    // Whether this substream keeps connection alive while it exists.
-    pub fn yes(&self) -> bool {
-        matches!(self, SubstreamKeepAlive::Yes)
+    /// Shortcut to `(self == SubstreamKeepAlive::Yes).then()`.
+    #[inline]
+    pub fn then<T, F: FnOnce() -> T>(&self, f: F) -> Option<T> {
+        (*self == SubstreamKeepAlive::Yes).then(f)
     }
 }
 
@@ -676,7 +677,7 @@ impl Stream for TransportService {
                     direction,
                     substream,
                     connection_id,
-                    permit,
+                    opening_permit,
                 }) => {
                     if protocol == self.protocol
                         && self.substream_keep_alive == SubstreamKeepAlive::Yes
@@ -689,7 +690,7 @@ impl Stream for TransportService {
 
                     // Connection is upgraded, we must now drop the permit.
                     // This is for the reader, not for compiler.
-                    drop(permit);
+                    drop(opening_permit);
 
                     return Poll::Ready(Some(TransportEvent::SubstreamOpened {
                         peer,

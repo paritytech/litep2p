@@ -637,13 +637,13 @@ impl TcpConnection {
                 let substream_id = substream.substream_id;
                 let socket = FuturesAsyncReadCompatExt::compat(substream.io);
                 let bandwidth_sink = self.bandwidth_sink.clone();
-                let permit = substream.permit;
-                let substream_permit = substream.keep_alive.yes().then(|| permit.clone());
+                let opening_permit = substream.permit;
+                let lifetime_permit = substream.keep_alive.then(|| opening_permit.clone());
 
                 let substream = substream::Substream::new_tcp(
                     self.peer,
                     substream_id,
-                    Substream::new(socket, bandwidth_sink, substream_permit),
+                    Substream::new(socket, bandwidth_sink, lifetime_permit),
                     self.protocol_set.protocol_codec(&protocol),
                 );
 
@@ -653,7 +653,7 @@ impl TcpConnection {
                         protocol.clone(),
                         direction,
                         substream,
-                        permit,
+                        opening_permit,
                     )
                     .await
                     .inspect_err(|error| {

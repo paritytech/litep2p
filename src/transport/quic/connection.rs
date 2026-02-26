@@ -310,15 +310,15 @@ impl QuicConnection {
                             let substream_id = substream.substream_id;
                             let direction = substream.direction;
                             let bandwidth_sink = self.bandwidth_sink.clone();
-                            let permit = substream.permit;
-                            let substream_permit =
-                                substream.keep_alive.yes().then(|| permit.clone());
+                            let opening_permit = substream.permit;
+                            let lifetime_permit =
+                                substream.keep_alive.then(|| opening_permit.clone());
 
                             let substream = substream::Substream::new_quic(
                                 self.peer,
                                 substream_id,
                                 Substream::new(
-                                    substream_permit,
+                                    lifetime_permit,
                                     substream.sender,
                                     substream.receiver,
                                     bandwidth_sink
@@ -326,9 +326,13 @@ impl QuicConnection {
                                 self.protocol_set.protocol_codec(&protocol)
                             );
 
-                            self.protocol_set
-                                .report_substream_open(self.peer, protocol, direction, substream, permit)
-                                .await?;
+                            self.protocol_set.report_substream_open(
+                                self.peer,
+                                protocol,
+                                direction,
+                                substream,
+                                opening_permit,
+                            ).await?;
                         }
                     }
                 }

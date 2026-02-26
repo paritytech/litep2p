@@ -477,7 +477,7 @@ async fn remote_opens_multiple_inbound_substreams() {
             Box::new(DummySubstream::new()),
         ),
         connection_id: ConnectionId::from(0usize),
-        permit: permit.clone(),
+        opening_permit: permit.clone(),
     })
     .await
     .unwrap();
@@ -515,7 +515,7 @@ async fn remote_opens_multiple_inbound_substreams() {
             Box::new(substream),
         ),
         connection_id: ConnectionId::from(0usize),
-        permit,
+        opening_permit: permit,
     })
     .await
     .unwrap();
