@@ -21,18 +21,24 @@
 //! [`/ipfs/ping/1.0.0`](https://github.com/libp2p/specs/blob/master/ping/ping.md) implementation.
 
 use crate::{
+    error::SubstreamError,
     protocol::{Direction, TransportEvent, TransportService},
     substream::Substream,
+    types::SubstreamId,
     PeerId,
 };
 
 use bytes::Bytes;
-use futures::{stream::SplitSink, SinkExt, StreamExt};
+use futures::{
+    stream::{self, BoxStream},
+    FutureExt, StreamExt,
+};
+use rand::Rng as _;
 use std::{
-    collections::HashMap,
+    collections::HashSet,
     time::{Duration, Instant},
 };
-use tokio::{sync::mpsc, time::MissedTickBehavior};
+use tokio::sync::mpsc;
 use tokio_stream::StreamMap;
 
 pub use config::{Config, ConfigBuilder};
@@ -59,8 +65,8 @@ pub enum PingEvent {
 /// Ping protocol.
 pub(crate) struct Ping {
     /// Maximum failures before the peer is considered unreachable.
-    /// This must be at least 2 until <https://github.com/paritytech/litep2p/pull/416> is adopted
-    /// by the network. See the inline comment below when sending ping payload.
+    /// This must be at least 1 until <https://github.com/paritytech/litep2p/pull/416> is adopted
+    /// by the network. (With older litep2p every other ping fails.)
     // TODO: use this to disconnect peers.
     _max_failures: usize,
 
@@ -70,21 +76,14 @@ pub(crate) struct Ping {
     /// TX channel for sending events to the user protocol.
     tx: mpsc::Sender<PingEvent>,
 
-    /// Streams we read Pongs from.
-    outbound_streams: StreamMap<PeerId, futures::stream::SplitStream<Substream>>,
+    /// Local pingers per peer.
+    pingers: StreamMap<PeerId, BoxStream<'static, Result<Duration, PingError>>>,
 
-    /// Sinks we write Pings to.
-    outbound_sinks: HashMap<PeerId, SplitSink<Substream, Bytes>>,
+    /// Substreams on which we retry pings after failure. Used for rate-limiting.
+    retries: HashSet<SubstreamId>,
 
-    /// Streams we read Pings from.
-    /// Keyed by PeerId which enforces one stream per peer
-    inbound_streams: StreamMap<PeerId, futures::stream::SplitStream<Substream>>,
-
-    /// Sinks we write Pongs to.
-    inbound_sinks: HashMap<PeerId, SplitSink<Substream, Bytes>>,
-
-    /// We need to track when we sent the ping to calculate the duration.
-    ping_times: HashMap<PeerId, Instant>,
+    /// Ping responders per peer.
+    responders: StreamMap<PeerId, BoxStream<'static, Result<(), SubstreamError>>>,
 
     /// Interval between outbound pings.
     ping_interval: Duration,
@@ -97,18 +96,16 @@ impl Ping {
             service,
             tx: config.tx_event,
             ping_interval: config.ping_interval,
-            outbound_streams: StreamMap::new(),
-            outbound_sinks: HashMap::new(),
-            ping_times: HashMap::new(),
-            inbound_streams: StreamMap::new(),
-            inbound_sinks: HashMap::new(),
+            pingers: StreamMap::new(),
+            retries: HashSet::new(),
+            responders: StreamMap::new(),
             _max_failures: config.max_failures,
         }
     }
 
     /// Connection established to remote peer.
     fn on_connection_established(&mut self, peer: PeerId) {
-        tracing::debug!(target: LOG_TARGET, ?peer, "connection established, opening ping substream");
+        tracing::debug!(target: LOG_TARGET, ?peer, "connection established");
 
         if let Err(error) = self.service.open_substream(peer) {
             tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to open substream");
@@ -118,39 +115,81 @@ impl Ping {
     /// Connection closed to remote peer.
     fn on_connection_closed(&mut self, peer: PeerId) {
         tracing::debug!(target: LOG_TARGET, ?peer, "connection closed");
-        self.outbound_streams.remove(&peer);
-        self.outbound_sinks.remove(&peer);
-        self.ping_times.remove(&peer);
-
-        self.inbound_streams.remove(&peer);
-        self.inbound_sinks.remove(&peer);
     }
 
-    /// Handle outbound substream (We initiated)
-    /// Registers it into the Outbound pipeline.
-    fn on_outbound_substream(&mut self, peer: PeerId, substream: Substream) {
-        tracing::trace!(target: LOG_TARGET, ?peer, "outbound ping substream registered");
-        let (sink, stream) = substream.split();
-        self.outbound_streams.insert(peer, stream);
-        self.outbound_sinks.insert(peer, sink);
+    /// Handle outbound substream.
+    fn on_outbound_substream(
+        &mut self,
+        peer: PeerId,
+        substream_id: SubstreamId,
+        substream: Substream,
+    ) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "handle outbound substream");
+        let interval = self.ping_interval;
+        let should_wait = self.retries.remove(&substream_id);
+
+        let pinger_stream = stream::unfold(
+            (substream, should_wait),
+            move |(mut substream, should_wait)| async move {
+                if should_wait {
+                    tokio::time::sleep(interval).await;
+                }
+
+                let payload = Bytes::from(Vec::from(rand::thread_rng().gen::<[u8; 32]>()));
+
+                let ping = async {
+                    let now = Instant::now();
+
+                    substream.send_framed(payload.clone()).await?;
+                    let received = substream.next().await.ok_or(PingError::SubstreamError(
+                        SubstreamError::ReadFailure(Some(substream_id)),
+                    ))??;
+
+                    if received == payload {
+                        Ok(now.elapsed())
+                    } else {
+                        Err(PingError::InvalidPayload)
+                    }
+                };
+
+                match tokio::time::timeout(Duration::from_secs(20), ping).await {
+                    Ok(Ok(elapsed)) => Some((Ok(elapsed), (substream, true))),
+                    Ok(Err(error)) => Some((Err(error), (substream, false))),
+                    Err(timeout) => Some((Err(timeout.into()), (substream, false))),
+                }
+            },
+        );
+
+        let _prev = self.pingers.insert(peer, pinger_stream.boxed());
+        debug_assert!(_prev.is_none());
     }
 
-    /// Handle inbound substream (They initiated).
-    /// Registers it into the Inbound pipeline.
-    fn on_inbound_substream(&mut self, peer: PeerId, substream: Substream) {
-        tracing::trace!(target: LOG_TARGET, ?peer, "inbound ping substream registered");
-        let (sink, stream) = substream.split();
+    /// Handle inbound substream.
+    fn on_inbound_substream(&mut self, peer: PeerId, mut substream: Substream) {
+        tracing::trace!(target: LOG_TARGET, ?peer, "handle inbound substream");
 
-        self.inbound_streams.insert(peer, stream);
-        self.inbound_sinks.insert(peer, sink);
+        let responder_future = async move {
+            loop {
+                if let Some(payload) = substream.next().await {
+                    substream.send_framed(payload?.freeze()).await?;
+                } else {
+                    return Ok(());
+                }
+            }
+        };
+
+        if self.responders.insert(peer, responder_future.into_stream().boxed()).is_some() {
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?peer,
+                "discarding ping substream as remote opened a new one",
+            );
+        }
     }
 
     /// Start [`Ping`] event loop.
     pub async fn run(mut self) {
         tracing::debug!(target: LOG_TARGET, "starting ping event loop");
-
-        let mut interval = tokio::time::interval(self.ping_interval);
-        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         loop {
             tokio::select! {
@@ -170,147 +209,80 @@ impl Ping {
                         Direction::Inbound => {
                             self.on_inbound_substream(peer, substream);
                         }
-                        Direction::Outbound(_) => {
-                            self.on_outbound_substream(peer, substream);
+                        Direction::Outbound(substream_id) => {
+                            self.on_outbound_substream(peer, substream_id, substream);
                         }
+                    }
+                    Some(TransportEvent::SubstreamOpenFailure {
+                        substream,
+                        ..
+                    }) => {
+                        self.retries.remove(&substream);
                     }
                     Some(_) => {}
                     None => return,
                 },
+                Some((peer, result)) = self.responders.next(), if !self.responders.is_empty() => {
+                    // Remove the future from `StreamMap` to not wait untill it is polled again and
+                    // removes it itself getting `None`. Otherwise we can get a confusing log
+                    // message when try to insert a new responder for the same peer.
+                    self.responders.remove(&peer);
 
-                _ = interval.tick() => {
-                    let mut failed_outbound = Vec::new();
-
-                    for (peer, sink) in self.outbound_sinks.iter_mut() {
-                        // TODO: <https://github.com/paritytech/litep2p/issues/134>
-                        //       generate random payload and verify it.
-                        let payload = vec![0u8; 32];
-
-                        tracing::trace!(target: LOG_TARGET, ?peer, "sending ping");
-
-                        // Due to buggy implementation of ping protocol in litep2p before
-                        // <https://github.com/paritytech/litep2p/pull/416>,
-                        // when talking to older litep2p we will:
-                        //  1. Successfully send first ping and receive pong.
-                        //  2. Successfully send second ping, but won't receive a response.
-                        //  3. Fail to send the third ping and reopen a substream, going to (1).
-                        //
-                        // Hence `trace` below.
-                        if let Err(error) = sink.send(Bytes::from(payload)).await {
-                            tracing::trace!(
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?result,
+                        "inbound ping responder terminated",
+                    );
+                }
+                Some((peer, result)) = self.pingers.next(), if !self.pingers.is_empty() => {
+                    match result {
+                        Ok(elapsed) => {
+                            tracing::debug!(
                                 target: LOG_TARGET,
                                 ?peer,
-                                ?error,
-                                "failed to send ping",
+                                time_us = elapsed.as_micros(),
+                                "pong",
                             );
-                            failed_outbound.push(*peer);
-                        } else {
-                            self.ping_times.insert(*peer, Instant::now());
+
+                            let _ = self.tx.send(PingEvent::Ping { peer, ping: elapsed }).await;
                         }
-                    }
+                        Err(error) => {
+                            self.pingers.remove(&peer);
 
-                    for peer in failed_outbound {
-                        self.outbound_streams.remove(&peer);
-                        self.outbound_sinks.remove(&peer);
-                        self.ping_times.remove(&peer);
-
-                        if let Err(error) = self.service.open_substream(peer) {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?peer,
                                 ?error,
-                                "failed to reopen substream after failed write",
-                            );
-                        }
-                    }
-                }
-
-                // Handle Outbound Responses (Pong is expected here)
-                Some((peer, event)) = self.outbound_streams.next() => {
-                    match event {
-                        Ok(_payload) => {
-                            if let Some(started) = self.ping_times.remove(&peer) {
-                                let elapsed = started.elapsed();
-
-                                tracing::trace!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    ?elapsed,
-                                    "pong received",
-                                );
-
-                                let _ = self.tx.send(PingEvent::Ping {
-                                    peer,
-                                    ping: elapsed,
-                                }).await;
-                            }
-                        }
-                        Err(error) => {
-                            // `trace` because this is expected to happen with older versions of
-                            // litep2p.
-                            // TODO: why does this not happen in practice? Do we deliver substream
-                            //       reset events to readers?
-                            tracing::trace!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                ?error,
-                                "outbound ping substream closed",
+                                "ping failed",
                             );
 
-                            self.outbound_streams.remove(&peer);
-                            self.outbound_sinks.remove(&peer);
-                            self.ping_times.remove(&peer);
-
-                            if let Err(error) = self.service.open_substream(peer) {
-                                tracing::debug!(
+                            match self.service.open_substream(peer) {
+                                Ok(substream_id) => {
+                                    self.retries.insert(substream_id);
+                                }
+                                Err(error) => tracing::debug!(
                                     target: LOG_TARGET,
                                     ?peer,
                                     ?error,
-                                    "failed to reopen substream after failed read",
-                                );
+                                    "failed to open substream after ping failed",
+                                ),
                             }
-                        }
-                    }
-                }
-
-                // Handle Inbound Pings
-                Some((peer, event)) = self.inbound_streams.next() => {
-                    match event {
-                        Ok(payload) => {
-                            if let Some(sink) = self.inbound_sinks.get_mut(&peer) {
-                                tracing::trace!(target: LOG_TARGET, ?peer, "sending pong");
-                                if let Err(error) = sink.send(payload.freeze()).await {
-                                    tracing::debug!(
-                                        target: LOG_TARGET,
-                                        ?peer,
-                                        ?error,
-                                        "failed to send pong",
-                                    );
-                                    self.inbound_sinks.remove(&peer);
-                                    self.inbound_streams.remove(&peer);
-                                }
-                            } else {
-                                tracing::warn!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    "received ping from peer but no sink available to reply; \
-                                     this is a bug, please report it"
-                                );
-                            }
-                        }
-                        Err(error) => {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                ?error,
-                                "inbound ping substream closed"
-                            );
-                            self.inbound_streams.remove(&peer);
-                            self.inbound_sinks.remove(&peer);
                         }
                     }
                 }
             }
         }
     }
+}
+
+/// Possible error of the outbound ping.
+#[derive(Debug, thiserror::Error)]
+enum PingError {
+    #[error("Substream error: {0}")]
+    SubstreamError(#[from] SubstreamError),
+    #[error("Invalid payload received")]
+    InvalidPayload,
+    #[error("Timeout")]
+    Timeout(#[from] tokio::time::error::Elapsed),
 }
