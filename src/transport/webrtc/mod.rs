@@ -359,15 +359,26 @@ impl WebRtcTransport {
                 "received non-stun message"
             );
 
-            if let Err(error) = self.opening.get_mut(&source).expect("to exist").on_input(contents)
-            {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?error,
-                    ?source,
-                    "failed to handle inbound datagram"
-                );
-            }
+            match self.opening.get_mut(&source) {
+                Some(connection) =>
+                    if let Err(error) = connection.on_input(contents) {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            ?error,
+                            ?source,
+                            "failed to handle inbound datagram"
+                        );
+                    },
+                None => {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        ?source,
+                        "received non-stun message from unknown peer",
+                    );
+                    return Err(Error::InvalidData);
+                }
+            };
+
             return Ok(true);
         }
 
