@@ -245,24 +245,13 @@ impl AddressStore {
     /// Otherwise, the score will be updated only for connection events (non-zero scores),
     /// not for re-adding the same address which should not overwrite connection history.
     pub fn insert(&mut self, record: AddressRecord) {
-        let is_public = is_global_multiaddr(&record.address);
-
         if let Entry::Occupied(mut occupied) = self.addresses.entry(record.address.clone()) {
-            // Only update score for connection events (non-zero scores).
-            // Re-adding an address (score 0) via rediscovery should not wipe out
-            // connection success/failure history.
-            if record.score != 0 {
-                let score = if is_public {
-                    record.score.saturating_add(scores::PUBLIC_ADDRESS_BONUS)
-                } else {
-                    record.score
-                };
-                occupied.get_mut().update_score(score);
-            }
+            occupied.get_mut().update_score(score);
             return;
         }
 
         // Reward public addresses with a bonus.
+        let is_public = is_global_multiaddr(&record.address);
         let record = if is_public {
             AddressRecord {
                 score: record.score.saturating_add(scores::PUBLIC_ADDRESS_BONUS),
