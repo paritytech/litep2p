@@ -260,7 +260,7 @@ impl Stream for KeepAliveTracker {
     }
 }
 
-/// Provides an interfaces for [`Litep2p`](crate::Litep2p) protocols to interact
+/// Provides an interface for [`Litep2p`](crate::Litep2p) protocols to interact
 /// with the underlying transport protocols.
 #[derive(Debug)]
 pub struct TransportService {
@@ -279,7 +279,7 @@ pub struct TransportService {
     /// Transport handle.
     transport_handle: TransportManagerHandle,
 
-    /// RX channel for receiving events from tranports and connections.
+    /// RX channel for receiving events from transports and connections.
     rx: Receiver<InnerTransportEvent>,
 
     /// Next substream ID.
