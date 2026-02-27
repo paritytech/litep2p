@@ -175,7 +175,6 @@ impl Litep2p {
             .with_keypair(litep2p_config.keypair.clone())
             .with_supported_transports(supported_transports)
             .with_bandwidth_sink(bandwidth_sink.clone())
-            .with_max_parallel_dials(litep2p_config.max_parallel_dials)
             .with_connection_limits_config(litep2p_config.connection_limits)
             .build();
 
@@ -333,7 +332,8 @@ impl Litep2p {
         }
 
         // enable tcp transport if the config exists
-        if let Some(config) = litep2p_config.tcp.take() {
+        if let Some(mut config) = litep2p_config.tcp.take() {
+            config.max_parallel_dials = litep2p_config.max_parallel_dials;
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
                 <TcpTransport as TransportBuilder>::new(handle, config, resolver.clone())?;
@@ -378,7 +378,8 @@ impl Litep2p {
 
         // enable websocket transport if the config exists
         #[cfg(feature = "websocket")]
-        if let Some(config) = litep2p_config.websocket.take() {
+        if let Some(mut config) = litep2p_config.websocket.take() {
+            config.max_parallel_dials = litep2p_config.max_parallel_dials;
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
                 <WebSocketTransport as TransportBuilder>::new(handle, config, resolver)?;

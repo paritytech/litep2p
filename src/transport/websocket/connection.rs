@@ -158,7 +158,7 @@ pub(crate) struct WebSocketConnection {
     peer: PeerId,
 
     /// Endpoint.
-    endpoint: Endpoint,
+    _endpoint: Endpoint,
 
     /// Substream open timeout.
     substream_open_timeout: Duration,
@@ -195,7 +195,7 @@ impl WebSocketConnection {
             connection,
             control,
             peer,
-            endpoint,
+            _endpoint: endpoint,
             bandwidth_sink,
             substream_open_timeout,
             pending_substreams: FuturesUnordered::new(),
@@ -464,12 +464,9 @@ impl WebSocketConnection {
         })
     }
 
-    /// Start connection event loop.
+    /// Start the connection event loop without notifying protocols.
+    /// This is used when protocols have already been notified during accept().
     pub(crate) async fn start(mut self) -> crate::Result<()> {
-        self.protocol_set
-            .report_connection_established(self.peer, self.endpoint)
-            .await?;
-
         loop {
             tokio::select! {
                 substream = self.connection.next() => match substream {
