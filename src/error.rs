@@ -188,6 +188,7 @@ pub enum ParseError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum SubstreamError {
+    // Note: this can mean as well `SubstreamClosed`.
     #[error("Connection closed")]
     ConnectionClosed,
     #[error("Connection channel clogged")]

@@ -29,8 +29,7 @@ use std::{
     task::{Context, Poll},
 };
 
-/// Substream that holds the inner substream provided by the transport
-/// and a permit which keeps the connection open.
+/// Substream that holds the inner substream provided by the transport.
 #[derive(Debug)]
 pub struct Substream {
     /// Underlying socket.
@@ -39,8 +38,8 @@ pub struct Substream {
     /// Bandwidth sink.
     bandwidth_sink: BandwidthSink,
 
-    /// Connection permit.
-    _permit: Permit,
+    /// Connection permit if this substream keeps connection alive.
+    _lifetime_permit: Option<Permit>,
 }
 
 impl Substream {
@@ -48,12 +47,12 @@ impl Substream {
     pub fn new(
         io: Compat<crate::yamux::Stream>,
         bandwidth_sink: BandwidthSink,
-        _permit: Permit,
+        _lifetime_permit: Option<Permit>,
     ) -> Self {
         Self {
             io,
             bandwidth_sink,
-            _permit,
+            _lifetime_permit,
         }
     }
 }

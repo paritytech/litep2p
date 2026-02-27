@@ -348,8 +348,8 @@ pub enum ListenerSelectResult {
 /// Parse protocols offered by the remote peer and check if any of the offered protocols match
 /// locally available protocols. If a match is found, return an encoded multistream-select
 /// response and the negotiated protocol. If parsing fails or no match is found, return an error.
-pub fn webrtc_listener_negotiate<'a>(
-    supported_protocols: &'a mut impl Iterator<Item = &'a ProtocolName>,
+pub fn webrtc_listener_negotiate(
+    supported_protocols: Vec<ProtocolName>,
     mut payload: Bytes,
 ) -> crate::Result<ListenerSelectResult> {
     let protocols = drain_trailing_protocols(payload)?;
@@ -370,7 +370,7 @@ pub fn webrtc_listener_negotiate<'a>(
             "listener: checking protocol",
         );
 
-        for supported in &mut *supported_protocols {
+        for supported in supported_protocols.iter() {
             if protocol.as_ref() == supported.as_bytes() {
                 return Ok(ListenerSelectResult::Accepted {
                     protocol: supported.clone(),
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn webrtc_listener_negotiate_works() {
-        let mut local_protocols = [
+        let local_protocols = vec![
             ProtocolName::from("/13371338/proto/1"),
             ProtocolName::from("/sup/proto/1"),
             ProtocolName::from("/13371338/proto/2"),
@@ -414,7 +414,7 @@ mod tests {
         .unwrap()
         .freeze();
 
-        match webrtc_listener_negotiate(&mut local_protocols.iter(), message) {
+        match webrtc_listener_negotiate(local_protocols, message) {
             Err(error) => panic!("error received: {error:?}"),
             Ok(ListenerSelectResult::Rejected { .. }) => panic!("message rejected"),
             Ok(ListenerSelectResult::Accepted { protocol, message }) => {
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn invalid_message() {
-        let mut local_protocols = [
+        let local_protocols = vec![
             ProtocolName::from("/13371338/proto/1"),
             ProtocolName::from("/sup/proto/1"),
             ProtocolName::from("/13371338/proto/2"),
@@ -454,7 +454,7 @@ mod tests {
         .unwrap()
         .freeze();
 
-        match webrtc_listener_negotiate(&mut local_protocols.iter(), message) {
+        match webrtc_listener_negotiate(local_protocols, message) {
             Err(error) => assert!(std::matches!(
                 error,
                 // something has gone off the rails here...
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn only_header_line_received() {
-        let mut local_protocols = [
+        let local_protocols = vec![
             ProtocolName::from("/13371338/proto/1"),
             ProtocolName::from("/sup/proto/1"),
             ProtocolName::from("/13371338/proto/2"),
@@ -481,7 +481,7 @@ mod tests {
         let message = Message::Header(HeaderLine::V1);
         message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
 
-        match webrtc_listener_negotiate(&mut local_protocols.iter(), bytes.freeze()) {
+        match webrtc_listener_negotiate(local_protocols, bytes.freeze()) {
             Err(error) => assert!(std::matches!(
                 error,
                 Error::NegotiationError(error::NegotiationError::ParseError(
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn header_line_missing() {
-        let mut local_protocols = [
+        let local_protocols = vec![
             ProtocolName::from("/13371338/proto/1"),
             ProtocolName::from("/sup/proto/1"),
             ProtocolName::from("/13371338/proto/2"),
@@ -514,7 +514,7 @@ mod tests {
                     .unwrap();
             });
 
-        match webrtc_listener_negotiate(&mut local_protocols.iter(), bytes.freeze()) {
+        match webrtc_listener_negotiate(local_protocols, bytes.freeze()) {
             Err(error) => assert!(std::matches!(
                 error,
                 Error::NegotiationError(error::NegotiationError::MultistreamSelectError(
@@ -527,7 +527,7 @@ mod tests {
 
     #[test]
     fn protocol_not_supported() {
-        let mut local_protocols = [
+        let mut local_protocols = vec![
             ProtocolName::from("/13371338/proto/1"),
             ProtocolName::from("/sup/proto/1"),
             ProtocolName::from("/13371338/proto/2"),
@@ -540,7 +540,7 @@ mod tests {
         .unwrap()
         .freeze();
 
-        match webrtc_listener_negotiate(&mut local_protocols.iter(), message) {
+        match webrtc_listener_negotiate(local_protocols, message) {
             Err(error) => panic!("error received: {error:?}"),
             Ok(ListenerSelectResult::Rejected { message }) => {
                 assert_eq!(

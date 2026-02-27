@@ -57,6 +57,7 @@ use std::{
     time::Duration,
 };
 
+pub use crate::protocol::SubstreamKeepAlive;
 pub use handle::{TransportHandle, TransportManagerHandle};
 pub use types::SupportedTransport;
 
@@ -106,6 +107,9 @@ pub struct ProtocolContext {
 
     /// Fallback names for the protocol.
     pub fallback_names: Vec<ProtocolName>,
+
+    /// Whether this protocol existing substreams should keep connection alive.
+    pub keep_alive: SubstreamKeepAlive,
 }
 
 impl ProtocolContext {
@@ -114,11 +118,13 @@ impl ProtocolContext {
         codec: ProtocolCodec,
         tx: Sender<InnerTransportEvent>,
         fallback_names: Vec<ProtocolName>,
+        keep_alive: SubstreamKeepAlive,
     ) -> Self {
         Self {
             tx,
             codec,
             fallback_names,
+            keep_alive,
         }
     }
 }
@@ -392,6 +398,7 @@ impl TransportManager {
         fallback_names: Vec<ProtocolName>,
         codec: ProtocolCodec,
         keep_alive_timeout: Duration,
+        substream_keep_alive: SubstreamKeepAlive,
     ) -> TransportService {
         assert!(!self.protocol_names.contains(&protocol));
 
@@ -408,11 +415,12 @@ impl TransportManager {
             self.next_substream_id.clone(),
             self.transport_manager_handle(),
             keep_alive_timeout,
+            substream_keep_alive,
         );
 
         self.protocols.insert(
             protocol.clone(),
-            ProtocolContext::new(codec, sender, fallback_names.clone()),
+            ProtocolContext::new(codec, sender, fallback_names.clone(), substream_keep_alive),
         );
         self.protocol_names.insert(protocol);
         self.protocol_names.extend(fallback_names);
@@ -1696,12 +1704,14 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
     }
 
@@ -1716,6 +1726,7 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/2"),
@@ -1725,6 +1736,7 @@ mod tests {
             ],
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
     }
 
@@ -1742,6 +1754,7 @@ mod tests {
             ],
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/2"),
@@ -1751,6 +1764,7 @@ mod tests {
             ],
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
     }
 

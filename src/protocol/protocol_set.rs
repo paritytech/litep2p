@@ -26,6 +26,7 @@ use crate::{
     },
     protocol::{
         connection::{ConnectionHandle, Permit},
+        transport_service::SubstreamKeepAlive,
         Direction, TransportEvent,
     },
     substream::Substream,
@@ -127,6 +128,10 @@ pub enum InnerTransportEvent {
 
         /// Substream.
         substream: Substream,
+
+        /// Permit that was held while this substream was opening. Must be dropped by
+        /// [`TransportService`](crate::protocol::TransportService) once connection is upgraded.
+        opening_permit: Permit,
     },
 
     /// Failed to open substream.
@@ -206,6 +211,10 @@ pub enum ProtocolCommand {
         /// permit is dropped and the connection may be closed if no other permit is being
         /// held.
         permit: Permit,
+
+        /// Whether this susbtream should keep the connection alive until it exists. I.e., whether
+        /// it should store the permit above, or drop it once the substream is opened.
+        keep_alive: SubstreamKeepAlive,
     },
 
     /// Forcibly close the connection, even if other protocols have substreams open over it.
@@ -217,14 +226,17 @@ pub enum ProtocolCommand {
 /// Each connection gets a copy of [`ProtocolSet`] which allows it to interact
 /// directly with installed protocols.
 pub struct ProtocolSet {
-    /// Installed protocols.
+    /// Installed protocols, indexed by main protocol name.
     pub(crate) protocols: HashMap<ProtocolName, ProtocolContext>,
     mgr_tx: Sender<TransportManagerEvent>,
     connection: ConnectionHandle,
     rx: Receiver<ProtocolCommand>,
     #[allow(unused)]
     next_substream_id: Arc<AtomicUsize>,
+    /// Mapping `fallback_name` -> `main_name`.
     fallback_names: HashMap<ProtocolName, ProtocolName>,
+    /// Connection keep-alive settings for both main & fallback protocol names.
+    keep_alives: HashMap<ProtocolName, SubstreamKeepAlive>,
 }
 
 impl ProtocolSet {
@@ -245,7 +257,25 @@ impl ProtocolSet {
                     .map(|fallback| (fallback.clone(), protocol.clone()))
                     .collect::<HashMap<_, _>>()
             })
-            .collect();
+            .collect::<HashMap<_, _>>();
+
+        let main_keep_alives = protocols
+            .iter()
+            .map(|(name, context)| (name.clone(), context.keep_alive))
+            .collect::<Vec<_>>();
+        let fallback_keep_alives = fallback_names
+            .iter()
+            .map(|(fallback, main)| {
+                (
+                    fallback.clone(),
+                    protocols
+                        .get(main)
+                        .expect("all main protocols are present due to construction above; qed")
+                        .keep_alive,
+                )
+            })
+            .collect::<Vec<_>>();
+        let keep_alives = main_keep_alives.into_iter().chain(fallback_keep_alives).collect();
 
         ProtocolSet {
             rx,
@@ -253,6 +283,7 @@ impl ProtocolSet {
             protocols,
             next_substream_id,
             fallback_names,
+            keep_alives,
             connection: ConnectionHandle::new(connection_id, tx),
         }
     }
@@ -269,12 +300,18 @@ impl ProtocolSet {
     }
 
     /// Get the list of all supported protocols.
+    #[cfg(test)]
     pub fn protocols(&self) -> Vec<ProtocolName> {
         self.protocols
             .keys()
             .cloned()
             .chain(self.fallback_names.keys().cloned())
             .collect()
+    }
+
+    /// Get the list of all supported protocols with corresponding keep-alive settings.
+    pub fn protocols_with_keep_alives(&self) -> HashMap<ProtocolName, SubstreamKeepAlive> {
+        self.keep_alives.clone()
     }
 
     /// Report to `protocol` that substream was opened for `peer`.
@@ -284,6 +321,7 @@ impl ProtocolSet {
         protocol: ProtocolName,
         direction: Direction,
         substream: Substream,
+        opening_permit: Permit,
     ) -> Result<(), SubstreamError> {
         tracing::debug!(target: LOG_TARGET, %protocol, ?peer, ?direction, "substream opened");
 
@@ -308,6 +346,7 @@ impl ProtocolSet {
             direction,
             substream,
             connection_id: *self.connection.connection_id(),
+            opening_permit,
         };
 
         protocol_context
@@ -478,6 +517,7 @@ mod tests {
                         ProtocolName::from("/notif/1/fallback/1"),
                         ProtocolName::from("/notif/1/fallback/2"),
                     ],
+                    keep_alive: SubstreamKeepAlive::Yes,
                 },
             )]),
         );
@@ -492,6 +532,7 @@ mod tests {
             assert!(expected_protocols.contains(protocol));
         }
 
+        let permit = protocol_set.try_get_permit().unwrap();
         protocol_set
             .report_substream_open(
                 PeerId::random(),
@@ -502,6 +543,7 @@ mod tests {
                     SubstreamId::from(0usize),
                     Box::new(MockSubstream::new()),
                 ),
+                permit,
             )
             .await
             .unwrap();
@@ -525,10 +567,12 @@ mod tests {
                         ProtocolName::from("/notif/1/fallback/1"),
                         ProtocolName::from("/notif/1/fallback/2"),
                     ],
+                    keep_alive: SubstreamKeepAlive::Yes,
                 },
             )]),
         );
 
+        let permit = protocol_set.try_get_permit().unwrap();
         protocol_set
             .report_substream_open(
                 PeerId::random(),
@@ -539,6 +583,7 @@ mod tests {
                     SubstreamId::from(0usize),
                     Box::new(MockSubstream::new()),
                 ),
+                permit,
             )
             .await
             .unwrap();
@@ -572,10 +617,12 @@ mod tests {
                         ProtocolName::from("/notif/1/fallback/1"),
                         ProtocolName::from("/notif/1/fallback/2"),
                     ],
+                    keep_alive: SubstreamKeepAlive::Yes,
                 },
             )]),
         );
 
+        let permit = protocol_set.try_get_permit().unwrap();
         protocol_set
             .report_substream_open(
                 PeerId::random(),
@@ -586,6 +633,7 @@ mod tests {
                     SubstreamId::from(0usize),
                     Box::new(MockSubstream::new()),
                 ),
+                permit,
             )
             .await
             .unwrap();

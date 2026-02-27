@@ -20,13 +20,13 @@
 
 //! QUIC connection.
 
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use crate::{
     config::Role,
     error::{Error, NegotiationError, SubstreamError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
-    protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
+    protocol::{Direction, Permit, ProtocolCommand, ProtocolSet, SubstreamKeepAlive},
     substream,
     transport::{
         quic::substream::{NegotiatingSubstream, Substream},
@@ -85,6 +85,9 @@ struct NegotiatedSubstream {
 
     /// Permit.
     permit: Permit,
+
+    /// Whether this substream should keep connection alive while it exists.
+    keep_alive: SubstreamKeepAlive,
 }
 
 /// QUIC connection.
@@ -159,6 +162,7 @@ impl QuicConnection {
         substream_id: SubstreamId,
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
+        keep_alive: SubstreamKeepAlive,
     ) -> Result<NegotiatedSubstream, SubstreamError> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?substream_id, "open substream");
 
@@ -192,13 +196,14 @@ impl QuicConnection {
             direction: Direction::Outbound(substream_id),
             permit,
             protocol,
+            keep_alive,
         })
     }
 
     /// Accept bidirectional substream from rmeote peer.
     async fn accept_substream(
         stream: NegotiatingSubstream,
-        protocols: Vec<ProtocolName>,
+        protocols: HashMap<ProtocolName, SubstreamKeepAlive>,
         substream_id: SubstreamId,
         permit: Permit,
     ) -> Result<NegotiatedSubstream, NegotiationError> {
@@ -208,8 +213,10 @@ impl QuicConnection {
             "accept inbound substream"
         );
 
-        let protocols = protocols.iter().map(|protocol| &**protocol).collect::<Vec<&str>>();
-        let (io, protocol) = Self::negotiate_protocol(stream, &Role::Listener, protocols).await?;
+        let protocol_names = protocols.keys().map(|protocol| &**protocol).collect::<Vec<&str>>();
+        let (io, protocol) =
+            Self::negotiate_protocol(stream, &Role::Listener, protocol_names).await?;
+        let keep_alive = *protocols.get(&protocol).expect("protocol to be one of the keys");
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -228,6 +235,7 @@ impl QuicConnection {
             protocol,
             substream_id,
             direction: Direction::Inbound,
+            keep_alive,
         })
     }
 
@@ -240,7 +248,7 @@ impl QuicConnection {
                     Ok((send_stream, receive_stream)) => {
 
                         let substream = self.protocol_set.next_substream_id();
-                        let protocols = self.protocol_set.protocols();
+                        let protocols = self.protocol_set.protocols_with_keep_alives();
                         let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
                         let stream = NegotiatingSubstream::new(send_stream, receive_stream);
                         let substream_open_timeout = self.substream_open_timeout;
@@ -299,11 +307,15 @@ impl QuicConnection {
                             let substream_id = substream.substream_id;
                             let direction = substream.direction;
                             let bandwidth_sink = self.bandwidth_sink.clone();
+                            let opening_permit = substream.permit;
+                            let lifetime_permit =
+                                substream.keep_alive.then(|| opening_permit.clone());
+
                             let substream = substream::Substream::new_quic(
                                 self.peer,
                                 substream_id,
                                 Substream::new(
-                                    substream.permit,
+                                    lifetime_permit,
                                     substream.sender,
                                     substream.receiver,
                                     bandwidth_sink
@@ -311,9 +323,13 @@ impl QuicConnection {
                                 self.protocol_set.protocol_codec(&protocol)
                             );
 
-                            self.protocol_set
-                                .report_substream_open(self.peer, protocol, direction, substream)
-                                .await?;
+                            self.protocol_set.report_substream_open(
+                                self.peer,
+                                protocol,
+                                direction,
+                                substream,
+                                opening_permit,
+                            ).await?;
                         }
                     }
                 }
@@ -325,9 +341,19 @@ impl QuicConnection {
                             connection_id = ?self.endpoint.connection_id(),
                             "protocols have dropped connection"
                         );
-                        return self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await;
+                        return self.protocol_set.report_connection_closed(
+                            self.peer,
+                            self.endpoint.connection_id(),
+                        ).await;
                     }
-                    Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit, .. }) => {
+                    Some(ProtocolCommand::OpenSubstream {
+                        protocol,
+                        fallback_names,
+                        substream_id,
+                        permit,
+                        keep_alive,
+                        connection_id: _,
+                    }) => {
                         let connection = self.connection.clone();
                         let substream_open_timeout = self.substream_open_timeout;
 
@@ -348,6 +374,7 @@ impl QuicConnection {
                                     substream_id,
                                     protocol.clone(),
                                     fallback_names,
+                                    keep_alive,
                                 ),
                             )
                             .await

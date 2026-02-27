@@ -24,7 +24,7 @@ use crate::{
         notification::{
             handle::NotificationHandle, Config as NotificationConfig, NotificationProtocol,
         },
-        InnerTransportEvent, ProtocolCommand, TransportService,
+        InnerTransportEvent, ProtocolCommand, SubstreamKeepAlive, TransportService,
     },
     transport::{
         manager::{TransportManager, TransportManagerBuilder},
@@ -58,6 +58,7 @@ fn make_notification_protocol() -> (
         std::sync::Arc::new(Default::default()),
         manager.transport_manager_handle(),
         KEEP_ALIVE_TIMEOUT,
+        SubstreamKeepAlive::Yes,
     );
     let (config, handle) = NotificationConfig::new(
         ProtocolName::from("/notif/1"),

@@ -38,6 +38,7 @@ use crate::{
         mdns::Mdns,
         notification::NotificationProtocol,
         request_response::RequestResponseProtocol,
+        SubstreamKeepAlive,
     },
     transport::{
         manager::{SupportedTransport, TransportManager, TransportManagerBuilder},
@@ -198,6 +199,7 @@ impl Litep2p {
                 config.fallback_names.clone(),
                 config.codec,
                 litep2p_config.keep_alive_timeout,
+                SubstreamKeepAlive::Yes,
             );
             let executor = Arc::clone(&litep2p_config.executor);
             litep2p_config.executor.run(Box::pin(async move {
@@ -218,6 +220,7 @@ impl Litep2p {
                 config.fallback_names.clone(),
                 config.codec,
                 litep2p_config.keep_alive_timeout,
+                SubstreamKeepAlive::Yes,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 RequestResponseProtocol::new(service, config).run().await
@@ -233,6 +236,8 @@ impl Litep2p {
                 Vec::new(),
                 protocol.codec(),
                 litep2p_config.keep_alive_timeout,
+                // TODO: make configurable by user.
+                SubstreamKeepAlive::Yes,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 let _ = protocol.run(service).await;
@@ -252,6 +257,7 @@ impl Litep2p {
                 Vec::new(),
                 ping_config.codec,
                 litep2p_config.keep_alive_timeout,
+                SubstreamKeepAlive::No,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 Ping::new(service, ping_config).run().await
@@ -275,6 +281,7 @@ impl Litep2p {
                 fallback_names,
                 kademlia_config.codec,
                 litep2p_config.keep_alive_timeout,
+                SubstreamKeepAlive::Yes,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 let _ = Kademlia::new(service, kademlia_config).run().await;
@@ -296,6 +303,7 @@ impl Litep2p {
                     Vec::new(),
                     identify_config.codec,
                     litep2p_config.keep_alive_timeout,
+                    SubstreamKeepAlive::No,
                 );
                 identify_config.public = Some(litep2p_config.keypair.public().into());
 
@@ -316,6 +324,7 @@ impl Litep2p {
                 Vec::new(),
                 bitswap_config.codec,
                 litep2p_config.keep_alive_timeout,
+                SubstreamKeepAlive::Yes,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 Bitswap::new(service, bitswap_config).run().await

@@ -522,7 +522,9 @@ async fn request_timeout(transport1: Transport, transport2: Transport) {
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_request_response_protocol(req_resp_config1);
+        .with_request_response_protocol(req_resp_config1)
+        // Connection keep-alive timeout > request-response timeout.
+        .with_keep_alive_timeout(Duration::from_secs(30));
 
     let config1 = add_transport(config1, transport1).build();
 
@@ -535,7 +537,9 @@ async fn request_timeout(transport1: Transport, transport2: Transport) {
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_request_response_protocol(req_resp_config2);
+        .with_request_response_protocol(req_resp_config2)
+        // Connection keep-alive timeout > request-response timeout.
+        .with_keep_alive_timeout(Duration::from_secs(30));
 
     let config2 = add_transport(config2, transport2).build();
 
@@ -2167,7 +2171,9 @@ async fn custom_timeout(transport1: Transport, transport2: Transport) {
 
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_request_response_protocol(req_resp_config1);
+        .with_request_response_protocol(req_resp_config1)
+        // Make sure connection keep-alive is bigger than request-response timeout.
+        .with_keep_alive_timeout(Duration::from_secs(30));
 
     let config1 = add_transport(config1, transport1).build();
 
@@ -2177,7 +2183,9 @@ async fn custom_timeout(transport1: Transport, transport2: Transport) {
 
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_request_response_protocol(req_resp_config2);
+        .with_request_response_protocol(req_resp_config2)
+        // Make sure connection keep-alive is bigger than request-response timeout.
+        .with_keep_alive_timeout(Duration::from_secs(30));
 
     let config2 = add_transport(config2, transport2).build();
 
