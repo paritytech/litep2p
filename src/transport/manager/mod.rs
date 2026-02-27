@@ -705,8 +705,18 @@ impl TransportManager {
 
         let score = AddressStore::error_score(error);
 
-        // Extract the peer ID at this point to give `NegotiationError::PeerIdMismatch` a chance to
-        // propagate.
+        if matches!(
+            error,
+            DialError::NegotiationError(crate::error::NegotiationError::PeerIdMismatch(_, _))
+        ) {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?address,
+                ?error,
+                "PeerIdMismatch on dial failure, address belongs to a different peer, blacklisting",
+            );
+        }
+
         let peer_id = match address.iter().last() {
             Some(Protocol::P2p(hash)) => PeerId::from_multihash(hash).ok(),
             _ => None,
@@ -3820,5 +3830,115 @@ mod tests {
         }
         assert!(manager.pending_connections.is_empty());
         assert!(manager.opening_errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn peer_id_mismatch_blacklists_address() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let mut manager = TransportManagerBuilder::new().build();
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
+
+        let peer = PeerId::random();
+        let actual_peer = PeerId::random(); // The peer actually at this address
+        let dial_address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+
+        // Dial the address
+        manager.dial_address(dial_address.clone()).await.unwrap();
+
+        // Simulate: socket connection succeeded → score +100
+        manager.update_address_on_connection_established(
+            peer,
+            &Endpoint::dialer(dial_address.clone(), ConnectionId::from(0usize)),
+        );
+
+        // Verify score is +100 after connection established
+        {
+            let peers = manager.peers.read();
+            let context = peers.get(&peer).unwrap();
+            assert_eq!(
+                context.addresses.addresses.get(&dial_address).unwrap().score(),
+                scores::CONNECTION_ESTABLISHED,
+                "Score should be +100 after socket connection"
+            );
+        }
+
+        // Simulate: negotiation failed with PeerIdMismatch → score should be blacklisted
+        let mismatch_error = DialError::NegotiationError(
+            crate::error::NegotiationError::PeerIdMismatch(peer, actual_peer),
+        );
+        manager.update_address_on_dial_failure(dial_address.clone(), &mismatch_error);
+
+        {
+            let peers = manager.peers.read();
+            let context = peers.get(&peer).unwrap();
+            let score = context.addresses.addresses.get(&dial_address).unwrap().score();
+            assert_eq!(
+                score,
+                i32::MIN,
+                "Score should be i32::MIN (ADDRESS_FAILURE) after PeerIdMismatch, got {score}"
+            );
+        }
+
+        // Verify the address is NOT returned for future dial attempts
+        let addresses = {
+            let peers = manager.peers.read();
+            let context = peers.get(&peer).unwrap();
+            context.addresses.addresses(10)
+        };
+        // The address exists but with score i32::MIN
+        for addr in &addresses {
+            let peers = manager.peers.read();
+            let context = peers.get(&peer).unwrap();
+            let score = context.addresses.addresses.get(addr).unwrap().score();
+            assert!(
+                score > i32::MIN,
+                "No ADDRESS_FAILURE addresses should be returned first"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn regular_connection_failure_does_not_blacklist_address() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let mut manager = TransportManagerBuilder::new().build();
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
+
+        let peer = PeerId::random();
+        let dial_address = Multiaddr::empty()
+            .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
+            .with(Protocol::Tcp(8888))
+            .with(Protocol::P2p(
+                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+            ));
+
+        manager.dial_address(dial_address.clone()).await.unwrap();
+
+        // Regular timeout failure → score = CONNECTION_FAILURE (-100), not ADDRESS_FAILURE
+        let timeout_error = DialError::Timeout;
+        manager.update_address_on_dial_failure(dial_address.clone(), &timeout_error);
+
+        {
+            let peers = manager.peers.read();
+            let context = peers.get(&peer).unwrap();
+            let score = context.addresses.addresses.get(&dial_address).unwrap().score();
+            assert_eq!(
+                score,
+                scores::CONNECTION_FAILURE,
+                "Timeout should result in CONNECTION_FAILURE (-100), got {score}"
+            );
+            // Not permanently blacklisted
+            assert!(score > i32::MIN);
+        }
     }
 }

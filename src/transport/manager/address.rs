@@ -18,7 +18,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{error::DialError, PeerId};
+use crate::{
+    error::{DialError, NegotiationError},
+    PeerId,
+};
 
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
@@ -124,6 +127,11 @@ impl AddressRecord {
     pub fn update_score(&mut self, score: i32) {
         self.score = self.score.saturating_add(score);
     }
+
+    /// Set the score of an address to an absolute value.
+    pub fn set_score(&mut self, score: i32) {
+        self.score = score;
+    }
 }
 
 impl PartialEq for AddressRecord {
@@ -208,6 +216,8 @@ impl AddressStore {
     pub fn error_score(error: &DialError) -> i32 {
         match error {
             DialError::AddressError(_) => scores::ADDRESS_FAILURE,
+            DialError::NegotiationError(NegotiationError::PeerIdMismatch(_, _)) =>
+                scores::ADDRESS_FAILURE,
             _ => scores::CONNECTION_FAILURE,
         }
     }
@@ -223,17 +233,14 @@ impl AddressStore {
     /// Otherwise, the score and connection ID will be updated.
     pub fn insert(&mut self, record: AddressRecord) {
         if let Entry::Occupied(mut occupied) = self.addresses.entry(record.address.clone()) {
-            occupied.get_mut().update_score(record.score);
+            if record.score == scores::ADDRESS_FAILURE {
+                occupied.get_mut().set_score(scores::ADDRESS_FAILURE);
+            } else {
+                occupied.get_mut().update_score(record.score);
+            }
             return;
         }
 
-        // The eviction algorithm favours addresses with higher scores.
-        //
-        // This algorithm has the following implications:
-        //  - it keeps the best addresses in the store.
-        //  - if the store is at capacity, the worst address will be evicted.
-        //  - an address that is not dialed yet (with score zero) will be preferred over an address
-        //  that already failed (with negative score).
         if self.addresses.len() >= self.max_capacity {
             let min_record = self
                 .addresses
@@ -255,7 +262,12 @@ impl AddressStore {
 
     /// Return the available addresses sorted by score.
     pub fn addresses(&self, limit: usize) -> Vec<Multiaddr> {
-        let mut records = self.addresses.values().cloned().collect::<Vec<_>>();
+        let mut records = self
+            .addresses
+            .values()
+            .filter(|record| record.score > scores::ADDRESS_FAILURE)
+            .cloned()
+            .collect::<Vec<_>>();
         records.sort_by(|lhs, rhs| rhs.score.cmp(&lhs.score));
         records.into_iter().take(limit).map(|record| record.address).collect()
     }
