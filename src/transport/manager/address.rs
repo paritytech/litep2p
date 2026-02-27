@@ -246,7 +246,12 @@ impl AddressStore {
     /// not for re-adding the same address which should not overwrite connection history.
     pub fn insert(&mut self, record: AddressRecord) {
         if let Entry::Occupied(mut occupied) = self.addresses.entry(record.address.clone()) {
-            occupied.get_mut().update_score(score);
+            // Only update score for connection events (non-zero scores).
+            // Re-adding an address (score 0) via rediscovery should not wipe out
+            // connection success/failure history.
+            if record.score != 0 {
+                occupied.get_mut().update_score(record.score);
+            }
             return;
         }
 
@@ -563,10 +568,10 @@ mod tests {
         store.insert(connection_record);
 
         assert_eq!(store.addresses.len(), 1);
-        // Score should now be CONNECTION_ESTABLISHED + PUBLIC_ADDRESS_BONUS.
+        // Score should now be CONNECTION_ESTABLISHED (bonus only applied on first insert).
         assert_eq!(
             store.addresses.get(&address).unwrap().score,
-            scores::CONNECTION_ESTABLISHED + scores::PUBLIC_ADDRESS_BONUS
+            scores::CONNECTION_ESTABLISHED
         );
     }
 
@@ -591,10 +596,10 @@ mod tests {
             scores::PUBLIC_ADDRESS_BONUS
         );
 
-        // Dial failure occurs.
+        // Dial failure occurs (bonus only applied on first insert, not on updates).
         let failure_record = AddressRecord::new(&peer, address.clone(), scores::CONNECTION_FAILURE);
         store.insert(failure_record);
-        let failure_score = scores::CONNECTION_FAILURE + scores::PUBLIC_ADDRESS_BONUS;
+        let failure_score = scores::CONNECTION_FAILURE;
         assert_eq!(store.addresses.get(&address).unwrap().score, failure_score);
 
         // Address is rediscovered via Kademlia (creates record with score 0).
