@@ -1377,6 +1377,38 @@ impl Kademlia {
 
                             self.store.put(record);
                         }
+                        Some(KademliaCommand::ResumeProviding {
+                            key,
+                            quorum,
+                            next_refresh_at,
+                        }) => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?key,
+                                ?next_refresh_at,
+                                "resume providing without immediate publish",
+                            );
+
+                            self.store.resume_provider(key, quorum, next_refresh_at);
+                        }
+                        Some(KademliaCommand::GetLocalProviders) => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                "querying local providers",
+                            );
+
+                            // Collect (key, next_refresh_at) from the store and send back as an event.
+                            let providers = self
+                                .store
+                                .local_providers()
+                                .into_iter()
+                                .collect::<Vec<_>>();
+
+                            let _ = self
+                                .event_tx
+                                .send(KademliaEvent::LocalProviders { providers })
+                                .await;
+                        }
                         None => return Err(Error::EssentialTaskClosed),
                     }
                 },
