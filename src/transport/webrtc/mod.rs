@@ -359,15 +359,26 @@ impl WebRtcTransport {
                 "received non-stun message"
             );
 
-            if let Err(error) = self.opening.get_mut(&source).expect("to exist").on_input(contents)
-            {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?error,
-                    ?source,
-                    "failed to handle inbound datagram"
-                );
-            }
+            match self.opening.get_mut(&source) {
+                Some(connection) =>
+                    if let Err(error) = connection.on_input(contents) {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            ?error,
+                            ?source,
+                            "failed to handle inbound datagram"
+                        );
+                    },
+                None => {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        ?source,
+                        "received non-stun message from unknown peer",
+                    );
+                    return Err(Error::InvalidData);
+                }
+            };
+
             return Ok(true);
         }
 
@@ -797,6 +808,7 @@ impl Stream for WebRtcTransport {
 ///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 /// ```
 fn is_stun_packet(bytes: &[u8]) -> bool {
+    const STUN_MAGIC_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];
     // 20 bytes for the header, then follows attributes.
-    bytes.len() >= 20 && bytes[0] < 2
+    bytes.len() >= 20 && bytes[0] < 2 && bytes[4..8] == STUN_MAGIC_COOKIE
 }
