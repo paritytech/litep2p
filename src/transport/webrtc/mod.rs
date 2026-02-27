@@ -51,7 +51,7 @@ use tokio::{
 };
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{hash_map::Entry, HashMap, VecDeque},
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::Arc,
@@ -317,12 +317,13 @@ impl WebRtcTransport {
     ///
     /// Returns `true` if the client should be polled.
     fn on_socket_input(&mut self, source: SocketAddr, buffer: Vec<u8>) -> crate::Result<bool> {
-        if let Some(ConnectionContext {
-            peer,
-            connection_id,
-            tx,
-        }) = self.open.get_mut(&source)
-        {
+        if let Entry::Occupied(mut entry) = self.open.entry(source) {
+            let ConnectionContext {
+                peer,
+                connection_id,
+                tx,
+            } = entry.get_mut();
+
             match tx.try_send(buffer) {
                 Ok(_) => return Ok(false),
                 Err(TrySendError::Full(_)) => {
@@ -336,7 +337,18 @@ impl WebRtcTransport {
 
                     return Ok(false);
                 }
-                Err(TrySendError::Closed(_)) => return Ok(false),
+                Err(TrySendError::Closed(_)) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?source,
+                        ?peer,
+                        ?connection_id,
+                        "connection closed, removing stale entry",
+                    );
+
+                    entry.remove();
+                    return Ok(false);
+                }
             }
         }
 
