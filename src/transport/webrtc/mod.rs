@@ -797,6 +797,7 @@ impl Stream for WebRtcTransport {
 ///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 /// ```
 fn is_stun_packet(bytes: &[u8]) -> bool {
+    const STUN_MAGIC_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];
     // 20 bytes for the header, then follows attributes.
-    bytes.len() >= 20 && bytes[0] < 2
+    bytes.len() >= 20 && bytes[0] < 2 && bytes[4..8] == STUN_MAGIC_COOKIE
 }
