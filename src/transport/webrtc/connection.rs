@@ -27,6 +27,7 @@ use crate::{
     substream::Substream,
     transport::{
         webrtc::{
+            schema::webrtc::message::Flag,
             substream::{Event as SubstreamEvent, Substream as WebRtcSubstream, SubstreamHandle},
             util::WebRtcMessage,
         },
@@ -263,7 +264,7 @@ impl WebRtcConnection {
         let fallback_names = std::mem::take(&mut context.fallback_names);
         let (dialer_state, message) =
             WebRtcDialerState::propose(context.protocol.clone(), fallback_names)?;
-        let message = WebRtcMessage::encode(message);
+        let message = WebRtcMessage::encode(message, None);
 
         self.rtc
             .channel(channel_id)
@@ -330,7 +331,10 @@ impl WebRtcConnection {
         self.rtc
             .channel(channel_id)
             .ok_or(Error::ChannelDoesntExist)?
-            .write(true, WebRtcMessage::encode(response.to_vec()).as_ref())
+            .write(
+                true,
+                WebRtcMessage::encode(response.to_vec(), None).as_ref(),
+            )
             .map_err(Error::WebRtc)?;
 
         let protocol = negotiated.ok_or(Error::SubstreamDoesntExist)?;
@@ -452,7 +456,7 @@ impl WebRtcConnection {
             target: LOG_TARGET,
             peer = ?self.peer,
             ?channel_id,
-            flags = message.flags,
+            flag = ?message.flag,
             data_len = message.payload.as_ref().map_or(0usize, |payload| payload.len()),
             "handle inbound message",
         );
@@ -598,20 +602,26 @@ impl WebRtcConnection {
         Ok(())
     }
 
-    /// Handle outbound data.
-    fn on_outbound_data(&mut self, channel_id: ChannelId, data: Vec<u8>) -> crate::Result<()> {
+    /// Handle outbound data with optional flag.
+    fn on_outbound_data(
+        &mut self,
+        channel_id: ChannelId,
+        data: Vec<u8>,
+        flag: Option<Flag>,
+    ) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
             peer = ?self.peer,
             ?channel_id,
             data_len = ?data.len(),
+            ?flag,
             "send data",
         );
 
         self.rtc
             .channel(channel_id)
             .ok_or(Error::ChannelDoesntExist)?
-            .write(true, WebRtcMessage::encode(data).as_ref())
+            .write(true, WebRtcMessage::encode(data, flag).as_ref())
             .map_err(Error::WebRtc)
             .map(|_| ())
     }
@@ -667,19 +677,8 @@ impl WebRtcConnection {
             .await;
     }
 
-    /// Start running event loop of [`WebRtcConnection`].
-    pub async fn run(mut self) {
-        tracing::trace!(
-            target: LOG_TARGET,
-            peer = ?self.peer,
-            "start webrtc connection event loop",
-        );
-
-        let _ = self
-            .protocol_set
-            .report_connection_established(self.peer, self.endpoint.clone())
-            .await;
-
+    /// Start the connection event loop without notifying protocols.
+    pub async fn run_event_loop(mut self) {
         loop {
             // poll output until we get a timeout
             let timeout = match self.rtc.poll_output().unwrap() {
@@ -788,7 +787,7 @@ impl WebRtcConnection {
                 },
                 event = self.handles.next() => match event {
                     None => unreachable!(),
-                    Some((channel_id, None | Some(SubstreamEvent::Close))) => {
+                    Some((channel_id, None)) => {
                         tracing::trace!(
                             target: LOG_TARGET,
                             peer = ?self.peer,
@@ -800,11 +799,12 @@ impl WebRtcConnection {
                         self.channels.insert(channel_id, ChannelState::Closing);
                         self.handles.remove(&channel_id);
                     }
-                    Some((channel_id, Some(SubstreamEvent::Message(data)))) => {
-                        if let Err(error) = self.on_outbound_data(channel_id, data) {
+                    Some((channel_id, Some(SubstreamEvent::Message { payload, flag }))) => {
+                        if let Err(error) = self.on_outbound_data(channel_id, payload, flag) {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?channel_id,
+                                ?flag,
                                 ?error,
                                 "failed to send data to remote peer",
                             );

@@ -22,7 +22,7 @@
 
 use crate::{
     crypto::noise::{MAX_READ_AHEAD_FACTOR, MAX_WRITE_BUFFER_SIZE},
-    transport::{CONNECTION_OPEN_TIMEOUT, SUBSTREAM_OPEN_TIMEOUT},
+    transport::{CONNECTION_OPEN_TIMEOUT, MAX_PARALLEL_DIALS, SUBSTREAM_OPEN_TIMEOUT},
 };
 
 /// TCP transport configuration.
@@ -80,6 +80,13 @@ pub struct Config {
     /// How long should litep2p wait for a substream to be opened before considering
     /// the substream rejected.
     pub substream_open_timeout: std::time::Duration,
+
+    /// Maximum number of parallel dial attempts for a single peer.
+    ///
+    /// **Note:** This value is overridden by the top-level
+    /// [`ConfigBuilder::with_max_parallel_dials`](crate::config::ConfigBuilder::with_max_parallel_dials)
+    /// when building `Litep2p`.
+    pub max_parallel_dials: usize,
 }
 
 impl Default for Config {
@@ -96,6 +103,7 @@ impl Default for Config {
             noise_write_buffer_size: MAX_WRITE_BUFFER_SIZE,
             connection_open_timeout: CONNECTION_OPEN_TIMEOUT,
             substream_open_timeout: SUBSTREAM_OPEN_TIMEOUT,
+            max_parallel_dials: MAX_PARALLEL_DIALS,
         }
     }
 }

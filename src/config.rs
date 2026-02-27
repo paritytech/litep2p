@@ -265,8 +265,10 @@ impl ConfigBuilder {
     }
 
     /// How many addresses should litep2p attempt to dial in parallel.
+    ///
+    /// The provided number is clamped to a minimum of 1.
     pub fn with_max_parallel_dials(mut self, max_parallel_dials: usize) -> Self {
-        self.max_parallel_dials = max_parallel_dials;
+        self.max_parallel_dials = max_parallel_dials.max(1);
         self
     }
 

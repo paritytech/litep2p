@@ -32,14 +32,14 @@ use crate::{
             peer_state::{ConnectionRecord, PeerState, StateDialResult},
             types::PeerContext,
         },
-        Endpoint, Transport, TransportEvent, MAX_PARALLEL_DIALS,
+        Endpoint, Transport, TransportEvent,
     },
     types::{protocol::ProtocolName, ConnectionId},
     BandwidthSink, PeerId,
 };
 
 use address::{scores, AddressStore};
-use futures::{Stream, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use indexmap::IndexMap;
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
@@ -205,9 +205,6 @@ pub struct TransportManager {
     /// Bandwidth sink.
     bandwidth_sink: BandwidthSink,
 
-    /// Maximum parallel dial attempts per peer.
-    max_parallel_dials: usize,
-
     /// Installed protocols.
     protocols: HashMap<ProtocolName, ProtocolContext>,
 
@@ -252,6 +249,9 @@ pub struct TransportManager {
 
     /// Opening connections errors.
     opening_errors: HashMap<ConnectionId, Vec<(Multiaddr, DialError)>>,
+
+    /// Pending accept futures with associated connection information.
+    pending_accept: FuturesUnordered<BoxFuture<'static, (PeerId, Endpoint, crate::Result<()>)>>,
 }
 
 /// Builder for [`crate::transport::manager::TransportManager`].
@@ -264,9 +264,6 @@ pub struct TransportManagerBuilder {
 
     /// Bandwidth sink.
     bandwidth_sink: Option<BandwidthSink>,
-
-    /// Maximum parallel dial attempts per peer.
-    max_parallel_dials: usize,
 
     /// Connection limits config.
     connection_limits_config: limits::ConnectionLimitsConfig,
@@ -285,7 +282,6 @@ impl TransportManagerBuilder {
             keypair: None,
             supported_transports: HashSet::new(),
             bandwidth_sink: None,
-            max_parallel_dials: MAX_PARALLEL_DIALS,
             connection_limits_config: limits::ConnectionLimitsConfig::default(),
         }
     }
@@ -308,12 +304,6 @@ impl TransportManagerBuilder {
     /// Set the bandwidth sink
     pub fn with_bandwidth_sink(mut self, bandwidth_sink: BandwidthSink) -> Self {
         self.bandwidth_sink = Some(bandwidth_sink);
-        self
-    }
-
-    /// Set the maximum parallel dials per peer
-    pub fn with_max_parallel_dials(mut self, max_parrallel_dials: usize) -> Self {
-        self.max_parallel_dials = max_parrallel_dials;
         self
     }
 
@@ -349,7 +339,6 @@ impl TransportManagerBuilder {
             local_peer_id,
             keypair,
             bandwidth_sink: self.bandwidth_sink.unwrap_or_else(BandwidthSink::new),
-            max_parallel_dials: self.max_parallel_dials,
             protocols: HashMap::new(),
             protocol_names: HashSet::new(),
             listen_addresses,
@@ -365,6 +354,7 @@ impl TransportManagerBuilder {
             pending_connections: HashMap::new(),
             connection_limits: limits::ConnectionLimits::new(self.connection_limits_config),
             opening_errors: HashMap::new(),
+            pending_accept: FuturesUnordered::new(),
         }
     }
 }
@@ -532,9 +522,6 @@ impl TransportManager {
     pub async fn dial(&mut self, peer: PeerId) -> crate::Result<()> {
         // Don't alter the peer state if there's no capacity to dial.
         let available_capacity = self.connection_limits.on_dial_address()?;
-        // The available capacity is the maximum number of connections that can be established,
-        // so we limit the number of parallel dials to the minimum of these values.
-        let limit = available_capacity.min(self.max_parallel_dials);
 
         if peer == self.local_peer_id {
             return Err(Error::TriedToDialSelf);
@@ -552,7 +539,9 @@ impl TransportManager {
 
         // The addresses are sorted by score and contain the remote peer ID.
         // We double checked above that the remote peer is not the local peer.
-        let dial_addresses = context.addresses.addresses(limit);
+        // Limit addresses by the available connection capacity. The transport layer
+        // handles dial concurrency via `max_parallel_dials`.
+        let dial_addresses = context.addresses.addresses(available_capacity);
         if dial_addresses.is_empty() {
             return Err(Error::NoAddressAvailable(peer));
         }
@@ -1091,6 +1080,35 @@ impl TransportManager {
     pub async fn next(&mut self) -> Option<TransportEvent> {
         loop {
             tokio::select! {
+                (peer, endpoint, result) = self.pending_accept.select_next_some(), if !self.pending_accept.is_empty() => {
+                    match result {
+                        Ok(()) => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?endpoint,
+                                "connection accepted and protocols notified",
+                            );
+
+                            return Some(TransportEvent::ConnectionEstablished { peer, endpoint });
+                        }
+                        Err(error) => {
+                            // The pending accept future has failed to inform one of the
+                            // installed protocols about the connection. This can happen when the
+                            // node is shutting down or when the user has dropped the long running protocol.
+                            // To err on the safe side, roll back the state modification done in `on_connection_established`.
+                            self.on_connection_closed(peer, endpoint.connection_id());
+
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?endpoint,
+                                ?error,
+                                "failed to notify protocols about connection",
+                            );
+                        }
+                    }
+                }
                 event = self.event_rx.recv() => {
                     let Some(event) = event else {
                         tracing::error!(
@@ -1270,16 +1288,36 @@ impl TransportManager {
                                         "accept connection",
                                     );
 
-                                    let _ = self
+                                    match self
                                         .transports
                                         .get_mut(&transport)
                                         .expect("transport to exist")
-                                        .accept(endpoint.connection_id());
+                                        .accept(endpoint.connection_id())
+                                    {
+                                        Ok(future) => {
+                                            // A ConnectionEstablished is propagated to the user once
+                                            // all protocols have been notified.
+                                            self.pending_accept.push(Box::pin(async move {
+                                                let result = future.await;
+                                                (peer, endpoint, result)
+                                            }));
+                                        }
+                                        Err(error) => {
+                                            // Roll back the state modification done in `on_connection_established` by
+                                            // simulating a closed connection. The transport returns an error
+                                            // while accepting the connection, which can happen if the transport is
+                                            // already closed or the connection is dropped before the accept call.
+                                            self.on_connection_closed(peer, endpoint.connection_id());
 
-                                    return Some(TransportEvent::ConnectionEstablished {
-                                        peer,
-                                        endpoint,
-                                    });
+                                            tracing::debug!(
+                                                target: LOG_TARGET,
+                                                ?peer,
+                                                ?endpoint,
+                                                ?error,
+                                                "failed to accept connection",
+                                            );
+                                        }
+                                    }
                                 }
                                 Ok(ConnectionEstablishedResult::Reject) => {
                                     tracing::trace!(
@@ -1474,8 +1512,11 @@ mod tests {
                 Ok(())
             }
 
-            fn accept(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
-                Ok(())
+            fn accept(
+                &mut self,
+                _connection_id: ConnectionId,
+            ) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
+                Ok(Box::pin(async { Ok(()) }))
             }
 
             fn accept_pending(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
