@@ -2326,6 +2326,11 @@ async fn dial_failure(transport: Transport) {
             .with(Protocol::Tcp(5))
             .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())))
             .with(Protocol::P2p(Multihash::from(peer))),
+        Transport::Custom(_) => Multiaddr::empty()
+            .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
+            .with(Protocol::Tcp(5))
+            .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())))
+            .with(Protocol::P2p(Multihash::from(peer))),
     };
 
     let config = add_transport(litep2p_config, transport).build();
