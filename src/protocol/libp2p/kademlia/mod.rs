@@ -435,15 +435,19 @@ impl Kademlia {
         let _ = self
             .event_tx
             .send(KademliaEvent::RoutingTableUpdate {
-                peers: peers.iter().map(|peer| peer.peer).collect::<Vec<PeerId>>(),
+                peers: peers
+                    .iter()
+                    .map(|peer| (peer.peer, peer.addresses()))
+                    .collect::<Vec<(PeerId, Vec<Multiaddr>)>>(),
             })
             .await;
 
-        for info in peers {
-            let addresses = info.addresses();
-            self.service.add_known_address(&info.peer, addresses.clone().into_iter());
+        if std::matches!(self.update_mode, RoutingTableUpdateMode::Automatic) {
+            for info in peers {
+                let addresses = info.addresses();
 
-            if std::matches!(self.update_mode, RoutingTableUpdateMode::Automatic) {
+                self.service.add_known_address(&info.peer, addresses.clone().into_iter());
+
                 self.routing_table.add_known_peer(
                     info.peer,
                     addresses,
