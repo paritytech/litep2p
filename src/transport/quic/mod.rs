@@ -257,11 +257,10 @@ impl Transport for QuicTransport {
             return Err(Error::AddressError(AddressError::PeerIdMissing));
         };
 
-        let crypto_config =
-            Arc::new(make_client_config(&self.context.keypair, Some(peer)).expect("to succeed"));
+        let crypto_config = Arc::new(make_client_config(&self.context.keypair, Some(peer))?);
         let mut transport_config = quinn::TransportConfig::default();
-        let timeout =
-            IdleTimeout::try_from(self.config.connection_open_timeout).expect("to succeed");
+        let timeout = IdleTimeout::try_from(self.config.connection_open_timeout)
+            .map_err(|e| Error::Other(e.to_string()))?;
         transport_config.max_idle_timeout(Some(timeout));
         let mut client_config = ClientConfig::new(crypto_config);
         client_config.transport_config(Arc::new(transport_config));
@@ -394,10 +393,12 @@ impl Transport for QuicTransport {
                         peer.ok_or_else(|| DialError::AddressError(AddressError::PeerIdMissing))?;
 
                     let crypto_config =
-                        Arc::new(make_client_config(&keypair, Some(peer)).expect("to succeed"));
+                        Arc::new(make_client_config(&keypair, Some(peer)).map_err(|_| {
+                            DialError::NegotiationError(QuicError::InvalidCertificate.into())
+                        })?);
                     let mut transport_config = quinn::TransportConfig::default();
-                    let timeout =
-                        IdleTimeout::try_from(connection_open_timeout).expect("to succeed");
+                    let timeout = IdleTimeout::try_from(connection_open_timeout)
+                        .map_err(|_| DialError::Timeout)?;
                     transport_config.max_idle_timeout(Some(timeout));
                     let mut client_config = ClientConfig::new(crypto_config);
                     client_config.transport_config(Arc::new(transport_config));
