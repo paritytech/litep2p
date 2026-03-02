@@ -160,8 +160,9 @@ impl Ping {
             },
         );
 
-        let _prev = self.pingers.insert(peer, pinger_stream.boxed());
-        debug_assert!(_prev.is_none());
+        // We could overwrite the old pinger here if connection was closed then opened before the
+        // ping failed.
+        let _ = self.pingers.insert(peer, pinger_stream.boxed());
     }
 
     /// Handle inbound substream.
