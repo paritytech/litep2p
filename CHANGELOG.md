@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.2] - 2026-03-02
+
+This is a hotfix release fixing ping protocol panic in debug builds. The release also includes WebRTC fixes.
+
+### Fixed
+
+- webrtc/fix: Ensure delay future is awaited ([#548](https://github.com/paritytech/litep2p/pull/548))
+- ping: Fix panic in debug builds ([#551](https://github.com/paritytech/litep2p/pull/551))
+- webrtc: Ensure nonstun packets cannot panic transport layer ([#550](https://github.com/paritytech/litep2p/pull/550))
+- webrtc: Avoid memory leaks by cleaning stale hashmap entries ([#549](https://github.com/paritytech/litep2p/pull/549))
+
 ## [0.13.1] - 2026-02-27
 
 This release includes multiple fixes of transports and protocols, fixing connection stability issues with other librariies (specifically, [smoldot](https://github.com/smol-dot/smoldot/)) and increasing success rates of dialing & opening substreams, especially in extreme cases when remote nodes have a lot of private addresses published to the DHT.
