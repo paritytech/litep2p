@@ -776,12 +776,7 @@ impl Stream for WebRtcTransport {
                             return None;
                         }
                         ConnectionEvent::Timeout { duration } => {
-                            this.timeouts.insert(
-                                source,
-                                Box::pin(async move {
-                                    Delay::new(duration);
-                                }),
-                            );
+                            this.timeouts.insert(source, Box::pin(Delay::new(duration)));
                             break;
                         }
                     }
