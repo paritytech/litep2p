@@ -491,6 +491,12 @@ impl TransportBuilder for WebRtcTransport {
                 CryptoError::Other("OpenSsl failed to generate certificate".to_string()),
             ))),
         )?;
+        // chain safe
+        // let crypto_provider = str0m::crypto::from_feature_flags();
+        // let dtls_cert = crypto_provider
+        //     .dtls_provider
+        //     .generate_certificate()
+        //     .expect("DTLS certificate generation failed");
 
         let listen_multi_addresses = {
             let fingerprint = dtls_cert.fingerprint();
