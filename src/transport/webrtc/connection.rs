@@ -774,12 +774,18 @@ impl WebRtcConnection {
             "send data",
         );
 
-        self.rtc
+        let written = self
+            .rtc
             .channel(channel_id)
             .ok_or(Error::ChannelDoesntExist)?
             .write(true, WebRtcMessage::encode(data, flag).as_ref())
-            .map_err(Error::WebRtc)
-            .map(|_| ())
+            .map_err(Error::WebRtc)?;
+
+        if !written {
+            return Err(Error::ChannelClogged);
+        }
+
+        Ok(())
     }
 
     /// Open outbound substream.
