@@ -339,9 +339,12 @@ impl WebRtcDialerState {
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
     ) -> crate::Result<(Self, Vec<u8>)> {
-        let message = webrtc_encode_multistream_message(Message::Protocol(
-            Protocol::try_from(protocol.as_ref()).map_err(|_| Error::InvalidData)?,
-        ))?
+        let message = webrtc_encode_multistream_message(
+            Message::Protocol(
+                Protocol::try_from(protocol.as_ref()).map_err(|_| Error::InvalidData)?,
+            ),
+            true,
+        )?
         .freeze()
         .to_vec();
 
@@ -368,9 +371,12 @@ impl WebRtcDialerState {
         self.protocol = next;
         self.state = HandshakeState::WaitingResponse;
 
-        let message = webrtc_encode_multistream_message(Message::Protocol(
-            Protocol::try_from(self.protocol.as_ref()).map_err(|_| Error::InvalidData)?,
-        ))?
+        let message = webrtc_encode_multistream_message(
+            Message::Protocol(
+                Protocol::try_from(self.protocol.as_ref()).map_err(|_| Error::InvalidData)?,
+            ),
+            true,
+        )?
         .freeze()
         .to_vec();
 
@@ -940,9 +946,10 @@ mod tests {
 
     #[test]
     fn negotiate_main_protocol() {
-        let message = webrtc_encode_multistream_message(Message::Protocol(
-            Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
-        ))
+        let message = webrtc_encode_multistream_message(
+            Message::Protocol(Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap()),
+            true,
+        )
         .unwrap()
         .freeze();
 
@@ -962,9 +969,10 @@ mod tests {
 
     #[test]
     fn negotiate_fallback_protocol() {
-        let message = webrtc_encode_multistream_message(Message::Protocol(
-            Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
-        ))
+        let message = webrtc_encode_multistream_message(
+            Message::Protocol(Protocol::try_from(&b"/sup/proto/1"[..]).unwrap()),
+            true,
+        )
         .unwrap()
         .freeze();
 

@@ -26,7 +26,6 @@
 //! `MessageReader`.
 
 use crate::{
-    codec::unsigned_varint::UnsignedVarint,
     error::Error as Litep2pError,
     multistream_select::{
         length_delimited::{LengthDelimited, LengthDelimitedReader},
@@ -132,6 +131,25 @@ pub enum Message {
 }
 
 impl Message {
+    /// Returns the exact encoded byte length of this message, without allocating.
+    pub fn encoded_len(&self) -> usize {
+        match self {
+            Message::Header(HeaderLine::V1) => MSG_MULTISTREAM_1_0.len(),
+            Message::Protocol(p) => p.0.as_ref().len() + 1,
+            Message::ListProtocols => MSG_LS.len(),
+            Message::NotAvailable => MSG_PROTOCOL_NA.len(),
+            Message::Protocols(ps) => {
+                let mut len = 1usize; // trailing \n
+                let mut buf = unsigned_varint::encode::usize_buffer();
+                for p in ps {
+                    let proto_len = p.0.as_ref().len() + 1;
+                    len += unsigned_varint::encode::usize(proto_len, &mut buf).len() + proto_len;
+                }
+                len
+            }
+        }
+    }
+
     /// Encodes a `Message` into its byte representation.
     pub fn encode(&self, dest: &mut BytesMut) -> Result<(), ProtocolError> {
         match self {
@@ -228,27 +246,43 @@ impl Message {
     }
 }
 
-/// Create `multistream-select` message from an iterator of `Message`s.
+/// Encode a single `multistream-select` message, optionally preceded by the protocol header.
 ///
-/// # Note
-///
-/// This implementation may not be compliant with the multistream-select protocol spec.
-/// The only purpose of this was to get the `multistream-select` protocol working with smoldot.
-pub fn webrtc_encode_multistream_message(message: Message) -> crate::Result<BytesMut> {
-    // encode `/multistream-select/1.0.0` header
-    let mut bytes = BytesMut::with_capacity(32);
-    Message::Header(HeaderLine::V1)
-        .encode(&mut bytes)
-        .map_err(|_| Litep2pError::InvalidData)?;
-    let mut output = UnsignedVarint::encode(bytes)?;
+/// When `prepend_header` is `true` the `/multistream/1.0.0` header line is written before the
+/// message. Everything is written into a single `BytesMut` allocation.
+pub fn webrtc_encode_multistream_message(
+    message: Message,
+    prepend_header: bool,
+) -> crate::Result<BytesMut> {
+    let msg_len = message.encoded_len();
+    let header_len = MSG_MULTISTREAM_1_0.len();
+    let mut varint_buf = unsigned_varint::encode::usize_buffer();
 
-    // encode the message
-    let mut msg_bytes = BytesMut::with_capacity(256);
-    message.encode(&mut msg_bytes).map_err(|_| Litep2pError::InvalidData)?;
-    let mut msg_bytes = UnsignedVarint::encode(msg_bytes)?;
-    output.append(&mut msg_bytes);
+    let capacity = {
+        let msg_varint_len = unsigned_varint::encode::usize(msg_len, &mut varint_buf).len();
+        let total = if prepend_header {
+            let header_varint_len =
+                unsigned_varint::encode::usize(header_len, &mut varint_buf).len();
+            header_varint_len + header_len + msg_varint_len + msg_len
+        } else {
+            msg_varint_len + msg_len
+        };
+        total.min(super::length_delimited::MAX_FRAME_SIZE as usize)
+    };
 
-    Ok(BytesMut::from(&output[..]))
+    let mut output = BytesMut::with_capacity(capacity);
+
+    if prepend_header {
+        output.extend_from_slice(unsigned_varint::encode::usize(header_len, &mut varint_buf));
+        Message::Header(HeaderLine::V1)
+            .encode(&mut output)
+            .map_err(|_| Litep2pError::InvalidData)?;
+    }
+
+    output.extend_from_slice(unsigned_varint::encode::usize(msg_len, &mut varint_buf));
+    message.encode(&mut output).map_err(|_| Litep2pError::InvalidData)?;
+
+    Ok(output)
 }
 
 /// A `MessageIO` implements a [`Stream`] and [`Sink`] of [`Message`]s.
