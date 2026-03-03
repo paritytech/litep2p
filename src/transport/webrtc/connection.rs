@@ -149,7 +149,10 @@ enum ChannelState {
     Closing,
 
     /// Inbound channel is opening.
-    InboundOpening,
+    InboundOpening {
+        /// Whether the multistream-select header has already been received/sent.
+        header_received: bool,
+    },
 
     /// Outbound channel is opening.
     OutboundOpening {
@@ -264,7 +267,12 @@ impl WebRtcConnection {
                 "inbound channel opened, wait for `multistream-select` message",
             );
 
-            self.channels.insert(channel_id, ChannelState::InboundOpening);
+            self.channels.insert(
+                channel_id,
+                ChannelState::InboundOpening {
+                    header_received: false,
+                },
+            );
             return Ok(());
         };
 
@@ -324,6 +332,7 @@ impl WebRtcConnection {
         &mut self,
         channel_id: ChannelId,
         data: Vec<u8>,
+        header_received: bool,
     ) -> crate::Result<Option<(SubstreamId, SubstreamHandle, Option<Permit>)>> {
         tracing::trace!(
             target: LOG_TARGET,
@@ -336,9 +345,10 @@ impl WebRtcConnection {
         let protocols = self.protocol_set.protocols_with_keep_alives();
         let protocol_names = protocols.keys().cloned().collect();
         let (response, negotiated) =
-            match webrtc_listener_negotiate(protocol_names, payload.into())? {
+            match webrtc_listener_negotiate(protocol_names, payload.into(), header_received)? {
                 ListenerSelectResult::Accepted { protocol, message } => (message, Some(protocol)),
-                ListenerSelectResult::Rejected { message } => (message, None),
+                ListenerSelectResult::Rejected { message }
+                | ListenerSelectResult::PendingProtocol { message } => (message, None),
             };
 
         self.rtc
@@ -584,8 +594,9 @@ impl WebRtcConnection {
         };
 
         match state {
-            ChannelState::InboundOpening => {
-                match self.on_inbound_opening_channel_data(channel_id, data).await {
+            ChannelState::InboundOpening { header_received } => {
+                match self.on_inbound_opening_channel_data(channel_id, data, header_received).await
+                {
                     Ok(Some((substream_id, handle, lifetime_permit))) => {
                         self.handles.insert(channel_id, handle);
                         self.channels.insert(
@@ -598,10 +609,13 @@ impl WebRtcConnection {
                         );
                     }
                     Ok(None) => {
-                        // Protocol was rejected but `na` response was sent. Keep the
-                        // channel open in `InboundOpening` so the dialer can propose
-                        // another protocol (back-and-forth multistream-select).
-                        self.channels.insert(channel_id, ChannelState::InboundOpening);
+                        // Header has been exchanged after any successful round.
+                        self.channels.insert(
+                            channel_id,
+                            ChannelState::InboundOpening {
+                                header_received: true,
+                            },
+                        );
                     }
                     Err(error) => {
                         tracing::debug!(
