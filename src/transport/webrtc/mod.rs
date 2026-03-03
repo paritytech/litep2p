@@ -38,10 +38,10 @@ use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use socket2::{Domain, Socket, Type};
 use str0m::{
     channel::{ChannelConfig, ChannelId},
-    config::{CryptoProvider, DtlsCert, DtlsCertOptions},
+    config::DtlsCert,
     ice::IceCreds,
     net::{DatagramRecv, Protocol as Str0mProtocol, Receive},
-    Candidate, DtlsCertConfig, Input, Rtc,
+    Candidate, Input, Rtc,
 };
 
 use tokio::{
@@ -225,9 +225,9 @@ impl WebRtcTransport {
     ) -> (Rtc, ChannelId) {
         let mut rtc = Rtc::builder()
             .set_ice_lite(true)
-            .set_dtls_cert_config(DtlsCertConfig::PregeneratedCert(self.dtls_cert.clone()))
+            .set_dtls_cert(self.dtls_cert.clone())
             .set_fingerprint_verification(false)
-            .build();
+            .build(std::time::Instant::now());
         rtc.add_local_candidate(Candidate::host(destination, Str0mProtocol::Udp).unwrap());
         rtc.add_remote_candidate(Candidate::host(source, Str0mProtocol::Udp).unwrap());
         rtc.direct_api()
@@ -481,10 +481,14 @@ impl TransportBuilder for WebRtcTransport {
 
         let socket = UdpSocket::from_std(socket.into())?;
         let listen_address = socket.local_addr()?;
-        let dtls_cert = DtlsCert::new(CryptoProvider::OpenSsl, DtlsCertOptions::default());
+        let crypto_provider = str0m::crypto::from_feature_flags();
+        let dtls_cert = crypto_provider
+            .dtls_provider
+            .generate_certificate()
+            .expect("DTLS certificate generation failed");
 
         let listen_multi_addresses = {
-            let fingerprint = dtls_cert.fingerprint().bytes;
+            let fingerprint = dtls_cert.fingerprint();
 
             const MULTIHASH_SHA256_CODE: u64 = 0x12;
             let certificate = Multihash::wrap(MULTIHASH_SHA256_CODE, &fingerprint)
