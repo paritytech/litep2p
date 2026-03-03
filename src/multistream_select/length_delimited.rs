@@ -28,7 +28,7 @@ use std::{
 };
 
 const MAX_LEN_BYTES: u16 = 2;
-const MAX_FRAME_SIZE: u16 = (1 << (MAX_LEN_BYTES * 8 - MAX_LEN_BYTES)) - 1;
+pub(super) const MAX_FRAME_SIZE: u16 = (1 << (MAX_LEN_BYTES * 8 - MAX_LEN_BYTES)) - 1;
 const DEFAULT_BUFFER_SIZE: usize = 64;
 const LOG_TARGET: &str = "litep2p::multistream-select";
 
