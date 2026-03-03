@@ -543,9 +543,12 @@ impl RequestResponseProtocol {
                             ?request_id,
                             "timed out while sending response",
                         ),
-                        Ok(Ok(_)) => feedback.take().map_or((), |feedback| {
-                            let _ = feedback.send(());
-                        }),
+                        Ok(Ok(_)) => {
+                            let _ = substream.close().await;
+                            if let Some(feedback) = feedback.take() {
+                                let _ = feedback.send(());
+                            }
+                        }
                         Ok(Err(error)) => tracing::trace!(
                         target: LOG_TARGET,
                             ?peer,
