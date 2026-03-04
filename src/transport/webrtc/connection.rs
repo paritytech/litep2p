@@ -59,9 +59,6 @@ use std::{
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::webrtc::connection";
 
-/// Low water mark - resume writes when buffered_amount drops below this.
-const BACKPRESSURE_LOW_THRESHOLD: usize = 16 * 1024; // 16 KB
-
 /// Opening channel context.
 #[derive(Debug)]
 struct ChannelContext {
@@ -284,12 +281,11 @@ impl WebRtcConnection {
             WebRtcDialerState::propose(context.protocol.clone(), fallback_names)?;
         let message = WebRtcMessage::encode(message, None);
 
-        let mut channel = self.rtc.channel(channel_id).ok_or(Error::ChannelDoesntExist)?;
-
-        // Set threshold for backpressure event
-        channel.set_buffered_amount_low_threshold(BACKPRESSURE_LOW_THRESHOLD);
-
-        channel.write(true, message.as_ref()).map_err(Error::WebRtc)?;
+        self.rtc
+            .channel(channel_id)
+            .ok_or(Error::ChannelDoesntExist)?
+            .write(true, message.as_ref())
+            .map_err(Error::WebRtc)?;
 
         self.channels.insert(
             channel_id,
@@ -397,12 +393,9 @@ impl WebRtcConnection {
                 | ListenerSelectResult::PendingProtocol { message } => (message, None),
             };
 
-        let mut channel = self.rtc.channel(channel_id).ok_or(Error::ChannelDoesntExist)?;
-
-        // Set threshold for backpressure event
-        channel.set_buffered_amount_low_threshold(BACKPRESSURE_LOW_THRESHOLD);
-
-        channel
+        self.rtc
+            .channel(channel_id)
+            .ok_or(Error::ChannelDoesntExist)?
             .write(
                 true,
                 WebRtcMessage::encode(response.to_vec(), None).as_ref(),
@@ -802,6 +795,42 @@ impl WebRtcConnection {
         Ok(!accepted)
     }
 
+    /// Retry pending writes on all backpressured channels.
+    ///
+    /// Called after `Output::Transmit` when data has left the global buffer,
+    /// giving previously rejected writes a chance to succeed.
+    fn retry_pending_writes(&mut self) {
+        let channel_ids: Vec<_> = self.handles.handles.keys().copied().collect();
+
+        for channel_id in channel_ids {
+            let pending = self.handles.get_mut(&channel_id).and_then(|h| h.take_pending());
+            let Some(SubstreamEvent::Message { payload, flag }) = pending else {
+                continue;
+            };
+
+            match self.on_outbound_data(channel_id, payload.clone(), flag) {
+                Ok(false) =>
+                    if let Some(handle) = self.handles.get_mut(&channel_id) {
+                        handle.set_backpressure(false);
+                    },
+                Ok(true) =>
+                    if let Some(handle) = self.handles.get_mut(&channel_id) {
+                        handle.set_backpressure(true);
+                        handle.queue_pending(SubstreamEvent::Message { payload, flag });
+                    },
+                Err(error) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        peer = ?self.peer,
+                        ?channel_id,
+                        ?error,
+                        "failed to retry pending write",
+                    );
+                }
+            }
+        }
+    }
+
     /// Open outbound substream.
     fn on_open_substream(
         &mut self,
@@ -882,6 +911,7 @@ impl WebRtcConnection {
                     );
 
                     self.socket.try_send_to(&v.contents, v.destination).unwrap();
+                    self.retry_pending_writes();
                     continue;
                 }
                 Output::Event(v) => match v {
@@ -932,54 +962,7 @@ impl WebRtcConnection {
 
                         continue;
                     }
-                    Event::ChannelBufferedAmountLow(channel_id) => {
-                        tracing::trace!(
-                            target: LOG_TARGET,
-                            peer = ?self.peer,
-                            ?channel_id,
-                            "channel buffer low, clearing backpressure",
-                        );
-
-                        if let Some(handle) = self.handles.get_mut(&channel_id) {
-                            // Clear backpressure flag and wake blocked writers
-                            handle.set_backpressure(false);
-
-                            // Drain any pending message
-                            if let Some(SubstreamEvent::Message { payload, flag }) =
-                                handle.take_pending()
-                            {
-                                match self.on_outbound_data(
-                                    channel_id,
-                                    payload.clone(),
-                                    flag,
-                                ) {
-                                    Ok(false) => {} // Drained successfully
-                                    Ok(true) => {
-                                        // Still can't write — re-queue and keep backpressure
-                                        if let Some(handle) =
-                                            self.handles.get_mut(&channel_id)
-                                        {
-                                            handle.set_backpressure(true);
-                                            handle.queue_pending(
-                                                SubstreamEvent::Message { payload, flag },
-                                            );
-                                        }
-                                    }
-                                    Err(error) => {
-                                        tracing::debug!(
-                                            target: LOG_TARGET,
-                                            peer = ?self.peer,
-                                            ?channel_id,
-                                            ?error,
-                                            "failed to drain pending write",
-                                        );
-                                    }
-                                }
-                            }
-                        }
-
-                        continue;
-                    }
+                    Event::ChannelBufferedAmountLow(_) => continue,
                     event => {
                         tracing::debug!(
                             target: LOG_TARGET,
