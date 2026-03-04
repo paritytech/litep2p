@@ -487,6 +487,7 @@ impl OpeningWebRtcConnection {
                             return WebRtcEvent::ConnectionClosed;
                         }
                     },
+                    Event::ChannelBufferedAmountLow(_) => {}
                     event => {
                         tracing::warn!(target: LOG_TARGET, ?event, "unhandled event");
                     }
