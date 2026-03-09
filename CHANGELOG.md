@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.3] - 2026-03-09
+
+This release bumps the rust yamux dependency to 0.13.10 to align with the latest upstream version, which includes important stability fixes.
+
 ## [0.13.2] - 2026-03-02
 
 This is a hotfix release fixing ping protocol panic in debug builds. The release also includes WebRTC fixes.
