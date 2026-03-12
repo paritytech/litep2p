@@ -47,6 +47,9 @@ use std::{
 
 mod config;
 mod handle;
+mod metrics;
+
+pub use metrics::BitswapMetrics;
 
 mod schema {
     pub(super) mod bitswap {
@@ -152,6 +155,9 @@ pub(crate) struct Bitswap {
 
     /// Peers waiting for dial.
     pending_dials: HashSet<PeerId>,
+
+    /// Protocol metrics.
+    metrics: BitswapMetrics,
 }
 
 impl Bitswap {
@@ -165,6 +171,7 @@ impl Bitswap {
             inbound: StreamMap::new(),
             outbound: HashMap::new(),
             pending_dials: HashSet::new(),
+            metrics: config.metrics,
         }
     }
 
@@ -212,6 +219,7 @@ impl Bitswap {
                     .collect::<Vec<_>>();
 
                 if !cids.is_empty() {
+                    self.metrics.on_request_received(cids.len());
                     let _ = self.event_tx.send(BitswapEvent::Request { peer, cids }).await;
                 }
             }
@@ -291,6 +299,16 @@ impl Bitswap {
             }
 
             if !responses.is_empty() {
+                let block_count =
+                    responses.iter().filter(|r| matches!(r, ResponseType::Block { .. })).count();
+                let block_bytes: usize = responses
+                    .iter()
+                    .filter_map(|r| match r {
+                        ResponseType::Block { block, .. } => Some(block.len()),
+                        _ => None,
+                    })
+                    .sum();
+                self.metrics.on_response_received(block_count, block_bytes);
                 let _ = self.event_tx.send(BitswapEvent::Response { peer, responses }).await;
             }
         }
@@ -315,14 +333,15 @@ impl Bitswap {
         for action in actions {
             match action {
                 SubstreamAction::SendRequest(cids) => {
-                    if let Err(error) = send_request(&mut substream, cids).await {
+                    if let Err(error) = send_request(&mut substream, cids, &self.metrics).await {
                         // Drop the substream and all actions in case of sending error.
                         tracing::debug!(target: LOG_TARGET, ?peer, ?error, "bitswap request failed");
                         return;
                     }
                 }
                 SubstreamAction::SendResponse(entries) => {
-                    if let Err(error) = send_response(&mut substream, entries).await {
+                    if let Err(error) = send_response(&mut substream, entries, &self.metrics).await
+                    {
                         // Drop the substream and all actions in case of sending error.
                         tracing::debug!(target: LOG_TARGET, ?peer, ?error, "bitswap response failed");
                         return;
@@ -398,7 +417,7 @@ impl Bitswap {
     async fn on_bitswap_request(&mut self, peer: PeerId, cids: Vec<(Cid, WantType)>) {
         // Try to send request over existing substream first.
         if let Entry::Occupied(mut entry) = self.outbound.entry(peer) {
-            if send_request(entry.get_mut(), cids.clone()).await.is_ok() {
+            if send_request(entry.get_mut(), cids.clone(), &self.metrics).await.is_ok() {
                 return;
             } else {
                 tracing::debug!(
@@ -428,7 +447,7 @@ impl Bitswap {
     async fn on_bitswap_response(&mut self, peer: PeerId, responses: Vec<ResponseType>) {
         // Try to send response over existing substream first.
         if let Entry::Occupied(mut entry) = self.outbound.entry(peer) {
-            if send_response(entry.get_mut(), responses.clone()).await.is_ok() {
+            if send_response(entry.get_mut(), responses.clone(), &self.metrics).await.is_ok() {
                 return;
             } else {
                 tracing::debug!(
@@ -509,7 +528,11 @@ impl Bitswap {
     }
 }
 
-async fn send_request(substream: &mut Substream, cids: Vec<(Cid, WantType)>) -> Result<(), Error> {
+async fn send_request(
+    substream: &mut Substream,
+    cids: Vec<(Cid, WantType)>,
+    metrics: &BitswapMetrics,
+) -> Result<(), Error> {
     let request = schema::bitswap::Message {
         wantlist: Some(schema::bitswap::Wantlist {
             entries: cids
@@ -531,12 +554,31 @@ async fn send_request(substream: &mut Substream, cids: Vec<(Cid, WantType)>) -> 
     match tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
         Err(_) => Err(Error::Timeout),
         Ok(Err(e)) => Err(Error::SubstreamError(e)),
-        Ok(Ok(())) => Ok(()),
+        Ok(Ok(())) => {
+            metrics.on_request_sent();
+            Ok(())
+        }
     }
 }
 
-async fn send_response(substream: &mut Substream, entries: Vec<ResponseType>) -> Result<(), Error> {
+async fn send_response(
+    substream: &mut Substream,
+    entries: Vec<ResponseType>,
+    metrics: &BitswapMetrics,
+) -> Result<(), Error> {
     // Send presences in a separate message to not deal with it when batching blocks below.
+    let dont_have_count = entries
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                ResponseType::Presence {
+                    presence: BlockPresenceType::DontHave,
+                    ..
+                }
+            )
+        })
+        .count();
     if let Some((message, cid_count)) =
         presences_message(entries.iter().filter_map(|entry| match entry {
             ResponseType::Presence { cid, presence } => Some((*cid, *presence)),
@@ -552,7 +594,9 @@ async fn send_response(substream: &mut Substream, entries: Vec<ResponseType>) ->
             match tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
                 Err(_) => return Err(Error::Timeout),
                 Ok(Err(e)) => return Err(Error::SubstreamError(e)),
-                Ok(Ok(())) => {}
+                Ok(Ok(())) => {
+                    metrics.on_presences_sent(cid_count, dont_have_count);
+                }
             }
         } else {
             // This should never happen in practice, but log a warning if the presence message
@@ -576,7 +620,10 @@ async fn send_response(substream: &mut Substream, entries: Vec<ResponseType>) ->
         .collect::<VecDeque<_>>();
 
     while let Some(batch) = extract_next_batch(&mut blocks, config::MAX_BATCH_SIZE) {
-        if let Some((message, block_count)) = blocks_message(batch) {
+        let batch_items: Vec<_> = batch.collect();
+        let batch_bytes: usize = batch_items.iter().map(|(_, b)| b.len()).sum();
+        let batch_count = batch_items.len();
+        if let Some((message, block_count)) = blocks_message(batch_items) {
             if message.len() <= config::MAX_MESSAGE_SIZE {
                 tracing::trace!(
                     target: LOG_TARGET,
@@ -586,7 +633,9 @@ async fn send_response(substream: &mut Substream, entries: Vec<ResponseType>) ->
                 match tokio::time::timeout(WRITE_TIMEOUT, substream.send_framed(message)).await {
                     Err(_) => return Err(Error::Timeout),
                     Ok(Err(e)) => return Err(Error::SubstreamError(e)),
-                    Ok(Ok(())) => {}
+                    Ok(Ok(())) => {
+                        metrics.on_blocks_sent(batch_count, batch_bytes);
+                    }
                 }
             } else {
                 // This should never happen in practice, but log a warning if the blocks message

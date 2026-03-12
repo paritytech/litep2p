@@ -20,7 +20,7 @@
 
 use crate::{
     codec::ProtocolCodec,
-    protocol::libp2p::bitswap::{BitswapCommand, BitswapEvent, BitswapHandle},
+    protocol::libp2p::bitswap::{BitswapCommand, BitswapEvent, BitswapHandle, BitswapMetrics},
     types::protocol::ProtocolName,
     DEFAULT_CHANNEL_SIZE,
 };
@@ -52,6 +52,9 @@ pub struct Config {
 
     /// RX channel for receiving commands from the user.
     pub(super) cmd_rx: Receiver<BitswapCommand>,
+
+    /// Protocol metrics.
+    pub(super) metrics: BitswapMetrics,
 }
 
 impl Config {
@@ -59,6 +62,7 @@ impl Config {
     pub fn new() -> (Self, BitswapHandle) {
         let (event_tx, event_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let (cmd_tx, cmd_rx) = channel(DEFAULT_CHANNEL_SIZE);
+        let metrics = BitswapMetrics::new();
 
         (
             Self {
@@ -66,8 +70,9 @@ impl Config {
                 event_tx,
                 protocol: ProtocolName::from(PROTOCOL_NAME),
                 codec: ProtocolCodec::UnsignedVarint(Some(MAX_MESSAGE_SIZE)),
+                metrics: metrics.clone(),
             },
-            BitswapHandle::new(event_rx, cmd_tx),
+            BitswapHandle::new(event_rx, cmd_tx, metrics),
         )
     }
 }

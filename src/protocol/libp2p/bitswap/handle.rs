@@ -21,7 +21,7 @@
 //! Bitswap handle for communicating with the bitswap protocol implementation.
 
 use crate::{
-    protocol::libp2p::bitswap::{BlockPresenceType, WantType},
+    protocol::libp2p::bitswap::{BitswapMetrics, BlockPresenceType, WantType},
     PeerId,
 };
 
@@ -108,12 +108,28 @@ pub struct BitswapHandle {
 
     /// TX channel for sending commads to `Bitswap`.
     cmd_tx: Sender<BitswapCommand>,
+
+    /// Protocol metrics.
+    metrics: BitswapMetrics,
 }
 
 impl BitswapHandle {
     /// Create new [`BitswapHandle`].
-    pub(super) fn new(event_rx: Receiver<BitswapEvent>, cmd_tx: Sender<BitswapCommand>) -> Self {
-        Self { event_rx, cmd_tx }
+    pub(super) fn new(
+        event_rx: Receiver<BitswapEvent>,
+        cmd_tx: Sender<BitswapCommand>,
+        metrics: BitswapMetrics,
+    ) -> Self {
+        Self {
+            event_rx,
+            cmd_tx,
+            metrics,
+        }
+    }
+
+    /// Get a reference to the protocol metrics.
+    pub fn metrics(&self) -> &BitswapMetrics {
+        &self.metrics
     }
 
     /// Send `request` to `peer`.
