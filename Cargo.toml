@@ -67,7 +67,7 @@ rcgen = { version = "0.14.5", optional = true }
 
 # WebRTC related dependencies. WebRTC is an experimental feature flag. The dependencies must be updated.
 str0m = { version = "0.18.1", optional = true, features = ["openssl"] }
-# str0m = { git = "https://github.com/chainsafe/str0m", rev = "0dd05fddf49c5d56b43538a749d3e2681fa9f699", optional = true }
+# str0m = { git = "https://github.com/algesten/str0m", rev = "c1e24a5cf408426bd37f1a556dd2c40db679710a", optional = true }
 # End of WebRTC related dependencies.
 
 # Fuzzing related dependencies.

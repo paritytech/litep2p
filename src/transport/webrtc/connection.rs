@@ -383,7 +383,47 @@ impl WebRtcConnection {
             "handle opening inbound substream",
         );
 
-        let payload = WebRtcMessage::decode(&data)?.payload.ok_or(Error::InvalidData)?;
+        let rtc_message = WebRtcMessage::decode(&data)?;
+
+        // During negotiation the remote may send protobuf messages that carry only a flag
+        // (e.g. FIN, RESET_STREAM) with no multistream-select payload, or an empty payload
+        // alongside a flag. Treat close-related flags as fatal and skip empty payloads so
+        // the channel stays open for the next protocol proposal.
+        match (&rtc_message.flag, &rtc_message.payload) {
+            (Some(Flag::ResetStream | Flag::StopSending), _) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    peer = ?self.peer,
+                    ?channel_id,
+                    flag = ?rtc_message.flag,
+                    "remote sent close flag during inbound negotiation",
+                );
+                return Err(Error::InvalidState);
+            }
+            (_, None) => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    peer = ?self.peer,
+                    ?channel_id,
+                    flag = ?rtc_message.flag,
+                    "ignoring empty payload during inbound negotiation, waiting for next message",
+                );
+                return Ok(None);
+            }
+            (_, Some(p)) if p.is_empty() => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    peer = ?self.peer,
+                    ?channel_id,
+                    flag = ?rtc_message.flag,
+                    "ignoring empty payload during inbound negotiation, waiting for next message",
+                );
+                return Ok(None);
+            }
+            _ => {}
+        }
+
+        let payload = rtc_message.payload.expect("non-empty payload checked above");
         let protocols = self.protocol_set.protocols_with_keep_alives();
         let protocol_names = protocols.keys().cloned().collect();
         let (response, negotiated) =
