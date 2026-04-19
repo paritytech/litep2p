@@ -467,8 +467,10 @@ impl ConnectionRecord {
 
     /// Ensures the peer ID is present in the address.
     fn ensure_peer_id(peer: PeerId, mut address: Multiaddr) -> Multiaddr {
+        let multiaddr_peer_id: multiaddr::PeerId = peer.into();
+
         if let Some(Protocol::P2p(multihash)) = address.iter().last() {
-            if multihash != *peer.as_ref() {
+            if multihash != multiaddr_peer_id {
                 tracing::warn!(
                     target: LOG_TARGET,
                     ?address,
@@ -477,12 +479,12 @@ impl ConnectionRecord {
                 );
 
                 address.pop();
-                address.push(Protocol::P2p(*peer.as_ref()));
+                address.push(Protocol::P2p(multiaddr_peer_id));
             }
 
             address
         } else {
-            address.with(Protocol::P2p(*peer.as_ref()))
+            address.with(Protocol::P2p(multiaddr_peer_id))
         }
     }
 }
@@ -959,10 +961,11 @@ mod tests {
 
     #[test]
     fn ensure_peer_id_unchanged_when_correct() {
-        let peer = PeerId::random();
-        let address: Multiaddr = format!("/ip4/1.2.3.4/tcp/8080/p2p/{peer}")
-            .parse()
-            .unwrap();
+        let peer: PeerId = "12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q".parse().unwrap();
+        let address: Multiaddr =
+            "/ip4/1.2.3.4/tcp/8080/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .unwrap();
 
         let record = ConnectionRecord::new(peer, address.clone(), ConnectionId::from(0));
 
@@ -972,12 +975,12 @@ mod tests {
 
     #[test]
     fn ensure_peer_id_replaced_when_wrong() {
-        let peer = PeerId::random();
-        let wrong_peer = PeerId::random();
+        let peer: PeerId = "12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q".parse().unwrap();
         // Address ends with a *different* peer's ID.
-        let address: Multiaddr = format!("/ip4/1.2.3.4/tcp/8080/p2p/{wrong_peer}")
-            .parse()
-            .unwrap();
+        let address: Multiaddr =
+            "/ip4/1.2.3.4/tcp/8080/p2p/12D3KooWPGxxxQiBEBZ52RY31Z2chn4xsDrGCMouZ88izJrak2T1"
+                .parse()
+                .unwrap();
 
         let record = ConnectionRecord::new(peer, address, ConnectionId::from(0));
 

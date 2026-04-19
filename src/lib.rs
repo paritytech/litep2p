@@ -61,7 +61,7 @@ use types::ConnectionId;
 
 pub use bandwidth::BandwidthSink;
 pub use error::Error;
-pub use peer_id::PeerId;
+pub use peer_id::{ParseError, PeerId};
 use std::{collections::HashSet, sync::Arc};
 pub use types::protocol::ProtocolName;
 
@@ -340,7 +340,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with(Protocol::P2p(*local_peer_id.as_ref())));
+                listen_addresses.push(address.with(Protocol::P2p(local_peer_id.into())));
             }
 
             transport_manager.register_transport(SupportedTransport::Tcp, Box::new(transport));
@@ -355,7 +355,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with(Protocol::P2p(*local_peer_id.as_ref())));
+                listen_addresses.push(address.with(Protocol::P2p(local_peer_id.into())));
             }
 
             transport_manager.register_transport(SupportedTransport::Quic, Box::new(transport));
@@ -370,7 +370,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with(Protocol::P2p(*local_peer_id.as_ref())));
+                listen_addresses.push(address.with(Protocol::P2p(local_peer_id.into())));
             }
 
             transport_manager.register_transport(SupportedTransport::WebRtc, Box::new(transport));
@@ -386,7 +386,7 @@ impl Litep2p {
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with(Protocol::P2p(*local_peer_id.as_ref())));
+                listen_addresses.push(address.with(Protocol::P2p(local_peer_id.into())));
             }
 
             transport_manager
@@ -542,7 +542,6 @@ mod tests {
         Litep2p, Litep2pEvent, PeerId,
     };
     use multiaddr::{Multiaddr, Protocol};
-    use multihash::Multihash;
     use std::net::Ipv4Addr;
 
     #[tokio::test]
@@ -659,9 +658,7 @@ mod tests {
         let address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(255, 254, 253, 252)))
             .with(Protocol::Tcp(8888))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(peer.into()));
 
         let mut litep2p = Litep2p::new(config).unwrap();
         litep2p.dial_address(address.clone()).await.unwrap();

@@ -34,7 +34,6 @@ use crate::{
 };
 
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 
 /// Number of k-buckets.
 const NUM_BUCKETS: usize = 256;
@@ -190,12 +189,12 @@ impl RoutingTable {
         // TODO: https://github.com/paritytech/litep2p/issues/337 this has to be moved elsewhere at some point
         let addresses: Vec<Multiaddr> = addresses
             .into_iter()
-            .filter_map(|address| {
+            .map(|address| {
                 let last = address.iter().last();
                 if std::matches!(last, Some(Protocol::P2p(_))) {
-                    Some(address)
+                    address
                 } else {
-                    Some(address.with(Protocol::P2p(Multihash::from_bytes(&peer.to_bytes()).ok()?)))
+                    address.with(Protocol::P2p(peer.into()))
                 }
             })
             .collect();
@@ -259,7 +258,7 @@ enum ClosestBucketsIterState {
     /// The starting state of the iterator yields the first bucket index and
     /// then transitions to `ZoomIn`.
     Start(BucketIndex),
-    /// The iterator "zooms in" to to yield the next bucket cotaining nodes that
+    /// The iterator "zooms in" to to yield the next bucket containing nodes that
     /// are incrementally closer to the local node but further from the `target`.
     /// These buckets are identified by a `1` in the corresponding bit position
     /// of the distance bit string. When bucket `0` is reached, the iterator

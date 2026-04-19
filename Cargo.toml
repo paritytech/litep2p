@@ -17,7 +17,7 @@ prost-build = "0.14"
 async-trait = "0.1.88"
 bs58 = "0.5.1"
 bytes = "1.11.1"
-cid = "0.11.1"
+cid = "0.11.2"
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 futures = "0.3.27"
 futures-timer = "3.0.3"
@@ -25,8 +25,11 @@ indexmap = { version = "2.9.0", features = ["std"] }
 ip_network = "0.4"
 libc = "0.2.158"
 mockall = "0.13.1"
-multiaddr = "0.17.0"
-multihash = { version = "0.17.0", default-features = false, features = ["std", "multihash-impl", "identity", "sha2", "sha3", "blake2b"] }
+multiaddr = "0.18.2"
+multihash = { version = "0.19.4", default-features = false, features = ["std"] }
+multihash-codetable = { version = "0.2.1", default-features = false, features = [
+    "sha2",
+] }
 network-interface = "2.0.1"
 parking_lot = "0.12.3"
 pin-project = "1.1.10"
@@ -36,12 +39,22 @@ serde = "1.0.158"
 sha2 = "0.10.9"
 simple-dns = "0.11.0"
 smallvec = "1.15.0"
-snow = { version = "0.9.3", features = ["ring-resolver"], default-features = false }
+snow = { version = "0.9.3", features = [
+    "ring-resolver",
+], default-features = false }
 socket2 = { version = "0.5.9", features = ["all"] }
 thiserror = "2.0.12"
 tokio-stream = "0.1.17"
 tokio-util = { version = "0.7.15", features = ["compat", "io", "codec"] }
-tokio = { version = "1.45.0", features = ["rt", "net", "io-util", "time", "macros", "sync", "parking_lot"] }
+tokio = { version = "1.45.0", features = [
+    "rt",
+    "net",
+    "io-util",
+    "time",
+    "macros",
+    "sync",
+    "parking_lot",
+] }
 tracing = { version = "0.1.40", features = ["log"] }
 hickory-resolver = "0.25.2"
 uint = "0.10.0"
@@ -54,12 +67,20 @@ zeroize = "1.8.1"
 yamux = "0.13.10"
 
 # Websocket related dependencies.
-tokio-tungstenite = { version = "0.27.0", features = ["rustls-tls-native-roots", "url"], optional = true }
+tokio-tungstenite = { version = "0.27.0", features = [
+    "rustls-tls-native-roots",
+    "url",
+], optional = true }
 # End of websocket related dependencies.
 
 # Quic related dependencies. Quic is an experimental feature flag. The dependencies must be updated.
-quinn = { version = "0.9.3", default-features = false, features = ["tls-rustls", "runtime-tokio"], optional = true }
-rustls = { version = "0.20.7", default-features = false, features = ["dangerous_configuration"], optional = true }
+quinn = { version = "0.9.3", default-features = false, features = [
+    "tls-rustls",
+    "runtime-tokio",
+], optional = true }
+rustls = { version = "0.20.7", default-features = false, features = [
+    "dangerous_configuration",
+], optional = true }
 ring = { version = "0.17.14", optional = true }
 webpki = { version = "0.22.4", optional = true }
 rcgen = { version = "0.14.5", optional = true }
@@ -70,25 +91,24 @@ str0m = { version = "0.11.1", optional = true }
 # End of WebRTC related dependencies.
 
 # Fuzzing related dependencies.
-serde_millis = {version = "0.1", optional = true}
+serde_millis = { version = "0.1", optional = true }
 enum-display = "0.1.4"
 # End of fuzzing related dependencies.
 
 [dev-dependencies]
-libp2p = { version = "0.51.4", features = [
+libp2p = { version = "0.56.0", features = [
     "tokio",
     "dns",
     "identify",
     "macros",
-    "mplex",
     "noise",
     "ping",
     "tcp",
     "kad",
     "websocket",
     "yamux",
+    "quic",
 ]}
-libp2p-quic = { version = "0.7.0-alpha.3", features = ["tokio"] }
 quickcheck = "1.0.3"
 serde_json = "1.0.140"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
@@ -100,7 +120,14 @@ hex-literal = "1.0.0"
 websocket = ["dep:tokio-tungstenite"]
 
 # Fuzzing feature flags.
-fuzz = ["serde/derive", "serde/rc", "bytes/serde", "dep:serde_millis", "cid/serde", "multihash/serde"]
+fuzz = [
+    "serde/derive",
+    "serde/rc",
+    "bytes/serde",
+    "dep:serde_millis",
+    "cid/serde",
+    "multihash/serde",
+]
 
 # Unstable / experimental feature flags. These features are not guaranteed to be stable and may change in the future.
 # They are not yet suitable for production use-cases and should be used with caution.
