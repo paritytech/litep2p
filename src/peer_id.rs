@@ -259,7 +259,8 @@ impl FromStr for PeerId {
 mod tests {
     use crate::{crypto::ed25519::Keypair, PeerId};
     use multiaddr::{Multiaddr, Protocol};
-    use multihash::Multihash;
+    use multihash::{Code, Multihash};
+    use super::MAX_INLINE_KEY_LENGTH;
 
     #[test]
     fn peer_id_is_public_key() {
@@ -350,5 +351,112 @@ mod tests {
             PeerId::from_multihash(Multihash::from_bytes(&bytes).unwrap()).map_err(From::from)
         }
         let _error = test().unwrap_err();
+    }
+
+    // --- from_public_key_protobuf ---
+
+    #[test]
+    fn from_public_key_protobuf_small_key_uses_identity_hash() {
+        let key = Keypair::generate();
+        let enc = crate::crypto::PublicKey::from(key.public()).to_protobuf_encoding();
+        assert!(enc.len() <= MAX_INLINE_KEY_LENGTH, "ed25519 protobuf key must fit inline");
+
+        let peer_id = PeerId::from_public_key_protobuf(&enc);
+        assert_eq!(peer_id.as_ref().code(), u64::from(Code::Identity));
+    }
+
+    #[test]
+    fn from_public_key_protobuf_identity_hash_stores_raw_bytes_not_rehash() {
+        // The identity multihash must store the key bytes verbatim, not hash them.
+        let key = Keypair::generate();
+        let enc = crate::crypto::PublicKey::from(key.public()).to_protobuf_encoding();
+
+        let peer_id = PeerId::from_public_key_protobuf(&enc);
+        assert_eq!(peer_id.as_ref().digest(), enc.as_slice());
+    }
+
+    #[test]
+    fn from_public_key_protobuf_large_key_uses_sha256() {
+        // Any encoding longer than MAX_INLINE_KEY_LENGTH (42) must use SHA-256.
+        let enc = vec![0u8; MAX_INLINE_KEY_LENGTH + 1];
+        let peer_id = PeerId::from_public_key_protobuf(&enc);
+        assert_eq!(peer_id.as_ref().code(), u64::from(Code::Sha2_256));
+    }
+
+    #[test]
+    fn from_public_key_protobuf_sha256_digest_is_hash_of_key_not_key_itself() {
+        // SHA-256 path must hash the key, not store it verbatim.
+        let enc = vec![0u8; MAX_INLINE_KEY_LENGTH + 1];
+        let peer_id = PeerId::from_public_key_protobuf(&enc);
+        // digest is 32 bytes (SHA-256 output), not the original key length
+        assert_eq!(peer_id.as_ref().digest().len(), 32);
+        assert_ne!(peer_id.as_ref().digest(), enc.as_slice());
+    }
+
+    // --- is_public_key ---
+
+    #[test]
+    fn is_public_key_returns_false_for_different_key() {
+        let key1 = Keypair::generate().public();
+        let key2 = Keypair::generate().public();
+        let peer_id = key1.to_peer_id();
+        assert_eq!(peer_id.is_public_key(&key2.into()), Some(false));
+    }
+
+    // --- from_multihash ---
+
+    #[test]
+    fn from_multihash_rejects_unsupported_code() {
+        // Code 0x16 (sha3-256) is not a valid peer ID hash.
+        let bytes = [
+            0x16, 0x20, 0x64, 0x4b, 0xcc, 0x7e, 0x56, 0x43, 0x73, 0x04, 0x09, 0x99, 0xaa, 0xc8,
+            0x9e, 0x76, 0x22, 0xf3, 0xca, 0x71, 0xfb, 0xa1, 0xd9, 0x72, 0xfd, 0x94, 0xa3, 0x1c,
+            0x3b, 0xfb, 0xf2, 0x4e, 0x39, 0x38,
+        ];
+        let mh = Multihash::from_bytes(&bytes).unwrap();
+        assert!(PeerId::from_multihash(mh).is_err());
+    }
+
+    // --- from_bytes ---
+
+    #[test]
+    fn from_bytes_rejects_unsupported_multihash_code() {
+        let bytes = [
+            0x16, 0x20, 0x64, 0x4b, 0xcc, 0x7e, 0x56, 0x43, 0x73, 0x04, 0x09, 0x99, 0xaa, 0xc8,
+            0x9e, 0x76, 0x22, 0xf3, 0xca, 0x71, 0xfb, 0xa1, 0xd9, 0x72, 0xfd, 0x94, 0xa3, 0x1c,
+            0x3b, 0xfb, 0xf2, 0x4e, 0x39, 0x38,
+        ];
+        assert!(PeerId::from_bytes(&bytes).is_err());
+    }
+
+    // --- identity and sha256 peer IDs roundtrip ---
+
+    #[test]
+    fn identity_peer_id_roundtrip_through_multiaddr() {
+        // PeerId::random() uses identity hash; verify it survives a multiaddr roundtrip.
+        let peer = PeerId::random();
+        assert_eq!(peer.as_ref().code(), u64::from(Code::Identity));
+
+        let addr = Multiaddr::empty()
+            .with(Protocol::Ip4("127.0.0.1".parse().unwrap()))
+            .with(Protocol::Tcp(1234))
+            .with(Protocol::P2p(Multihash::from(peer)));
+
+        assert_eq!(peer, PeerId::try_from_multiaddr(&addr).unwrap());
+    }
+
+    #[test]
+    fn sha256_peer_id_roundtrip_through_multiaddr() {
+        // Use a large synthetic key encoding to force sha256.
+        let enc = vec![42u8; MAX_INLINE_KEY_LENGTH + 1];
+        let peer = PeerId::from_public_key_protobuf(&enc);
+        assert_eq!(peer.as_ref().code(), u64::from(Code::Sha2_256));
+
+        let addr = Multiaddr::empty()
+            .with(Protocol::Ip4("127.0.0.1".parse().unwrap()))
+            .with(Protocol::Tcp(1234))
+            .with(Protocol::P2p(Multihash::from(peer)));
+
+        assert_eq!(peer, PeerId::try_from_multiaddr(&addr).unwrap());
     }
 }

@@ -942,4 +942,46 @@ mod tests {
             }
         );
     }
+
+    // --- ensure_peer_id (tested via ConnectionRecord::new) ---
+
+    #[test]
+    fn ensure_peer_id_appended_when_missing() {
+        let peer = PeerId::random();
+        // Address without /p2p component.
+        let address: Multiaddr = "/ip4/1.2.3.4/tcp/8080".parse().unwrap();
+
+        let record = ConnectionRecord::new(peer, address, ConnectionId::from(0));
+
+        // The stored address must end with the correct /p2p peer ID.
+        assert_eq!(PeerId::try_from_multiaddr(&record.address), Some(peer));
+    }
+
+    #[test]
+    fn ensure_peer_id_unchanged_when_correct() {
+        let peer = PeerId::random();
+        let address: Multiaddr = format!("/ip4/1.2.3.4/tcp/8080/p2p/{peer}")
+            .parse()
+            .unwrap();
+
+        let record = ConnectionRecord::new(peer, address.clone(), ConnectionId::from(0));
+
+        // Address must be identical — no modification.
+        assert_eq!(record.address, address);
+    }
+
+    #[test]
+    fn ensure_peer_id_replaced_when_wrong() {
+        let peer = PeerId::random();
+        let wrong_peer = PeerId::random();
+        // Address ends with a *different* peer's ID.
+        let address: Multiaddr = format!("/ip4/1.2.3.4/tcp/8080/p2p/{wrong_peer}")
+            .parse()
+            .unwrap();
+
+        let record = ConnectionRecord::new(peer, address, ConnectionId::from(0));
+
+        // The wrong peer ID must have been replaced with the correct one.
+        assert_eq!(PeerId::try_from_multiaddr(&record.address), Some(peer));
+    }
 }
