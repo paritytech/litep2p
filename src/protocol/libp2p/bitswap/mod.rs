@@ -662,21 +662,18 @@ fn extract_next_batch<'a>(
 ) -> Option<Drain<'a, (Cid, Vec<u8>)>> {
     // Get rid of oversized blocks to not stall the processing by not being able to queue them.
     loop {
-        if let Some(block) = blocks.front() {
-            if block.1.len() > max_batch_size {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    cid = block.0.to_string(),
-                    size = block.1.len(),
-                    max_batch_size,
-                    "outgoing Bitswap block exceeded max batch size",
-                );
-                blocks.pop_front();
-            } else {
-                break;
-            }
+        let block = blocks.front()?;
+        if block.1.len() > max_batch_size {
+            tracing::warn!(
+                target: LOG_TARGET,
+                cid = block.0.to_string(),
+                size = block.1.len(),
+                max_batch_size,
+                "outgoing Bitswap block exceeded max batch size",
+            );
+            blocks.pop_front();
         } else {
-            return None;
+            break;
         }
     }
 
@@ -741,7 +738,7 @@ mod tests {
         let block2 = vec![0x02; 10];
         let block3 = vec![0x03; 10];
 
-        let blocks = vec![
+        let blocks = [
             (cid(&block1), block1.clone()),
             (cid(&block2), block2.clone()),
             (cid(&block3), block3.clone()),
@@ -770,7 +767,7 @@ mod tests {
         let block2 = vec![0x02; 9];
         let block3 = vec![0x03; 10];
 
-        let blocks = vec![
+        let blocks = [
             (cid(&block1), block1.clone()),
             (cid(&block2), block2.clone()),
             (cid(&block3), block3.clone()),
@@ -799,7 +796,7 @@ mod tests {
         let block2 = vec![0x02; 101];
         let block3 = vec![0x03; 10];
 
-        let blocks = vec![
+        let blocks = [
             (cid(&block1), block1.clone()),
             (cid(&block2), block2.clone()),
             (cid(&block3), block3.clone()),

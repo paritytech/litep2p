@@ -449,20 +449,16 @@ async fn litep2p_add_provider_to_libp2p() {
             _ = litep2p.next_event() => {}
             _ = litep2p_kad.next() => {}
             event = libp2p.select_next_some() => {
-                if let SwarmEvent::Behaviour(BehaviourEvent::Kad(event)) = event {
-                    if let Libp2pKademliaEvent::InboundRequest{request} = event {
-                        if let InboundRequest::AddProvider{..} = request {
-                            let store = libp2p.behaviour_mut().kad.store_mut();
-                            let mut providers = store.providers(&key.clone().into());
-                            assert_eq!(providers.len(), 1);
-                            let record = providers.pop().unwrap();
+                if let SwarmEvent::Behaviour(BehaviourEvent::Kad(Libp2pKademliaEvent::InboundRequest{ request: InboundRequest::AddProvider{..} })) = event {
+                    let store = libp2p.behaviour_mut().kad.store_mut();
+                    let mut providers = store.providers(&key.clone().into());
+                    assert_eq!(providers.len(), 1);
+                    let record = providers.pop().unwrap();
 
-                            assert_eq!(record.key.as_ref(), key);
-                            assert_eq!(record.provider, litep2p_peer_id);
-                            assert_eq!(record.addresses, vec![litep2p_public_addr.clone()]);
-                            break
-                        }
-                    }
+                    assert_eq!(record.key.as_ref(), key);
+                    assert_eq!(record.provider, litep2p_peer_id);
+                    assert_eq!(record.addresses, vec![litep2p_public_addr.clone()]);
+                    break
                 }
             }
         }

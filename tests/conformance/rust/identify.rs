@@ -140,7 +140,7 @@ async fn identify_works() {
                         tracing::info!("Listening on {address:?}")
                     }
                     SwarmEvent::Behaviour(MyBehaviourEvent::Ping(_event)) => {},
-                    SwarmEvent::Behaviour(MyBehaviourEvent::Identify(event)) => if let identify::Event::Received { info, .. } = event {
+                    SwarmEvent::Behaviour(MyBehaviourEvent::Identify(identify::Event::Received { info, .. })) => {
                         libp2p_done = true;
 
                         assert_eq!(info.protocol_version, "proto v1");

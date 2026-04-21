@@ -399,10 +399,7 @@ impl WebRtcDialerState {
             Err(_) => return Err(error::NegotiationError::ParseError(ParseError::InvalidData)),
         };
 
-        match drain_trailing_protocols(remaining) {
-            Ok(protos) => protocols.extend(protos),
-            Err(error) => return Err(error),
-        }
+        protocols.extend(drain_trailing_protocols(remaining)?);
 
         let mut protocol_iter = protocols.into_iter();
         loop {
@@ -625,12 +622,12 @@ mod tests {
                 send_message.push(len as u8);
                 send_message.extend_from_slice(multistream);
 
-                server_connection.write_all(&mut send_message).await.unwrap();
+                server_connection.write_all(&send_message).await.unwrap();
 
                 let mut send_message = Vec::new();
                 send_message.push(proto_len as u8);
                 send_message.extend_from_slice(proto);
-                server_connection.write_all(&mut send_message).await.unwrap();
+                server_connection.write_all(&send_message).await.unwrap();
 
                 // Handle handshake.
                 match version {
@@ -702,14 +699,14 @@ mod tests {
             send_message.push(len as u8);
             send_message.extend_from_slice(multistream);
 
-            server_connection.write_all(&mut send_message).await.unwrap();
+            server_connection.write_all(&send_message).await.unwrap();
 
             // We must send the back the multistream packet again.
             let mut send_message = Vec::new();
             send_message.push(len as u8);
             send_message.extend_from_slice(multistream);
 
-            server_connection.write_all(&mut send_message).await.unwrap();
+            server_connection.write_all(&send_message).await.unwrap();
         });
 
         let client = tokio::spawn(async move {
@@ -759,14 +756,14 @@ mod tests {
             send_message.push(len as u8);
             send_message.extend_from_slice(multistream);
 
-            server_connection.write_all(&mut send_message).await.unwrap();
+            server_connection.write_all(&send_message).await.unwrap();
 
             // We must send the back the multistream packet again.
             let mut send_message = Vec::new();
             send_message.push(len as u8);
             send_message.extend_from_slice(multistream);
 
-            server_connection.write_all(&mut send_message).await.unwrap();
+            server_connection.write_all(&send_message).await.unwrap();
         });
 
         let client = tokio::spawn(async move {
@@ -797,11 +794,11 @@ mod tests {
 
         let mut bytes = BytesMut::with_capacity(32);
         bytes.put_u8(MSG_MULTISTREAM_1_0.len() as u8);
-        let _ = Message::Header(HeaderLine::V1).encode(&mut bytes).unwrap();
+        Message::Header(HeaderLine::V1).encode(&mut bytes).unwrap();
 
         let proto = Protocol::try_from(&b"/13371338/proto/1"[..]).expect("valid protocol name");
         bytes.put_u8((proto.as_ref().len() + 1) as u8); // + 1 for \n
-        let _ = Message::Protocol(proto).encode(&mut bytes).unwrap();
+        Message::Protocol(proto).encode(&mut bytes).unwrap();
 
         let expected_message = bytes.freeze().to_vec();
 
@@ -818,15 +815,15 @@ mod tests {
 
         let mut bytes = BytesMut::with_capacity(32);
         bytes.put_u8(MSG_MULTISTREAM_1_0.len() as u8);
-        let _ = Message::Header(HeaderLine::V1).encode(&mut bytes).unwrap();
+        Message::Header(HeaderLine::V1).encode(&mut bytes).unwrap();
 
         let proto1 = Protocol::try_from(&b"/13371338/proto/1"[..]).expect("valid protocol name");
         bytes.put_u8((proto1.as_ref().len() + 1) as u8); // + 1 for \n
-        let _ = Message::Protocol(proto1).encode(&mut bytes).unwrap();
+        Message::Protocol(proto1).encode(&mut bytes).unwrap();
 
         let proto2 = Protocol::try_from(&b"/sup/proto/1"[..]).expect("valid protocol name");
         bytes.put_u8((proto2.as_ref().len() + 1) as u8); // + 1 for \n
-        let _ = Message::Protocol(proto2).encode(&mut bytes).unwrap();
+        Message::Protocol(proto2).encode(&mut bytes).unwrap();
 
         let expected_message = bytes.freeze().to_vec();
 
@@ -858,7 +855,7 @@ mod tests {
         let mut bytes = BytesMut::with_capacity(proto.len() + 2);
         bytes.put_u8((proto.len() + 1) as u8);
 
-        let response = Message::Protocol(Protocol::try_from(&proto[..]).unwrap())
+        Message::Protocol(Protocol::try_from(&proto[..]).unwrap())
             .encode(&mut bytes)
             .expect("valid message encodes");
 

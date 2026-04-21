@@ -1126,7 +1126,7 @@ mod tests {
         let mut cx = Context::from_waker(&waker);
 
         match Pin::new(&mut noise_socket).poll_write(&mut cx, &large_buffer) {
-            Poll::Ready(Ok(n)) if n == 512 => {}
+            Poll::Ready(Ok(512)) => {}
             state => panic!("Expected Ok(512), got {:?}", state),
         }
 
