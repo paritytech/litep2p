@@ -295,7 +295,7 @@ impl AddressStore {
     /// Return the available addresses sorted by score.
     pub fn addresses(&self, limit: usize) -> Vec<Multiaddr> {
         let mut records = self.addresses.values().cloned().collect::<Vec<_>>();
-        records.sort_by(|lhs, rhs| rhs.score.cmp(&lhs.score));
+        records.sort_by_key(|rhs| std::cmp::Reverse(rhs.score));
         records.into_iter().take(limit).map(|record| record.address).collect()
     }
 }
