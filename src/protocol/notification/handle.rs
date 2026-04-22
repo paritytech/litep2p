@@ -170,6 +170,12 @@ impl NotificationSink {
 /// Handle allowing the user protocol to interact with the notification protocol.
 #[derive(Debug)]
 pub struct NotificationHandle {
+    /// Protocol name served by this handle.
+    protocol_name: ProtocolName,
+
+    /// Configured synchronous channel size.
+    sync_channel_size: usize,
+
     /// RX channel for receiving events from the notification protocol.
     event_rx: Receiver<InnerNotificationEvent>,
 
@@ -195,12 +201,16 @@ pub struct NotificationHandle {
 impl NotificationHandle {
     /// Create new [`NotificationHandle`].
     pub(crate) fn new(
+        protocol_name: ProtocolName,
+        sync_channel_size: usize,
         event_rx: Receiver<InnerNotificationEvent>,
         notif_rx: Receiver<(PeerId, BytesMut)>,
         command_tx: Sender<NotificationCommand>,
         handshake: Arc<RwLock<Vec<u8>>>,
     ) -> Self {
         Self {
+            protocol_name,
+            sync_channel_size,
             event_rx,
             notif_rx,
             command_tx,
@@ -401,9 +411,34 @@ impl NotificationHandle {
                 Err(error) => match error {
                     NotificationError::NoConnection => Err(NotificationError::NoConnection),
                     NotificationError::ChannelClogged => {
-                        let _ = self.clogged.insert(peer).then(|| {
-                            self.command_tx.try_send(NotificationCommand::ForceClose { peer })
-                        });
+                        if self.clogged.insert(peer) {
+                            match self.command_tx.try_send(NotificationCommand::ForceClose { peer })
+                            {
+                                Ok(()) => tracing::warn!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    protocol = %self.protocol_name,
+                                    sync_channel_size = self.sync_channel_size,
+                                    "sync notification channel clogged, queueing force close",
+                                ),
+                                Err(error) => tracing::warn!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    protocol = %self.protocol_name,
+                                    sync_channel_size = self.sync_channel_size,
+                                    ?error,
+                                    "sync notification channel clogged, failed to queue force close",
+                                ),
+                            }
+                        } else {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                protocol = %self.protocol_name,
+                                sync_channel_size = self.sync_channel_size,
+                                "sync notification channel still clogged, force close already queued",
+                            );
+                        }
 
                         Err(NotificationError::ChannelClogged)
                     }
@@ -479,7 +514,14 @@ impl Stream for NotificationHandle {
                     }
                     InnerNotificationEvent::NotificationStreamClosed { peer } => {
                         self.peers.remove(&peer);
-                        self.clogged.remove(&peer);
+                        if self.clogged.remove(&peer) {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                protocol = %self.protocol_name,
+                                "cleared clogged state after notification stream closed",
+                            );
+                        }
 
                         return Poll::Ready(Some(NotificationEvent::NotificationStreamClosed {
                             peer,
@@ -501,22 +543,24 @@ impl Stream for NotificationHandle {
                             handshake,
                         }));
                     }
-                    InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } =>
+                    InnerNotificationEvent::NotificationStreamOpenFailure { peer, error } => {
                         return Poll::Ready(Some(
                             NotificationEvent::NotificationStreamOpenFailure { peer, error },
-                        )),
+                        ))
+                    }
                 },
             }
 
             match futures::ready!(self.notif_rx.poll_recv(cx)) {
                 None => return Poll::Ready(None),
-                Some((peer, notification)) =>
+                Some((peer, notification)) => {
                     if self.peers.contains_key(&peer) {
                         return Poll::Ready(Some(NotificationEvent::NotificationReceived {
                             peer,
                             notification,
                         }));
-                    },
+                    }
+                }
             }
         }
     }
