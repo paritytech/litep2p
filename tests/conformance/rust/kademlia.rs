@@ -449,7 +449,11 @@ async fn litep2p_add_provider_to_libp2p() {
             _ = litep2p.next_event() => {}
             _ = litep2p_kad.next() => {}
             event = libp2p.select_next_some() => {
-                if let SwarmEvent::Behaviour(BehaviourEvent::Kad(Libp2pKademliaEvent::InboundRequest{ request: InboundRequest::AddProvider{..} })) = event {
+                if let SwarmEvent::Behaviour(BehaviourEvent::Kad(
+                    Libp2pKademliaEvent::InboundRequest {
+                        request: InboundRequest::AddProvider { .. },
+                    },
+                )) = event {
                     let store = libp2p.behaviour_mut().kad.store_mut();
                     let mut providers = store.providers(&key.clone().into());
                     assert_eq!(providers.len(), 1);
