@@ -923,7 +923,7 @@ mod tests {
         let (mut substream, mut handle) = Substream::new();
 
         // Write some data
-        substream.write_all(&vec![1u8; 100]).await.unwrap();
+        substream.write_all(&[1u8; 100]).await.unwrap();
 
         // Spawn shutdown in background since it will wait for FIN_ACK
         let shutdown_task = tokio::spawn(async move {
@@ -981,7 +981,7 @@ mod tests {
         assert!(matches!(*handle.state.lock(), State::SendClosed));
 
         // Attempting to write should fail
-        match substream.write_all(&vec![0u8; 100]).await {
+        match substream.write_all(&[0u8; 100]).await {
             Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe),
             _ => panic!("write should have failed"),
         }
@@ -1007,7 +1007,7 @@ mod tests {
         assert!(matches!(*handle.state.lock(), State::SendClosed));
 
         // Attempting to write should fail
-        match substream.write_all(&vec![0u8; 100]).await {
+        match substream.write_all(&[0u8; 100]).await {
             Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe),
             _ => panic!("write should have failed"),
         }
@@ -1193,7 +1193,7 @@ mod tests {
         let (mut substream, mut handle) = Substream::new();
 
         // Write some data
-        substream.write_all(&vec![1u8; 100]).await.unwrap();
+        substream.write_all(&[1u8; 100]).await.unwrap();
 
         // Spawn shutdown in background
         let shutdown_task = tokio::spawn(async move {
@@ -1318,7 +1318,7 @@ mod tests {
         *handle.state.lock() = State::Closing;
 
         // Attempt to write should fail
-        let result = substream.write_all(&vec![1u8; 100]).await;
+        let result = substream.write_all(&[1u8; 100]).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::BrokenPipe);
     }

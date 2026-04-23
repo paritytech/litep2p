@@ -1205,7 +1205,7 @@ async fn unspecified_listen_address_tcp() {
         }
     });
 
-    tokio::spawn(async move { while let Some(_) = litep2p1.next_event().await {} });
+    tokio::spawn(async move { while litep2p1.next_event().await.is_some() {} });
 
     let network_interfaces = NetworkInterface::show().unwrap();
     for iface in network_interfaces.iter() {
@@ -1306,7 +1306,7 @@ async fn unspecified_listen_address_websocket() {
         }
     });
 
-    tokio::spawn(async move { while let Some(_) = litep2p1.next_event().await {} });
+    tokio::spawn(async move { while litep2p1.next_event().await.is_some() {} });
 
     let network_interfaces = NetworkInterface::show().unwrap();
     for iface in network_interfaces.iter() {
@@ -1479,7 +1479,7 @@ async fn simultaneous_dial_then_redial(transport1: Transport, transport2: Transp
         }
     };
 
-    if let Err(_) = tokio::time::timeout(std::time::Duration::from_secs(10), future).await {
+    if tokio::time::timeout(std::time::Duration::from_secs(10), future).await.is_err() {
         panic!("failed to open notification stream")
     }
 }

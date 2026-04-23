@@ -22,10 +22,11 @@
 use futures::{future::Either, Stream, StreamExt};
 use libp2p::{
     core::{muxing::StreamMuxerBox, transport::OrTransport},
-    identity, ping, quic,
+    identity, ping,
     swarm::{keep_alive, NetworkBehaviour, SwarmBuilder, SwarmEvent},
     PeerId, Swarm, Transport,
 };
+use libp2p_quic as quic;
 use litep2p::{
     config::ConfigBuilder,
     crypto::ed25519::Keypair,

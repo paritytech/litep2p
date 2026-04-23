@@ -250,15 +250,14 @@ impl PeerState {
             Self::Connected {
                 record,
                 secondary: Some(SecondaryOrDialing::Dialing(dial_record)),
-            } =>
-                if dial_record.connection_id == connection.connection_id {
-                    *self = Self::Connected {
-                        record: record.clone(),
-                        secondary: Some(SecondaryOrDialing::Secondary(connection)),
-                    };
+            } if dial_record.connection_id == connection.connection_id => {
+                *self = Self::Connected {
+                    record: record.clone(),
+                    secondary: Some(SecondaryOrDialing::Secondary(connection)),
+                };
 
-                    return true;
-                },
+                return true;
+            }
 
             // There's place for a secondary connection.
             Self::Connected {

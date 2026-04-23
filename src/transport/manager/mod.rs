@@ -1481,7 +1481,6 @@ mod tests {
     use std::{
         net::{Ipv4Addr, Ipv6Addr},
         sync::Arc,
-        usize,
     };
 
     /// Setup TCP address and connection id.

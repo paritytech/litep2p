@@ -652,10 +652,8 @@ mod tests {
             query: QueryId(0),
         };
 
-        let in_peers = vec![peers[0], peers[1], peers[2]]
-            .iter()
-            .map(|peer| peer_to_kad(*peer))
-            .collect();
+        let in_peers =
+            [peers[0], peers[1], peers[2]].iter().map(|peer| peer_to_kad(*peer)).collect();
         let mut context = FindNodeContext::new(config, in_peers);
 
         // Schedule peer queries.

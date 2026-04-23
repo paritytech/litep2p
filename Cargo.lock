@@ -1919,6 +1919,7 @@ dependencies = [
  "ip_network",
  "libc",
  "libp2p",
+ "libp2p-quic",
  "mockall",
  "multiaddr",
  "multihash 0.17.0",
