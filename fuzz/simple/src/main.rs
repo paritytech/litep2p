@@ -19,7 +19,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 mod protocol;
-use futures::StreamExt;
 use litep2p::{
     Litep2p, ProtocolName,
     config::ConfigBuilder,

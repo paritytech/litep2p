@@ -35,7 +35,6 @@ use litep2p::transport::websocket::config::Config as WebSocketConfig;
 
 use futures::{channel, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 use tokio::time::sleep;
 
 #[cfg(feature = "quic")]
@@ -2310,19 +2309,19 @@ async fn dial_failure(transport: Transport) {
         Transport::Tcp(_) => Multiaddr::empty()
             .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
             .with(Protocol::Tcp(5))
-            .with(Protocol::P2p(Multihash::from(peer))),
+            .with(Protocol::P2p(peer.into())),
         #[cfg(feature = "quic")]
         Transport::Quic(_) => Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Udp(5))
             .with(Protocol::QuicV1)
-            .with(Protocol::P2p(Multihash::from(peer))),
+            .with(Protocol::P2p(peer.into())),
         #[cfg(feature = "websocket")]
         Transport::WebSocket(_) => Multiaddr::empty()
             .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
             .with(Protocol::Tcp(5))
             .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())))
-            .with(Protocol::P2p(Multihash::from(peer))),
+            .with(Protocol::P2p(peer.into())),
     };
 
     let config = add_transport(litep2p_config, transport).build();

@@ -19,14 +19,12 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use futures::{future::Either, Stream, StreamExt};
+use futures::{Stream, StreamExt};
 use libp2p::{
-    core::{muxing::StreamMuxerBox, transport::OrTransport},
-    identity, ping,
-    swarm::{keep_alive, NetworkBehaviour, SwarmBuilder, SwarmEvent},
-    PeerId, Swarm, Transport,
+    identity, noise, ping,
+    swarm::{NetworkBehaviour, SwarmEvent},
+    tcp, yamux, Swarm, SwarmBuilder,
 };
-use libp2p_quic as quic;
 use litep2p::{
     config::ConfigBuilder,
     crypto::ed25519::Keypair,
@@ -37,7 +35,6 @@ use litep2p::{
 
 #[derive(NetworkBehaviour, Default)]
 struct Behaviour {
-    keep_alive: keep_alive::Behaviour,
     ping: ping::Behaviour,
 }
 
@@ -62,22 +59,23 @@ fn initialize_litep2p() -> (Litep2p, Box<dyn Stream<Item = PingEvent> + Send + U
 
 fn initialize_libp2p() -> Swarm<Behaviour> {
     let local_key = identity::Keypair::generate_ed25519();
-    let local_peer_id = PeerId::from(local_key.public());
 
-    tracing::debug!("Local peer id: {local_peer_id:?}");
+    tracing::debug!("Local peer id: {:?}", local_key.public().to_peer_id());
 
-    let tcp_transport = libp2p::tokio_development_transport(local_key.clone()).unwrap();
-
-    let quic_transport = quic::tokio::Transport::new(quic::Config::new(&local_key));
-    let transport = OrTransport::new(quic_transport, tcp_transport)
-        .map(|either_output, _| match either_output {
-            Either::Left((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
-            Either::Right((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
-        })
-        .boxed();
-
-    let mut swarm =
-        SwarmBuilder::with_tokio_executor(transport, Behaviour::default(), local_peer_id).build();
+    let mut swarm = SwarmBuilder::with_existing_identity(local_key)
+        .with_tokio()
+        .with_tcp(
+            tcp::Config::default(),
+            noise::Config::new,
+            yamux::Config::default,
+        )
+        .unwrap()
+        .with_quic()
+        .with_dns()
+        .unwrap()
+        .with_behaviour(|_| Behaviour::default())
+        .unwrap()
+        .build();
 
     swarm.listen_on("/ip6/::1/tcp/0".parse().unwrap()).unwrap();
     swarm.listen_on("/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap()).unwrap();

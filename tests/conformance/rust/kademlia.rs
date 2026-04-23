@@ -23,11 +23,12 @@ use futures::StreamExt;
 use libp2p::{
     identify, identity,
     kad::{
-        self, store::RecordStore, AddProviderOk, GetProvidersOk, InboundRequest,
-        KademliaEvent as Libp2pKademliaEvent, QueryResult,
+        self, store::RecordStore, AddProviderOk, Event as Libp2pKademliaEvent, GetProvidersOk,
+        InboundRequest, QueryResult,
     },
-    swarm::{keep_alive, AddressScore, NetworkBehaviour, SwarmBuilder, SwarmEvent},
-    PeerId, Swarm,
+    noise,
+    swarm::{NetworkBehaviour, SwarmEvent},
+    tcp, yamux, PeerId, Swarm, SwarmBuilder,
 };
 use litep2p::{
     config::ConfigBuilder as Litep2pConfigBuilder,
@@ -43,8 +44,7 @@ use std::time::Duration;
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {
-    keep_alive: keep_alive::Behaviour,
-    kad: kad::Kademlia<kad::store::MemoryStore>,
+    kad: kad::Behaviour<kad::store::MemoryStore>,
     identify: identify::Behaviour,
 }
 
@@ -70,25 +70,35 @@ fn initialize_litep2p() -> (Litep2p, KademliaHandle) {
 
 fn initialize_libp2p() -> Swarm<Behaviour> {
     let local_key = identity::Keypair::generate_ed25519();
-    let local_peer_id = PeerId::from(local_key.public());
 
-    tracing::debug!("Local peer id: {local_peer_id:?}");
+    tracing::debug!("Local peer id: {:?}", local_key.public().to_peer_id());
 
-    let transport = libp2p::tokio_development_transport(local_key.clone()).unwrap();
-    let behaviour = {
-        let config = kad::KademliaConfig::default();
-        let store = kad::store::MemoryStore::new(local_peer_id);
-
-        Behaviour {
-            kad: kad::Kademlia::with_config(local_peer_id, store, config),
-            keep_alive: Default::default(),
-            identify: identify::Behaviour::new(identify::Config::new(
-                "/ipfs/1.0.0".into(),
-                local_key.public(),
-            )),
-        }
-    };
-    let mut swarm = SwarmBuilder::with_tokio_executor(transport, behaviour, local_peer_id).build();
+    let mut swarm = SwarmBuilder::with_existing_identity(local_key)
+        .with_tokio()
+        .with_tcp(
+            tcp::Config::default(),
+            noise::Config::new,
+            yamux::Config::default,
+        )
+        .unwrap()
+        .with_dns()
+        .unwrap()
+        .with_behaviour(|key| {
+            let local_peer_id = PeerId::from(key.public());
+            let config = kad::Config::default();
+            let store = kad::store::MemoryStore::new(local_peer_id);
+            let mut kad = kad::Behaviour::with_config(local_peer_id, store, config);
+            kad.set_mode(Some(kad::Mode::Server));
+            Behaviour {
+                kad,
+                identify: identify::Behaviour::new(identify::Config::new(
+                    "/ipfs/1.0.0".into(),
+                    key.public(),
+                )),
+            }
+        })
+        .unwrap()
+        .build();
 
     swarm.listen_on("/ip6/::1/tcp/0".parse().unwrap()).unwrap();
 
@@ -141,7 +151,7 @@ async fn find_node() {
     let mut listen_addr = None;
     let peer_id = *libp2p.local_peer_id();
 
-    tracing::error!("local peer id: {peer_id}");
+    tracing::debug!("local peer id: {peer_id}");
 
     loop {
         if let SwarmEvent::NewListenAddr { address, .. } = libp2p.select_next_some().await {
@@ -157,7 +167,7 @@ async fn find_node() {
     });
 
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-    let listen_addr = listen_addr.unwrap().with(Protocol::P2p(peer_id.into()));
+    let listen_addr = listen_addr.unwrap().with(Protocol::P2p(peer_id));
 
     kad_handle
         .add_known_peer(
@@ -213,7 +223,7 @@ async fn put_record() {
                     _ = libp2p.select_next_some() => {}
                     _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
                         let store = libp2p.behaviour_mut().kad.store_mut();
-                        if store.get(&libp2p::kad::record::Key::new(&vec![1, 2, 3, 4])).is_some() && !record_found {
+                        if store.get(&libp2p::kad::RecordKey::new(&vec![1, 2, 3, 4])).is_some() && !record_found {
                             counter_copy.fetch_add(1usize, std::sync::atomic::Ordering::SeqCst);
                             record_found = true;
                         }
@@ -243,7 +253,7 @@ async fn put_record() {
     let mut listen_addr = None;
     let peer_id = *libp2p.local_peer_id();
 
-    tracing::error!("local peer id: {peer_id}");
+    tracing::debug!("local peer id: {peer_id}");
 
     loop {
         if let SwarmEvent::NewListenAddr { address, .. } = libp2p.select_next_some().await {
@@ -261,7 +271,7 @@ async fn put_record() {
                 _ = libp2p.select_next_some() => {}
                 _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
                     let store = libp2p.behaviour_mut().kad.store_mut();
-                    if store.get(&libp2p::kad::record::Key::new(&vec![1, 2, 3, 4])).is_some() && !record_found {
+                    if store.get(&libp2p::kad::RecordKey::new(&vec![1, 2, 3, 4])).is_some() && !record_found {
                         counter_copy.fetch_add(1usize, std::sync::atomic::Ordering::SeqCst);
                         record_found = true;
                     }
@@ -272,7 +282,7 @@ async fn put_record() {
 
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
-    let listen_addr = listen_addr.unwrap().with(Protocol::P2p(peer_id.into()));
+    let listen_addr = listen_addr.unwrap().with(Protocol::P2p(peer_id));
 
     kad_handle
         .add_known_peer(
@@ -325,7 +335,7 @@ async fn get_record() {
                     _ = libp2p.select_next_some() => {}
                     _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
                         let store = libp2p.behaviour_mut().kad.store_mut();
-                        if store.get(&libp2p::kad::record::Key::new(&vec![1, 2, 3, 4])).is_some() && !record_found {
+                        if store.get(&libp2p::kad::RecordKey::new(&vec![1, 2, 3, 4])).is_some() && !record_found {
                             counter_copy.fetch_add(1usize, std::sync::atomic::Ordering::SeqCst);
                             record_found = true;
                         }
@@ -387,7 +397,7 @@ async fn get_record() {
 
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
-    let listen_addr = listen_addr.unwrap().with(Protocol::P2p(peer_id.into()));
+    let listen_addr = listen_addr.unwrap().with(Protocol::P2p(peer_id));
 
     kad_handle
         .add_known_peer(
@@ -476,7 +486,7 @@ async fn libp2p_add_provider_to_litep2p() {
 
     let libp2p_peerid = litep2p::PeerId::from_bytes(&libp2p.local_peer_id().to_bytes()).unwrap();
     let libp2p_public_addr: Multiaddr = "/ip4/1.1.1.1/tcp/10000".parse().unwrap();
-    libp2p.add_external_address(libp2p_public_addr.clone(), AddressScore::Infinite);
+    libp2p.add_external_address(libp2p_public_addr.clone());
 
     let litep2p_peerid = PeerId::from_bytes(&litep2p.local_peer_id().to_bytes()).unwrap();
     let litep2p_address = litep2p.listen_addresses().next().unwrap().clone();
@@ -513,7 +523,7 @@ async fn litep2p_get_providers_from_libp2p() {
 
     let libp2p_peerid = litep2p::PeerId::from_bytes(&libp2p.local_peer_id().to_bytes()).unwrap();
     let libp2p_public_addr: Multiaddr = "/ip4/1.1.1.1/tcp/10000".parse().unwrap();
-    libp2p.add_external_address(libp2p_public_addr.clone(), AddressScore::Infinite);
+    libp2p.add_external_address(libp2p_public_addr.clone());
 
     // Start providing
     let key = vec![1u8, 2u8, 3u8];
