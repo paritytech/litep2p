@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Breaking:** `PeerId::from_bytes` now returns `ParseError` instead of
-  `multihash::Error`. The new error distinguishes malformed multihash bytes
-  from well-formed multihashes that are not valid peer IDs.
+  - **Breaking:** `PeerId::from_bytes` now returns `ParseError` instead of
+    `multihash::Error`. Multihash decoding failures and multihashes that are not
+    valid peer IDs are reported as `ParseError::MultiHash`.
 
 ## [0.13.3] - 2026-03-09
 

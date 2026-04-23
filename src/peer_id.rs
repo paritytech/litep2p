@@ -78,8 +78,19 @@ impl PeerId {
 
     /// Parses a `PeerId` from bytes.
     pub fn from_bytes(data: &[u8]) -> Result<PeerId, ParseError> {
-        PeerId::from_multihash(Multihash::from_bytes(data)?)
-            .map_err(|mh| ParseError::UnsupportedCode(mh.code()))
+        let multihash = Multihash::from_bytes(data).map_err(|error| {
+            tracing::debug!(?error, "failed to decode peer ID bytes as multihash",);
+            ParseError::MultiHash
+        })?;
+
+        PeerId::from_multihash(multihash).map_err(|multihash| {
+            tracing::debug!(
+                code = multihash.code(),
+                digest_len = multihash.digest().len(),
+                "decoded multihash is not a valid peer ID",
+            );
+            ParseError::MultiHash
+        })
     }
 
     /// Tries to turn a `Multihash` into a `PeerId`.
@@ -278,10 +289,8 @@ impl<'de> Deserialize<'de> for PeerId {
 pub enum ParseError {
     #[error("base-58 decode error: {0}")]
     B58(#[from] bs58::decode::Error),
-    #[error("unsupported multihash code '{0}'")]
-    UnsupportedCode(u64),
-    #[error("invalid multihash")]
-    InvalidMultihash(#[from] multihash::Error),
+    #[error("decoding multihash failed")]
+    MultiHash,
 }
 
 impl FromStr for PeerId {
@@ -296,7 +305,7 @@ impl FromStr for PeerId {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_INLINE_KEY_LENGTH, MULTIHASH_IDENTITY_CODE};
+    use super::{ParseError, MAX_INLINE_KEY_LENGTH, MULTIHASH_IDENTITY_CODE};
     use crate::{crypto::ed25519::Keypair, PeerId};
     use multiaddr::{Multiaddr, Protocol};
     use multihash::Multihash;
@@ -463,13 +472,32 @@ mod tests {
     // --- from_bytes ---
 
     #[test]
-    fn from_bytes_rejects_unsupported_multihash_code() {
+    fn from_bytes_rejects_invalid_peer_id_multihash() {
         let bytes = [
             0x16, 0x20, 0x64, 0x4b, 0xcc, 0x7e, 0x56, 0x43, 0x73, 0x04, 0x09, 0x99, 0xaa, 0xc8,
             0x9e, 0x76, 0x22, 0xf3, 0xca, 0x71, 0xfb, 0xa1, 0xd9, 0x72, 0xfd, 0x94, 0xa3, 0x1c,
             0x3b, 0xfb, 0xf2, 0x4e, 0x39, 0x38,
         ];
-        assert!(PeerId::from_bytes(&bytes).is_err());
+        assert!(matches!(
+            PeerId::from_bytes(&bytes),
+            Err(ParseError::MultiHash)
+        ));
+    }
+
+    #[test]
+    fn from_bytes_rejects_invalid_multihash_bytes() {
+        assert!(matches!(
+            PeerId::from_bytes(&[0xff]),
+            Err(ParseError::MultiHash)
+        ));
+    }
+
+    #[test]
+    fn from_str_rejects_invalid_base58() {
+        assert!(matches!(
+            "not base58: 0".parse::<PeerId>(),
+            Err(ParseError::B58(_))
+        ));
     }
 
     // --- identity and sha256 peer IDs roundtrip ---
