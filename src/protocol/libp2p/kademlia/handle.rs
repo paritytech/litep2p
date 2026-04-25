@@ -41,7 +41,7 @@ use std::{
 ///
 /// Quorum defines how many peers must be successfully contacted
 /// in order for the query to be considered successful.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
 pub enum Quorum {
     /// All peers must be successfully contacted.
@@ -50,7 +50,7 @@ pub enum Quorum {
     /// One peer must be successfully contacted.
     One,
 
-    /// `N` peer must be successfully contacted.
+    /// `N` peers must be successfully contacted.
     N(NonZeroUsize),
 }
 
@@ -103,6 +103,9 @@ pub enum KademliaCommand {
         /// Record.
         record: Record,
 
+        /// [`Quorum`] for the query.
+        quorum: Quorum,
+
         /// Query ID for the query.
         query_id: QueryId,
     },
@@ -113,6 +116,9 @@ pub enum KademliaCommand {
     PutRecordToPeers {
         /// Record.
         record: Record,
+
+        /// [`Quorum`] for the query.
+        quorum: Quorum,
 
         /// Query ID for the query.
         query_id: QueryId,
@@ -149,6 +155,9 @@ pub enum KademliaCommand {
     StartProviding {
         /// Provided key.
         key: RecordKey,
+
+        /// [`Quorum`] for the query.
+        quorum: Quorum,
 
         /// Query ID for the query.
         query_id: QueryId,
@@ -226,14 +235,21 @@ pub enum KademliaEvent {
     },
 
     /// `PUT_VALUE` query succeeded.
-    // TODO: https://github.com/paritytech/litep2p/issues/336
-    // this is never emitted. Implement + add `AddProviderSuccess`.
     PutRecordSuccess {
         /// Query ID.
         query_id: QueryId,
 
         /// Record key.
         key: RecordKey,
+    },
+
+    /// `ADD_PROVIDER` query succeeded.
+    AddProviderSuccess {
+        /// Query ID.
+        query_id: QueryId,
+
+        /// Provided key.
+        provided_key: RecordKey,
     },
 
     /// Query failed.
@@ -309,9 +325,16 @@ impl KademliaHandle {
     }
 
     /// Store record to DHT.
-    pub async fn put_record(&mut self, record: Record) -> QueryId {
+    pub async fn put_record(&mut self, record: Record, quorum: Quorum) -> QueryId {
         let query_id = self.next_query_id();
-        let _ = self.cmd_tx.send(KademliaCommand::PutRecord { record, query_id }).await;
+        let _ = self
+            .cmd_tx
+            .send(KademliaCommand::PutRecord {
+                record,
+                quorum,
+                query_id,
+            })
+            .await;
 
         query_id
     }
@@ -324,6 +347,7 @@ impl KademliaHandle {
         record: Record,
         peers: Vec<PeerId>,
         update_local_store: bool,
+        quorum: Quorum,
     ) -> QueryId {
         let query_id = self.next_query_id();
         let _ = self
@@ -333,6 +357,7 @@ impl KademliaHandle {
                 query_id,
                 peers,
                 update_local_store,
+                quorum,
             })
             .await;
 
@@ -360,9 +385,16 @@ impl KademliaHandle {
     ///
     /// Register the local peer ID & its `public_addresses` as a provider for a given `key`.
     /// Returns [`Err`] only if `Kademlia` is terminating.
-    pub async fn start_providing(&mut self, key: RecordKey) -> QueryId {
+    pub async fn start_providing(&mut self, key: RecordKey, quorum: Quorum) -> QueryId {
         let query_id = self.next_query_id();
-        let _ = self.cmd_tx.send(KademliaCommand::StartProviding { key, query_id }).await;
+        let _ = self
+            .cmd_tx
+            .send(KademliaCommand::StartProviding {
+                key,
+                quorum,
+                query_id,
+            })
+            .await;
 
         query_id
     }
@@ -409,10 +441,14 @@ impl KademliaHandle {
     }
 
     /// Try to initiate `PUT_VALUE` query and if the channel is clogged, return an error.
-    pub fn try_put_record(&mut self, record: Record) -> Result<QueryId, ()> {
+    pub fn try_put_record(&mut self, record: Record, quorum: Quorum) -> Result<QueryId, ()> {
         let query_id = self.next_query_id();
         self.cmd_tx
-            .try_send(KademliaCommand::PutRecord { record, query_id })
+            .try_send(KademliaCommand::PutRecord {
+                record,
+                query_id,
+                quorum,
+            })
             .map(|_| query_id)
             .map_err(|_| ())
     }
@@ -424,6 +460,7 @@ impl KademliaHandle {
         record: Record,
         peers: Vec<PeerId>,
         update_local_store: bool,
+        quorum: Quorum,
     ) -> Result<QueryId, ()> {
         let query_id = self.next_query_id();
         self.cmd_tx
@@ -432,6 +469,7 @@ impl KademliaHandle {
                 query_id,
                 peers,
                 update_local_store,
+                quorum,
             })
             .map(|_| query_id)
             .map_err(|_| ())

@@ -522,7 +522,9 @@ async fn request_timeout(transport1: Transport, transport2: Transport) {
     );
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_request_response_protocol(req_resp_config1);
+        .with_request_response_protocol(req_resp_config1)
+        // Connection keep-alive timeout > request-response timeout.
+        .with_keep_alive_timeout(Duration::from_secs(30));
 
     let config1 = add_transport(config1, transport1).build();
 
@@ -535,7 +537,9 @@ async fn request_timeout(transport1: Transport, transport2: Transport) {
     );
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_request_response_protocol(req_resp_config2);
+        .with_request_response_protocol(req_resp_config2)
+        // Connection keep-alive timeout > request-response timeout.
+        .with_keep_alive_timeout(Duration::from_secs(30));
 
     let config2 = add_transport(config2, transport2).build();
 
@@ -1776,14 +1780,11 @@ async fn substream_open_failure_reported_once(transport1: Transport, transport2:
         }
     );
 
-    loop {
-        match litep2p1.next_event().await {
-            Some(Litep2pEvent::ConnectionClosed { peer, .. }) => {
-                assert_eq!(peer, peer2);
-                break;
-            }
-            event => panic!("invalid event received: {event:?}"),
+    match litep2p1.next_event().await {
+        Some(Litep2pEvent::ConnectionClosed { peer, .. }) => {
+            assert_eq!(peer, peer2);
         }
+        event => panic!("invalid event received: {event:?}"),
     }
 
     // verify that nothing is received from the handle as the request failure was already reported
@@ -2167,7 +2168,9 @@ async fn custom_timeout(transport1: Transport, transport2: Transport) {
 
     let config1 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_request_response_protocol(req_resp_config1);
+        .with_request_response_protocol(req_resp_config1)
+        // Make sure connection keep-alive is bigger than request-response timeout.
+        .with_keep_alive_timeout(Duration::from_secs(30));
 
     let config1 = add_transport(config1, transport1).build();
 
@@ -2177,7 +2180,9 @@ async fn custom_timeout(transport1: Transport, transport2: Transport) {
 
     let config2 = Litep2pConfigBuilder::new()
         .with_keypair(Keypair::generate())
-        .with_request_response_protocol(req_resp_config2);
+        .with_request_response_protocol(req_resp_config2)
+        // Make sure connection keep-alive is bigger than request-response timeout.
+        .with_keep_alive_timeout(Duration::from_secs(30));
 
     let config2 = add_transport(config2, transport2).build();
 
@@ -2250,7 +2255,7 @@ async fn outbound_request_for_unconnected_peer(transport1: Transport) {
 
     tokio::spawn(async move {
         let mut litep2p1 = Litep2p::new(config1).unwrap();
-        while let Some(_) = litep2p1.next_event().await {}
+        tokio::spawn(async move { while litep2p1.next_event().await.is_some() {} });
     });
 
     let peer2 = PeerId::random();
@@ -2324,7 +2329,7 @@ async fn dial_failure(transport: Transport) {
 
     let mut litep2p = Litep2p::new(config).unwrap();
     litep2p.add_known_address(peer, vec![known_address].into_iter());
-    tokio::spawn(async move { while let Some(_) = litep2p.next_event().await {} });
+    tokio::spawn(async move { while litep2p.next_event().await.is_some() {} });
 
     let request_id = handle.send_request(peer, vec![1, 3, 3, 7], DialOptions::Dial).await.unwrap();
 

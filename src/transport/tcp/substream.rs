@@ -41,8 +41,10 @@ pub struct Substream {
     /// Bandwidth sink.
     bandwidth_sink: BandwidthSink,
 
-    /// Connection permit.
-    _permit: Permit,
+    /// Permit holding the connection alive while the substream exists.
+    ///
+    /// `None` for ping & identify substreams, `Some` for others.
+    _lifetime_permit: Option<Permit>,
 }
 
 impl Substream {
@@ -50,12 +52,12 @@ impl Substream {
     pub fn new(
         io: Compat<crate::yamux::Stream>,
         bandwidth_sink: BandwidthSink,
-        _permit: Permit,
+        lifetime_permit: Option<Permit>,
     ) -> Self {
         Self {
             io,
             bandwidth_sink,
-            _permit,
+            _lifetime_permit: lifetime_permit,
         }
     }
 }
@@ -66,10 +68,12 @@ impl AsyncRead for Substream {
         cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
+        let len = buf.filled().len();
         match futures::ready!(Pin::new(&mut self.io).poll_read(cx, buf)) {
             Err(error) => Poll::Ready(Err(error)),
             Ok(res) => {
-                self.bandwidth_sink.increase_inbound(buf.filled().len());
+                let inbound_size = buf.filled().len().saturating_sub(len);
+                self.bandwidth_sink.increase_inbound(inbound_size);
                 Poll::Ready(Ok(res))
             }
         }

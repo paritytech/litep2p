@@ -680,8 +680,7 @@ mod tests {
             panic!("invalid address");
         };
 
-        let Some(Protocol::Tcp(port2)) =
-            listen_addresses.iter().nth(1).unwrap().clone().iter().nth(1)
+        let Some(Protocol::Tcp(port2)) = listen_addresses.get(1).unwrap().clone().iter().nth(1)
         else {
             panic!("invalid address");
         };
@@ -709,8 +708,7 @@ mod tests {
             panic!("invalid address");
         };
 
-        let Some(Protocol::Tcp(port2)) =
-            listen_addresses.iter().nth(1).unwrap().clone().iter().nth(1)
+        let Some(Protocol::Tcp(port2)) = listen_addresses.get(1).unwrap().clone().iter().nth(1)
         else {
             panic!("invalid address");
         };

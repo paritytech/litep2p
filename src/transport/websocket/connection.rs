@@ -26,7 +26,7 @@ use crate::{
     },
     error::{Error, NegotiationError, SubstreamError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
-    protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
+    protocol::{Direction, Permit, ProtocolCommand, ProtocolSet, SubstreamKeepAlive},
     substream,
     transport::{
         websocket::{stream::BufferedStream, substream::Substream},
@@ -43,7 +43,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use url::Url;
 
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 mod schema {
     pub(super) mod noise {
@@ -70,6 +70,9 @@ pub struct NegotiatedSubstream {
 
     /// Permit.
     permit: Permit,
+
+    /// Whether this substream keeps connection alive while it exists.
+    keep_alive: SubstreamKeepAlive,
 }
 
 /// WebSocket connection error.
@@ -113,6 +116,15 @@ pub(super) struct NegotiatedConnection {
     control: crate::yamux::Control,
 }
 
+impl std::fmt::Debug for NegotiatedConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NegotiatedConnection")
+            .field("peer", &self.peer)
+            .field("endpoint", &self.endpoint)
+            .finish()
+    }
+}
+
 impl NegotiatedConnection {
     /// Get `ConnectionId` of the negotiated connection.
     pub fn connection_id(&self) -> ConnectionId {
@@ -146,7 +158,7 @@ pub(crate) struct WebSocketConnection {
     peer: PeerId,
 
     /// Endpoint.
-    endpoint: Endpoint,
+    _endpoint: Endpoint,
 
     /// Substream open timeout.
     substream_open_timeout: Duration,
@@ -183,7 +195,7 @@ impl WebSocketConnection {
             connection,
             control,
             peer,
-            endpoint,
+            _endpoint: endpoint,
             bandwidth_sink,
             substream_open_timeout,
             pending_substreams: FuturesUnordered::new(),
@@ -366,7 +378,7 @@ impl WebSocketConnection {
         stream: crate::yamux::Stream,
         permit: Permit,
         substream_id: SubstreamId,
-        protocols: Vec<ProtocolName>,
+        protocols: HashMap<ProtocolName, SubstreamKeepAlive>,
         substream_open_timeout: Duration,
     ) -> Result<NegotiatedSubstream, NegotiationError> {
         tracing::trace!(
@@ -375,10 +387,15 @@ impl WebSocketConnection {
             "accept inbound substream"
         );
 
-        let protocols = protocols.iter().map(|protocol| &**protocol).collect::<Vec<&str>>();
-        let (io, protocol) =
-            Self::negotiate_protocol(stream, &Role::Listener, protocols, substream_open_timeout)
-                .await?;
+        let protocol_names = protocols.keys().map(|protocol| &**protocol).collect::<Vec<&str>>();
+        let (io, protocol) = Self::negotiate_protocol(
+            stream,
+            &Role::Listener,
+            protocol_names,
+            substream_open_timeout,
+        )
+        .await?;
+        let keep_alive = *protocols.get(&protocol).expect("protocol to be one of the keys");
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -392,6 +409,7 @@ impl WebSocketConnection {
             substream_id,
             protocol,
             permit,
+            keep_alive,
         })
     }
 
@@ -403,6 +421,7 @@ impl WebSocketConnection {
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
         substream_open_timeout: Duration,
+        keep_alive: SubstreamKeepAlive,
     ) -> Result<NegotiatedSubstream, SubstreamError> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?substream_id, "open substream");
 
@@ -441,21 +460,19 @@ impl WebSocketConnection {
             direction: Direction::Outbound(substream_id),
             protocol,
             permit,
+            keep_alive,
         })
     }
 
-    /// Start connection event loop.
+    /// Start the connection event loop without notifying protocols.
+    /// This is used when protocols have already been notified during accept().
     pub(crate) async fn start(mut self) -> crate::Result<()> {
-        self.protocol_set
-            .report_connection_established(self.peer, self.endpoint)
-            .await?;
-
         loop {
             tokio::select! {
                 substream = self.connection.next() => match substream {
                     Some(Ok(stream)) => {
                         let substream = self.protocol_set.next_substream_id();
-                        let protocols = self.protocol_set.protocols();
+                        let protocols = self.protocol_set.protocols_with_keep_alives();
                         let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
                         let substream_open_timeout = self.substream_open_timeout;
 
@@ -527,22 +544,36 @@ impl WebSocketConnection {
                             let substream_id = substream.substream_id;
                             let socket = FuturesAsyncReadCompatExt::compat(substream.io);
                             let bandwidth_sink = self.bandwidth_sink.clone();
+                            let opening_permit = substream.permit;
+                            let lifetime_permit =
+                                substream.keep_alive.then(|| opening_permit.clone());
 
                             let substream = substream::Substream::new_websocket(
                                 self.peer,
                                 substream_id,
-                                Substream::new(socket, bandwidth_sink, substream.permit),
+                                Substream::new(socket, bandwidth_sink, lifetime_permit),
                                 self.protocol_set.protocol_codec(&protocol)
                             );
 
-                            self.protocol_set
-                                .report_substream_open(self.peer, protocol, direction, substream)
-                                .await?;
+                            self.protocol_set.report_substream_open(
+                                self.peer,
+                                protocol,
+                                direction,
+                                substream,
+                                opening_permit,
+                            ).await?;
                         }
                     }
                 }
                 protocol = self.protocol_set.next() => match protocol {
-                    Some(ProtocolCommand::OpenSubstream { protocol, fallback_names, substream_id, permit, .. }) => {
+                    Some(ProtocolCommand::OpenSubstream {
+                        protocol,
+                        fallback_names,
+                        substream_id,
+                        permit,
+                        keep_alive,
+                        connection_id: _,
+                    }) => {
                         let control = self.control.clone();
                         let substream_open_timeout = self.substream_open_timeout;
 
@@ -562,7 +593,8 @@ impl WebSocketConnection {
                                     substream_id,
                                     protocol.clone(),
                                     fallback_names,
-                                    substream_open_timeout
+                                    substream_open_timeout,
+                                    keep_alive,
                                 ),
                             )
                             .await

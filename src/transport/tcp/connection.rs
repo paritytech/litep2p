@@ -26,7 +26,7 @@ use crate::{
     },
     error::{Error, NegotiationError, SubstreamError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
-    protocol::{Direction, Permit, ProtocolCommand, ProtocolSet},
+    protocol::{Direction, Permit, ProtocolCommand, ProtocolSet, SubstreamKeepAlive},
     substream,
     transport::{
         common::listener::{AddressType, DnsType},
@@ -50,6 +50,7 @@ use tokio_util::compat::{
 
 use std::{
     borrow::Cow,
+    collections::HashMap,
     fmt,
     net::SocketAddr,
     sync::{
@@ -76,8 +77,12 @@ pub struct NegotiatedSubstream {
     /// Yamux substream.
     io: crate::yamux::Stream,
 
-    /// Permit.
+    /// Permit held until the negotiated substream is reported back to
+    /// [`TransportService`](crate::protocol::TransportService) and connection upgraded.
     permit: Permit,
+
+    /// Whether to store the permit as long as substream exists.
+    keep_alive: SubstreamKeepAlive,
 }
 
 /// TCP connection error.
@@ -121,6 +126,15 @@ pub struct NegotiatedConnection {
 
     /// Substream open timeout.
     substream_open_timeout: Duration,
+}
+
+impl std::fmt::Debug for NegotiatedConnection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NegotiatedConnection")
+            .field("peer", &self.peer)
+            .field("endpoint", &self.endpoint)
+            .finish()
+    }
 }
 
 impl NegotiatedConnection {
@@ -260,6 +274,7 @@ impl TcpConnection {
         mut control: crate::yamux::Control,
         substream_id: SubstreamId,
         permit: Permit,
+        keep_alive: SubstreamKeepAlive,
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
         open_timeout: Duration,
@@ -300,6 +315,7 @@ impl TcpConnection {
             direction: Direction::Outbound(substream_id),
             protocol,
             permit,
+            keep_alive,
         })
     }
 
@@ -344,7 +360,7 @@ impl TcpConnection {
         stream: crate::yamux::Stream,
         permit: Permit,
         substream_id: SubstreamId,
-        protocols: Vec<ProtocolName>,
+        protocols: HashMap<ProtocolName, SubstreamKeepAlive>,
         open_timeout: Duration,
     ) -> Result<NegotiatedSubstream, NegotiationError> {
         tracing::trace!(
@@ -353,9 +369,10 @@ impl TcpConnection {
             "accept inbound substream",
         );
 
-        let protocols = protocols.iter().map(|protocol| &**protocol).collect::<Vec<&str>>();
+        let protocol_names = protocols.keys().map(|protocol| &**protocol).collect::<Vec<&str>>();
         let (io, protocol) =
-            Self::negotiate_protocol(stream, &Role::Listener, protocols, open_timeout).await?;
+            Self::negotiate_protocol(stream, &Role::Listener, protocol_names, open_timeout).await?;
+        let keep_alive = *protocols.get(&protocol).expect("protocol to be one of the keys");
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -369,6 +386,7 @@ impl TcpConnection {
             direction: Direction::Inbound,
             protocol,
             permit,
+            keep_alive,
         })
     }
 
@@ -508,7 +526,10 @@ impl TcpConnection {
                     let substream_id = self.next_substream_id.fetch_add(1usize, Ordering::Relaxed);
                     SubstreamId::from(substream_id)
                 };
-                let protocols = self.protocol_set.protocols();
+                let protocols = self.protocol_set.protocols_with_keep_alives();
+                // This permit will be passed on until the substream is reported to the
+                // [`TransportService`](crate::protocol::TransportService), where the connection
+                // will be upgraded and the permit won't be needed anymore.
                 let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
                 let open_timeout = self.substream_open_timeout;
 
@@ -567,7 +588,7 @@ impl TcpConnection {
     async fn handle_negotiated_substream(
         &mut self,
         result: Result<NegotiatedSubstream, ConnectionError>,
-    ) {
+    ) -> crate::Result<()> {
         match result {
             Err(error) => {
                 tracing::debug!(
@@ -594,19 +615,18 @@ impl TcpConnection {
 
                 match (protocol, substream_id) {
                     (Some(protocol), Some(substream_id)) => {
-                        if let Err(error) = self
-                            .protocol_set
+                        self.protocol_set
                             .report_substream_open_failure(protocol.clone(), substream_id, error)
                             .await
-                        {
-                            tracing::error!(
-                                target: LOG_TARGET,
-                                ?protocol,
-                                endpoint = ?self.endpoint,
-                                ?error,
-                                "failed to register substream open failure to protocol"
-                            );
-                        }
+                            .inspect_err(|error| {
+                                tracing::error!(
+                                    target: LOG_TARGET,
+                                    ?protocol,
+                                    endpoint = ?self.endpoint,
+                                    ?error,
+                                    "failed to register substream open failure to protocol"
+                                );
+                            })?;
                     }
                     _ => {}
                 }
@@ -617,30 +637,39 @@ impl TcpConnection {
                 let substream_id = substream.substream_id;
                 let socket = FuturesAsyncReadCompatExt::compat(substream.io);
                 let bandwidth_sink = self.bandwidth_sink.clone();
+                let opening_permit = substream.permit;
+                let lifetime_permit = substream.keep_alive.then(|| opening_permit.clone());
 
                 let substream = substream::Substream::new_tcp(
                     self.peer,
                     substream_id,
-                    Substream::new(socket, bandwidth_sink, substream.permit),
+                    Substream::new(socket, bandwidth_sink, lifetime_permit),
                     self.protocol_set.protocol_codec(&protocol),
                 );
 
-                if let Err(error) = self
-                    .protocol_set
-                    .report_substream_open(self.peer, protocol.clone(), direction, substream)
+                self.protocol_set
+                    .report_substream_open(
+                        self.peer,
+                        protocol.clone(),
+                        direction,
+                        substream,
+                        opening_permit,
+                    )
                     .await
-                {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?protocol,
-                        peer = ?self.peer,
-                        endpoint = ?self.endpoint,
-                        ?error,
-                        "failed to register opened substream to protocol",
-                    );
-                }
+                    .inspect_err(|error| {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            ?protocol,
+                            peer = ?self.peer,
+                            endpoint = ?self.endpoint,
+                            ?error,
+                            "failed to register opened substream to protocol",
+                        );
+                    })?;
             }
         }
+
+        Ok(())
     }
 
     /// Handles protocol command.
@@ -657,6 +686,7 @@ impl TcpConnection {
                 substream_id,
                 connection_id,
                 permit,
+                keep_alive,
             }) => {
                 let control = self.control.clone();
                 let open_timeout = self.substream_open_timeout;
@@ -676,6 +706,7 @@ impl TcpConnection {
                             control,
                             substream_id,
                             permit,
+                            keep_alive,
                             protocol.clone(),
                             fallback_names,
                             open_timeout,
@@ -721,12 +752,9 @@ impl TcpConnection {
         }
     }
 
-    /// Start connection event loop.
+    /// Start the connection event loop without notifying protocols.
+    /// This is used when protocols have already been notified during accept().
     pub(crate) async fn start(mut self) -> crate::Result<()> {
-        self.protocol_set
-            .report_connection_established(self.peer, self.endpoint.clone())
-            .await?;
-
         loop {
             tokio::select! {
                 substream = self.connection.next() => {
@@ -735,7 +763,7 @@ impl TcpConnection {
                     }
                 },
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
-                   self.handle_negotiated_substream(substream).await;
+                    self.handle_negotiated_substream(substream).await?;
                 }
                 protocol = self.protocol_set.next() => {
                     if self.handle_protocol_command(protocol).await? {

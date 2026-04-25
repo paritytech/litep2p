@@ -32,14 +32,14 @@ use crate::{
             peer_state::{ConnectionRecord, PeerState, StateDialResult},
             types::PeerContext,
         },
-        Endpoint, Transport, TransportEvent, MAX_PARALLEL_DIALS,
+        Endpoint, Transport, TransportEvent,
     },
     types::{protocol::ProtocolName, ConnectionId},
     BandwidthSink, PeerId,
 };
 
 use address::{scores, AddressStore};
-use futures::{Stream, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use indexmap::IndexMap;
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
@@ -57,6 +57,7 @@ use std::{
     time::Duration,
 };
 
+pub use crate::protocol::SubstreamKeepAlive;
 pub use handle::{TransportHandle, TransportManagerHandle};
 pub use types::SupportedTransport;
 
@@ -106,6 +107,9 @@ pub struct ProtocolContext {
 
     /// Fallback names for the protocol.
     pub fallback_names: Vec<ProtocolName>,
+
+    /// Whether this protocol existing substreams should keep connection alive.
+    pub keep_alive: SubstreamKeepAlive,
 }
 
 impl ProtocolContext {
@@ -114,11 +118,13 @@ impl ProtocolContext {
         codec: ProtocolCodec,
         tx: Sender<InnerTransportEvent>,
         fallback_names: Vec<ProtocolName>,
+        keep_alive: SubstreamKeepAlive,
     ) -> Self {
         Self {
             tx,
             codec,
             fallback_names,
+            keep_alive,
         }
     }
 }
@@ -174,9 +180,9 @@ impl Stream for TransportContext {
         }
 
         let len = self.transports.len();
-        self.index = (self.index + 1) % len;
-        for index in 0..len {
-            let current = (self.index + index) % len;
+        for _ in 0..len {
+            let current = self.index;
+            self.index = (current + 1) % len;
             let (key, stream) = self.transports.get_index_mut(current).expect("transport to exist");
             match stream.poll_next_unpin(cx) {
                 Poll::Pending => {}
@@ -204,9 +210,6 @@ pub struct TransportManager {
 
     /// Bandwidth sink.
     bandwidth_sink: BandwidthSink,
-
-    /// Maximum parallel dial attempts per peer.
-    max_parallel_dials: usize,
 
     /// Installed protocols.
     protocols: HashMap<ProtocolName, ProtocolContext>,
@@ -252,6 +255,9 @@ pub struct TransportManager {
 
     /// Opening connections errors.
     opening_errors: HashMap<ConnectionId, Vec<(Multiaddr, DialError)>>,
+
+    /// Pending accept futures with associated connection information.
+    pending_accept: FuturesUnordered<BoxFuture<'static, (PeerId, Endpoint, crate::Result<()>)>>,
 }
 
 /// Builder for [`crate::transport::manager::TransportManager`].
@@ -264,9 +270,6 @@ pub struct TransportManagerBuilder {
 
     /// Bandwidth sink.
     bandwidth_sink: Option<BandwidthSink>,
-
-    /// Maximum parallel dial attempts per peer.
-    max_parallel_dials: usize,
 
     /// Connection limits config.
     connection_limits_config: limits::ConnectionLimitsConfig,
@@ -285,7 +288,6 @@ impl TransportManagerBuilder {
             keypair: None,
             supported_transports: HashSet::new(),
             bandwidth_sink: None,
-            max_parallel_dials: MAX_PARALLEL_DIALS,
             connection_limits_config: limits::ConnectionLimitsConfig::default(),
         }
     }
@@ -308,12 +310,6 @@ impl TransportManagerBuilder {
     /// Set the bandwidth sink
     pub fn with_bandwidth_sink(mut self, bandwidth_sink: BandwidthSink) -> Self {
         self.bandwidth_sink = Some(bandwidth_sink);
-        self
-    }
-
-    /// Set the maximum parallel dials per peer
-    pub fn with_max_parallel_dials(mut self, max_parrallel_dials: usize) -> Self {
-        self.max_parallel_dials = max_parrallel_dials;
         self
     }
 
@@ -349,7 +345,6 @@ impl TransportManagerBuilder {
             local_peer_id,
             keypair,
             bandwidth_sink: self.bandwidth_sink.unwrap_or_else(BandwidthSink::new),
-            max_parallel_dials: self.max_parallel_dials,
             protocols: HashMap::new(),
             protocol_names: HashSet::new(),
             listen_addresses,
@@ -365,6 +360,7 @@ impl TransportManagerBuilder {
             pending_connections: HashMap::new(),
             connection_limits: limits::ConnectionLimits::new(self.connection_limits_config),
             opening_errors: HashMap::new(),
+            pending_accept: FuturesUnordered::new(),
         }
     }
 }
@@ -402,6 +398,7 @@ impl TransportManager {
         fallback_names: Vec<ProtocolName>,
         codec: ProtocolCodec,
         keep_alive_timeout: Duration,
+        substream_keep_alive: SubstreamKeepAlive,
     ) -> TransportService {
         assert!(!self.protocol_names.contains(&protocol));
 
@@ -418,11 +415,12 @@ impl TransportManager {
             self.next_substream_id.clone(),
             self.transport_manager_handle(),
             keep_alive_timeout,
+            substream_keep_alive,
         );
 
         self.protocols.insert(
             protocol.clone(),
-            ProtocolContext::new(codec, sender, fallback_names.clone()),
+            ProtocolContext::new(codec, sender, fallback_names.clone(), substream_keep_alive),
         );
         self.protocol_names.insert(protocol);
         self.protocol_names.extend(fallback_names);
@@ -532,9 +530,6 @@ impl TransportManager {
     pub async fn dial(&mut self, peer: PeerId) -> crate::Result<()> {
         // Don't alter the peer state if there's no capacity to dial.
         let available_capacity = self.connection_limits.on_dial_address()?;
-        // The available capacity is the maximum number of connections that can be established,
-        // so we limit the number of parallel dials to the minimum of these values.
-        let limit = available_capacity.min(self.max_parallel_dials);
 
         if peer == self.local_peer_id {
             return Err(Error::TriedToDialSelf);
@@ -552,7 +547,9 @@ impl TransportManager {
 
         // The addresses are sorted by score and contain the remote peer ID.
         // We double checked above that the remote peer is not the local peer.
-        let dial_addresses = context.addresses.addresses(limit);
+        // Limit addresses by the available connection capacity. The transport layer
+        // handles dial concurrency via `max_parallel_dials`.
+        let dial_addresses = context.addresses.addresses(available_capacity);
         if dial_addresses.is_empty() {
             return Err(Error::NoAddressAvailable(peer));
         }
@@ -1091,6 +1088,35 @@ impl TransportManager {
     pub async fn next(&mut self) -> Option<TransportEvent> {
         loop {
             tokio::select! {
+                (peer, endpoint, result) = self.pending_accept.select_next_some(), if !self.pending_accept.is_empty() => {
+                    match result {
+                        Ok(()) => {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?endpoint,
+                                "connection accepted and protocols notified",
+                            );
+
+                            return Some(TransportEvent::ConnectionEstablished { peer, endpoint });
+                        }
+                        Err(error) => {
+                            // The pending accept future has failed to inform one of the
+                            // installed protocols about the connection. This can happen when the
+                            // node is shutting down or when the user has dropped the long running protocol.
+                            // To err on the safe side, roll back the state modification done in `on_connection_established`.
+                            self.on_connection_closed(peer, endpoint.connection_id());
+
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                ?endpoint,
+                                ?error,
+                                "failed to notify protocols about connection",
+                            );
+                        }
+                    }
+                }
                 event = self.event_rx.recv() => {
                     let Some(event) = event else {
                         tracing::error!(
@@ -1270,16 +1296,36 @@ impl TransportManager {
                                         "accept connection",
                                     );
 
-                                    let _ = self
+                                    match self
                                         .transports
                                         .get_mut(&transport)
                                         .expect("transport to exist")
-                                        .accept(endpoint.connection_id());
+                                        .accept(endpoint.connection_id())
+                                    {
+                                        Ok(future) => {
+                                            // A ConnectionEstablished is propagated to the user once
+                                            // all protocols have been notified.
+                                            self.pending_accept.push(Box::pin(async move {
+                                                let result = future.await;
+                                                (peer, endpoint, result)
+                                            }));
+                                        }
+                                        Err(error) => {
+                                            // Roll back the state modification done in `on_connection_established` by
+                                            // simulating a closed connection. The transport returns an error
+                                            // while accepting the connection, which can happen if the transport is
+                                            // already closed or the connection is dropped before the accept call.
+                                            self.on_connection_closed(peer, endpoint.connection_id());
 
-                                    return Some(TransportEvent::ConnectionEstablished {
-                                        peer,
-                                        endpoint,
-                                    });
+                                            tracing::debug!(
+                                                target: LOG_TARGET,
+                                                ?peer,
+                                                ?endpoint,
+                                                ?error,
+                                                "failed to accept connection",
+                                            );
+                                        }
+                                    }
                                 }
                                 Ok(ConnectionEstablishedResult::Reject) => {
                                     tracing::trace!(
@@ -1297,8 +1343,12 @@ impl TransportManager {
                                 }
                             }
                         }
-                        TransportEvent::ConnectionOpened { connection_id, address } => {
+                        TransportEvent::ConnectionOpened { connection_id, address, errors } => {
                             self.opening_errors.remove(&connection_id);
+
+                            for (addr, error) in &errors {
+                                self.update_address_on_dial_failure(addr.clone(), error);
+                            }
 
                             if let Err(error) = self.on_connection_opened(transport, connection_id, address) {
                                 tracing::debug!(
@@ -1431,7 +1481,6 @@ mod tests {
     use std::{
         net::{Ipv4Addr, Ipv6Addr},
         sync::Arc,
-        usize,
     };
 
     /// Setup TCP address and connection id.
@@ -1447,66 +1496,73 @@ mod tests {
         (dial_address, connection_id)
     }
 
-    #[cfg(feature = "websocket")]
-    struct MockTransport {
-        rx: tokio::sync::mpsc::Receiver<TransportEvent>,
-    }
-
-    #[cfg(feature = "websocket")]
-    impl MockTransport {
-        fn new(rx: tokio::sync::mpsc::Receiver<TransportEvent>) -> Self {
-            Self { rx }
-        }
-    }
-
-    #[cfg(feature = "websocket")]
-    impl Transport for MockTransport {
-        fn dial(&mut self, _connection_id: ConnectionId, _address: Multiaddr) -> crate::Result<()> {
-            Ok(())
-        }
-
-        fn accept(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
-            Ok(())
-        }
-
-        fn accept_pending(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
-            Ok(())
-        }
-
-        fn reject_pending(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
-            Ok(())
-        }
-
-        fn reject(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
-            Ok(())
-        }
-
-        fn open(
-            &mut self,
-            _connection_id: ConnectionId,
-            _addresses: Vec<Multiaddr>,
-        ) -> crate::Result<()> {
-            Ok(())
-        }
-
-        fn negotiate(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
-            Ok(())
-        }
-
-        fn cancel(&mut self, _connection_id: ConnectionId) {}
-    }
-
-    #[cfg(feature = "websocket")]
-    impl Stream for MockTransport {
-        type Item = TransportEvent;
-        fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-            self.rx.poll_recv(cx)
-        }
-    }
-
     #[tokio::test]
     #[cfg(feature = "websocket")]
+    #[cfg(feature = "quic")]
     async fn transport_events() {
+        struct MockTransport {
+            rx: tokio::sync::mpsc::Receiver<TransportEvent>,
+        }
+
+        impl MockTransport {
+            fn new(rx: tokio::sync::mpsc::Receiver<TransportEvent>) -> Self {
+                Self { rx }
+            }
+        }
+
+        impl Transport for MockTransport {
+            fn dial(
+                &mut self,
+                _connection_id: ConnectionId,
+                _address: Multiaddr,
+            ) -> crate::Result<()> {
+                Ok(())
+            }
+
+            fn accept(
+                &mut self,
+                _connection_id: ConnectionId,
+            ) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
+                Ok(Box::pin(async { Ok(()) }))
+            }
+
+            fn accept_pending(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+                Ok(())
+            }
+
+            fn reject_pending(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+                Ok(())
+            }
+
+            fn reject(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+                Ok(())
+            }
+
+            fn open(
+                &mut self,
+                _connection_id: ConnectionId,
+                _addresses: Vec<Multiaddr>,
+            ) -> crate::Result<()> {
+                Ok(())
+            }
+
+            fn negotiate(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {
+                Ok(())
+            }
+
+            fn cancel(&mut self, _connection_id: ConnectionId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                self.rx.poll_recv(cx)
+            }
+        }
+
         let mut transports = TransportContext::new();
 
         let (tx_tcp, rx) = tokio::sync::mpsc::channel(8);
@@ -1517,15 +1573,19 @@ mod tests {
         let transport = MockTransport::new(rx);
         transports.register_transport(SupportedTransport::WebSocket, Box::new(transport));
 
+        let (tx_quic, rx) = tokio::sync::mpsc::channel(8);
+        let transport = MockTransport::new(rx);
+        transports.register_transport(SupportedTransport::Quic, Box::new(transport));
+
         assert_eq!(transports.index, 0);
-        assert_eq!(transports.transports.len(), 2);
+        assert_eq!(transports.transports.len(), 3);
         // No items.
         futures::future::poll_fn(|cx| match transports.poll_next_unpin(cx) {
             std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
             std::task::Poll::Pending => std::task::Poll::Ready(()),
         })
         .await;
-        assert_eq!(transports.index, 1);
+        assert_eq!(transports.index, 0);
 
         // Websocket events.
         tx_ws
@@ -1533,7 +1593,7 @@ mod tests {
                 connection_id: ConnectionId::from(1),
             })
             .await
-            .expect("chanel to be open");
+            .expect("channel to be open");
 
         let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
             .await
@@ -1543,7 +1603,7 @@ mod tests {
             event.1,
             TransportEvent::PendingInboundConnection { .. }
         ));
-        assert_eq!(transports.index, 0);
+        assert_eq!(transports.index, 2);
 
         // TCP events.
         tx_tcp
@@ -1551,7 +1611,7 @@ mod tests {
                 connection_id: ConnectionId::from(2),
             })
             .await
-            .expect("chanel to be open");
+            .expect("channel to be open");
 
         let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
             .await
@@ -1563,19 +1623,43 @@ mod tests {
         ));
         assert_eq!(transports.index, 1);
 
-        // Both transports produce events.
-        tx_ws
+        // QUIC events
+        tx_quic
             .send(TransportEvent::PendingInboundConnection {
                 connection_id: ConnectionId::from(3),
             })
             .await
-            .expect("chanel to be open");
-        tx_tcp
+            .expect("channel to be open");
+
+        let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
+            .await
+            .expect("expected event");
+        assert_eq!(event.0, SupportedTransport::Quic);
+        assert!(std::matches!(
+            event.1,
+            TransportEvent::PendingInboundConnection { .. }
+        ));
+        assert_eq!(transports.index, 0);
+
+        // All three transports produce events.
+        tx_ws
             .send(TransportEvent::PendingInboundConnection {
                 connection_id: ConnectionId::from(4),
             })
             .await
-            .expect("chanel to be open");
+            .expect("channel to be open");
+        tx_tcp
+            .send(TransportEvent::PendingInboundConnection {
+                connection_id: ConnectionId::from(5),
+            })
+            .await
+            .expect("channel to be open");
+        tx_quic
+            .send(TransportEvent::PendingInboundConnection {
+                connection_id: ConnectionId::from(6),
+            })
+            .await
+            .expect("channel to be open");
 
         let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
             .await
@@ -1585,7 +1669,7 @@ mod tests {
             event.1,
             TransportEvent::PendingInboundConnection { .. }
         ));
-        assert_eq!(transports.index, 0);
+        assert_eq!(transports.index, 1);
 
         let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
             .await
@@ -1595,7 +1679,17 @@ mod tests {
             event.1,
             TransportEvent::PendingInboundConnection { .. }
         ));
-        assert_eq!(transports.index, 1);
+        assert_eq!(transports.index, 2);
+
+        let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
+            .await
+            .expect("expected event");
+        assert_eq!(event.0, SupportedTransport::Quic);
+        assert!(std::matches!(
+            event.1,
+            TransportEvent::PendingInboundConnection { .. }
+        ));
+        assert_eq!(transports.index, 0);
     }
 
     #[test]
@@ -1609,12 +1703,14 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
     }
 
@@ -1629,6 +1725,7 @@ mod tests {
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/2"),
@@ -1638,6 +1735,7 @@ mod tests {
             ],
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
     }
 
@@ -1655,6 +1753,7 @@ mod tests {
             ],
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/2"),
@@ -1664,6 +1763,7 @@ mod tests {
             ],
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
     }
 

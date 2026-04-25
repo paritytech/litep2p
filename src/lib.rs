@@ -38,6 +38,7 @@ use crate::{
         mdns::Mdns,
         notification::NotificationProtocol,
         request_response::RequestResponseProtocol,
+        SubstreamKeepAlive,
     },
     transport::{
         manager::{SupportedTransport, TransportManager, TransportManagerBuilder},
@@ -174,7 +175,6 @@ impl Litep2p {
             .with_keypair(litep2p_config.keypair.clone())
             .with_supported_transports(supported_transports)
             .with_bandwidth_sink(bandwidth_sink.clone())
-            .with_max_parallel_dials(litep2p_config.max_parallel_dials)
             .with_connection_limits_config(litep2p_config.connection_limits)
             .build();
 
@@ -199,6 +199,7 @@ impl Litep2p {
                 config.fallback_names.clone(),
                 config.codec,
                 litep2p_config.keep_alive_timeout,
+                SubstreamKeepAlive::Yes,
             );
             let executor = Arc::clone(&litep2p_config.executor);
             litep2p_config.executor.run(Box::pin(async move {
@@ -219,6 +220,7 @@ impl Litep2p {
                 config.fallback_names.clone(),
                 config.codec,
                 litep2p_config.keep_alive_timeout,
+                SubstreamKeepAlive::Yes,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 RequestResponseProtocol::new(service, config).run().await
@@ -234,6 +236,8 @@ impl Litep2p {
                 Vec::new(),
                 protocol.codec(),
                 litep2p_config.keep_alive_timeout,
+                // TODO: make configurable by user.
+                SubstreamKeepAlive::Yes,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 let _ = protocol.run(service).await;
@@ -253,14 +257,15 @@ impl Litep2p {
                 Vec::new(),
                 ping_config.codec,
                 litep2p_config.keep_alive_timeout,
+                SubstreamKeepAlive::No,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 Ping::new(service, ping_config).run().await
             }));
         }
 
-        // start kademlia protocol event loop if enabled
-        if let Some(kademlia_config) = litep2p_config.kademlia.take() {
+        // start kademlia protocol event loops
+        for kademlia_config in litep2p_config.kademlia.into_iter() {
             tracing::debug!(
                 target: LOG_TARGET,
                 protocol_names = ?kademlia_config.protocol_names,
@@ -276,6 +281,7 @@ impl Litep2p {
                 fallback_names,
                 kademlia_config.codec,
                 litep2p_config.keep_alive_timeout,
+                SubstreamKeepAlive::Yes,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 let _ = Kademlia::new(service, kademlia_config).run().await;
@@ -297,6 +303,7 @@ impl Litep2p {
                     Vec::new(),
                     identify_config.codec,
                     litep2p_config.keep_alive_timeout,
+                    SubstreamKeepAlive::No,
                 );
                 identify_config.public = Some(litep2p_config.keypair.public().into());
 
@@ -317,6 +324,7 @@ impl Litep2p {
                 Vec::new(),
                 bitswap_config.codec,
                 litep2p_config.keep_alive_timeout,
+                SubstreamKeepAlive::Yes,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 Bitswap::new(service, bitswap_config).run().await
@@ -324,7 +332,8 @@ impl Litep2p {
         }
 
         // enable tcp transport if the config exists
-        if let Some(config) = litep2p_config.tcp.take() {
+        if let Some(mut config) = litep2p_config.tcp.take() {
+            config.max_parallel_dials = litep2p_config.max_parallel_dials;
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
                 <TcpTransport as TransportBuilder>::new(handle, config, resolver.clone())?;
@@ -369,7 +378,8 @@ impl Litep2p {
 
         // enable websocket transport if the config exists
         #[cfg(feature = "websocket")]
-        if let Some(config) = litep2p_config.websocket.take() {
+        if let Some(mut config) = litep2p_config.websocket.take() {
+            config.max_parallel_dials = litep2p_config.max_parallel_dials;
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
                 <WebSocketTransport as TransportBuilder>::new(handle, config, resolver)?;

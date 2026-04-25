@@ -47,6 +47,7 @@ struct TaskExecutor {
 }
 
 impl TaskExecutor {
+    #[allow(clippy::type_complexity)]
     pub fn new() -> (Self, Sender<Pin<Box<dyn Future<Output = ()> + Send>>>) {
         let (tx, rx) = channel(64);
 
