@@ -5,6 +5,120 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.3] - 2026-03-09
+
+This release bumps the rust yamux dependency to 0.13.10 to align with the latest upstream version, which includes important stability fixes.
+
+## [0.13.2] - 2026-03-02
+
+This is a hotfix release fixing ping protocol panic in debug builds. The release also includes WebRTC fixes.
+
+### Fixed
+
+- webrtc/fix: Ensure delay future is awaited ([#548](https://github.com/paritytech/litep2p/pull/548))
+- ping: Fix panic in debug builds ([#551](https://github.com/paritytech/litep2p/pull/551))
+- webrtc: Ensure nonstun packets cannot panic transport layer ([#550](https://github.com/paritytech/litep2p/pull/550))
+- webrtc: Avoid memory leaks by cleaning stale hashmap entries ([#549](https://github.com/paritytech/litep2p/pull/549))
+
+## [0.13.1] - 2026-02-27
+
+This release includes multiple fixes of transports and protocols, fixing connection stability issues with other librariies (specifically, [smoldot](https://github.com/smol-dot/smoldot/)) and increasing success rates of dialing & opening substreams, especially in extreme cases when remote nodes have a lot of private addresses published to the DHT.
+
+### Fixed
+
+- ping: Conform to the spec & exclude from connection keep-alive ([#416](https://github.com/paritytech/litep2p/pull/416))
+- transport: Make accept async to close the gap on service races ([#525](https://github.com/paritytech/litep2p/pull/525))
+- transport: Limit dial concurrency and bound total dialing time ([#538](https://github.com/paritytech/litep2p/pull/538))
+- webrtc: Support `FIN`/`FIN_ACK` handshake for substream shutdown ([#513](https://github.com/paritytech/litep2p/pull/513))
+- transport: Expose failed addresses to the transport manager ([#529](https://github.com/paritytech/litep2p/pull/529))
+
+### Changed
+
+- manager: Prioritize public addresses for dialing ([#530](https://github.com/paritytech/litep2p/pull/530))
+
+## [0.13.0] - 2026-01-21
+
+This release brings multiple fixes to both the transport and application-level protocols.
+
+Specifically, it enhances WebSocket stability by resolving AsyncWrite errors and ensuring that partial writes during the negotiation phase no longer trigger connection failures.
+
+At the same time, Bitswap client functionality is introduced, which makes this release semver breaking.
+
+### Added
+
+- Add Bitswap client ([#501](https://github.com/paritytech/litep2p/pull/501))
+
+### Fixed
+
+- notif/fix: Avoid CPU busy loops on litep2p full shutdown ([#521](https://github.com/paritytech/litep2p/pull/521))
+- protocol: Ensure transport manager knows about closed connections ([#515](https://github.com/paritytech/litep2p/pull/515))
+- substream: Decrement the bytes counter to avoid excessive flushing ([#511](https://github.com/paritytech/litep2p/pull/511))
+- crypto/noise: Improve stability of websockets by fixing AsyncWrite implementation ([#518](https://github.com/paritytech/litep2p/pull/518))
+- bitswap: Split block responses into batches under 2 MiB ([#516](https://github.com/paritytech/litep2p/pull/516))
+- crypto/noise: Fix connection negotiation logic on partial writes ([#519](https://github.com/paritytech/litep2p/pull/519))
+- substream/fix: Fix partial reads for ProtocolCodec::Identity ([#512](https://github.com/paritytech/litep2p/pull/512))
+- webrtc: Avoid panics returning error instead ([#509](https://github.com/paritytech/litep2p/pull/509))
+- bitswap: e2e test & max payload fix ([#508](https://github.com/paritytech/litep2p/pull/508))
+- tcp: Exit connections when events fail to propagate to protocols ([#506](https://github.com/paritytech/litep2p/pull/506))
+- webrtc: Avoid future being dropped when channel is full ([#483](https://github.com/paritytech/litep2p/pull/483))
+
+## [0.12.3] - 2025-12-16
+
+This release improves the robustness of the multistream-select negotiation over WebRTC transport and fixes inbound bandwidth metering on substreams. It also enhances the dialing success rate by improving the transport dialing logic. Additionally, it re-exports CID's multihash to facilitate the construction of CID V1.
+
+### Changed
+
+- transports: Improves the robustness and success rate of connection dialing  ([#495](https://github.com/paritytech/litep2p/pull/495))
+- types: Re-export cid's multihash to construct CID V1  ([#491](https://github.com/paritytech/litep2p/pull/491))
+
+### Fixed
+
+- fix: multistream-select negotiation on outbound substream over webrtc  ([#465](https://github.com/paritytech/litep2p/pull/465))
+- substream: Fix inbound bandwidth metering  ([#499](https://github.com/paritytech/litep2p/pull/499))
+
+## [0.12.2] - 2025-11-28
+
+This release allows all Bitswap CIDs (v1) to pass regardless of the used hash. It also enhances local address checks in the transport manager.
+
+### Changed
+
+- transport-service: Enhance logging with protocol names  ([#485](https://github.com/paritytech/litep2p/pull/485))
+- bitswap: Reexports for CID  ([#486](https://github.com/paritytech/litep2p/pull/486))
+- Allow all the Bitswap CIDs (v1) to pass regardless of used hash  ([#482](https://github.com/paritytech/litep2p/pull/482))
+- transport/manager: Enhance local address checks  ([#480](https://github.com/paritytech/litep2p/pull/480))
+
+## [0.12.1] - 2025-11-21
+
+This release adds support for connecting to multiple Kademlia DHT networks. The change is backward-compatible, no client code modifications should be needed compared to v0.12.0.
+
+### Changed
+
+- kad: Allow connecting to more than one DHT network ([#473](https://github.com/paritytech/litep2p/pull/473))
+- service: Log services that have closed ([#474](https://github.com/paritytech/litep2p/pull/474))
+
+### Fixed
+
+- update simple-dns ([#470](https://github.com/paritytech/litep2p/pull/470))
+
+## [0.12.0] - 2025-11-11
+
+This release adds `KademliaEvent::PutRecordSuccess` & `KademliaEvent::AddProviderSuccess` events to Kademlia, allowing to track whether publishing a record or a provider was successfull. While `PutRecordSuccess` was present in the previous versions of litep2p, it was actually never emitted. Note that `AddProviderSuccess` and `QueryFailed` are also generated during automatic provider refresh, so those may be emitted for `QueryId`s not known to the client code.
+
+### Added
+
+- kademlia: Track success of `ADD_PROVIDER` queries ([#432](https://github.com/paritytech/litep2p/pull/432))
+- kademlia: Workaround for dealing with not implemented `PUT_VALUE` ACKs ([#430](https://github.com/paritytech/litep2p/pull/430))
+- kademlia: Track success of `PUT_VALUE` queries ([#427](https://github.com/paritytech/litep2p/pull/427))
+
+### Fixed
+
+- Identify: gracefully close substream after sending payload ([#466](https://github.com/paritytech/litep2p/pull/466))
+- fix: transport context polling order ([#456](https://github.com/paritytech/litep2p/pull/456))
+
+### Changed
+
+- refactor: implement builder pattern for TransportManager ([#453](https://github.com/paritytech/litep2p/pull/453))
+
 ## [0.11.1] - 2025-10-28
 
 This release ensures that polling the yamux controller after an error does not lead to unexpected behavior.

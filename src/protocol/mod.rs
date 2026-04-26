@@ -36,7 +36,7 @@ use std::fmt::Debug;
 pub(crate) use connection::Permit;
 pub(crate) use protocol_set::{InnerTransportEvent, ProtocolCommand, ProtocolSet};
 
-pub use transport_service::TransportService;
+pub use transport_service::{SubstreamKeepAlive, TransportService};
 
 pub mod libp2p;
 pub mod mdns;

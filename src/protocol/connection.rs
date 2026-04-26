@@ -22,7 +22,7 @@
 
 use crate::{
     error::{Error, SubstreamError},
-    protocol::protocol_set::ProtocolCommand,
+    protocol::{protocol_set::ProtocolCommand, transport_service::SubstreamKeepAlive},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
 };
 
@@ -119,6 +119,7 @@ impl ConnectionHandle {
         fallback_names: Vec<ProtocolName>,
         substream_id: SubstreamId,
         permit: Permit,
+        keep_alive: SubstreamKeepAlive,
     ) -> Result<(), SubstreamError> {
         match &self.connection {
             ConnectionType::Active(active) => active.clone(),
@@ -131,6 +132,7 @@ impl ConnectionHandle {
             substream_id,
             connection_id: self.connection_id,
             permit,
+            keep_alive,
         })
         .map_err(|error| match error {
             TrySendError::Full(_) => SubstreamError::ChannelClogged,
@@ -158,7 +160,18 @@ impl ConnectionHandle {
     }
 }
 
-/// Type which allows the connection to be kept open.
+/// Type which allows to keep the connection opened and not allow the keep-alive mechanism to close
+/// it.
+///
+/// The [`Permit`] is created when beginning to open a substream and passed on until it reaches
+/// [`TransportService`](crate::protocol::TransportService), where the connection is upgraded
+/// (which means it won't be closed) and the permit is not needed anymore and dropped.
+///
+/// The [`Permit`] as also stored in the context of substreams that need to keep the connection
+/// alive while they exist (i.e., marked with [`SubstreamKeepAlive::Yes`]).
+///
+/// The permit is designed to be short-lived, please ensure it is dropped as soon as it is no longer
+/// relevant
 #[derive(Debug, Clone)]
 pub struct Permit {
     /// Active connection.
@@ -205,6 +218,7 @@ mod tests {
             Vec::new(),
             SubstreamId::new(),
             permit,
+            SubstreamKeepAlive::Yes,
         );
 
         assert!(result.is_ok());
@@ -224,6 +238,7 @@ mod tests {
             Vec::new(),
             SubstreamId::new(),
             permit,
+            SubstreamKeepAlive::Yes,
         );
 
         assert!(result.is_err());
@@ -241,6 +256,7 @@ mod tests {
             Vec::new(),
             SubstreamId::new(),
             permit,
+            SubstreamKeepAlive::Yes,
         );
         assert!(result.is_ok());
 
@@ -250,6 +266,7 @@ mod tests {
             Vec::new(),
             SubstreamId::new(),
             permit,
+            SubstreamKeepAlive::Yes,
         ) {
             Err(SubstreamError::ChannelClogged) => {}
             error => panic!("invalid error: {error:?}"),

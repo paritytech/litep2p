@@ -52,6 +52,10 @@ async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
     let mut litep2p1_connected = false;
     let mut litep2p2_connected = false;
 
+    // Disarm the first tick to avoid immediate timeouts.
+    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5));
+    ticker.tick().await;
+
     loop {
         tokio::select! {
             event = litep2p1.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() {
@@ -59,6 +63,9 @@ async fn connect_peers(litep2p1: &mut Litep2p, litep2p2: &mut Litep2p) {
             },
             event = litep2p2.next_event() => if let Litep2pEvent::ConnectionEstablished { .. } = event.unwrap() {
                 litep2p2_connected = true;
+            },
+            _ = ticker.tick() => {
+                panic!("peers failed to connect within timeout");
             }
         }
 
@@ -2219,7 +2226,7 @@ async fn zero_byte_handshake(transport1: Transport, transport2: Transport, hands
             fallback: None,
             direction: Direction::Outbound,
             peer: peer2,
-            handshake: handshake,
+            handshake,
         }
     );
 
@@ -4231,7 +4238,7 @@ async fn clogged_channel_disconnects_peer(transport1: Transport, transport2: Tra
     );
 
     // `peer2` is also reported that the substream is closed
-    if let Err(_) = tokio::time::timeout(Duration::from_secs(5), async move {
+    if tokio::time::timeout(Duration::from_secs(5), async move {
         loop {
             if let Some(NotificationEvent::NotificationStreamClosed { peer }) = handle2.next().await
             {
@@ -4241,6 +4248,7 @@ async fn clogged_channel_disconnects_peer(transport1: Transport, transport2: Tra
         }
     })
     .await
+    .is_err()
     {
         panic!("timeout")
     }

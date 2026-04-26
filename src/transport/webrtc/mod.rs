@@ -51,7 +51,7 @@ use tokio::{
 };
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{hash_map::Entry, HashMap, VecDeque},
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::Arc,
@@ -317,12 +317,13 @@ impl WebRtcTransport {
     ///
     /// Returns `true` if the client should be polled.
     fn on_socket_input(&mut self, source: SocketAddr, buffer: Vec<u8>) -> crate::Result<bool> {
-        if let Some(ConnectionContext {
-            peer,
-            connection_id,
-            tx,
-        }) = self.open.get_mut(&source)
-        {
+        if let Entry::Occupied(mut entry) = self.open.entry(source) {
+            let ConnectionContext {
+                peer,
+                connection_id,
+                tx,
+            } = entry.get_mut();
+
             match tx.try_send(buffer) {
                 Ok(_) => return Ok(false),
                 Err(TrySendError::Full(_)) => {
@@ -336,7 +337,18 @@ impl WebRtcTransport {
 
                     return Ok(false);
                 }
-                Err(TrySendError::Closed(_)) => return Ok(false),
+                Err(TrySendError::Closed(_)) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?source,
+                        ?peer,
+                        ?connection_id,
+                        "connection closed, removing stale entry",
+                    );
+
+                    entry.remove();
+                    return Ok(false);
+                }
             }
         }
 
@@ -359,15 +371,26 @@ impl WebRtcTransport {
                 "received non-stun message"
             );
 
-            if let Err(error) = self.opening.get_mut(&source).expect("to exist").on_input(contents)
-            {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?error,
-                    ?source,
-                    "failed to handle inbound datagram"
-                );
-            }
+            match self.opening.get_mut(&source) {
+                Some(connection) =>
+                    if let Err(error) = connection.on_input(contents) {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            ?error,
+                            ?source,
+                            "failed to handle inbound datagram"
+                        );
+                    },
+                None => {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        ?source,
+                        "received non-stun message from unknown peer",
+                    );
+                    return Err(Error::InvalidData);
+                }
+            };
+
             return Ok(true);
         }
 
@@ -532,7 +555,10 @@ impl Transport for WebRtcTransport {
         ))
     }
 
-    fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+    fn accept(
+        &mut self,
+        connection_id: ConnectionId,
+    ) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
         tracing::trace!(
             target: LOG_TARGET,
             ?connection_id,
@@ -562,19 +588,13 @@ impl Transport for WebRtcTransport {
 
         let rtc = connection.on_accept()?;
         let (tx, rx) = channel(self.datagram_buffer_size);
-        let protocol_set = self.context.protocol_set(connection_id);
+        let mut protocol_set = self.context.protocol_set(connection_id);
         let connection_id = endpoint.connection_id();
+        let endpoint_clone = endpoint.clone();
+        let executor = self.context.executor.clone();
+        let socket = Arc::clone(&self.socket);
+        let listen_address = self.listen_address;
 
-        let connection = WebRtcConnection::new(
-            rtc,
-            peer,
-            source,
-            self.listen_address,
-            Arc::clone(&self.socket),
-            protocol_set,
-            endpoint,
-            rx,
-        );
         self.open.insert(
             source,
             ConnectionContext {
@@ -584,11 +604,28 @@ impl Transport for WebRtcTransport {
             },
         );
 
-        self.context.executor.run(Box::pin(async move {
-            connection.run().await;
-        }));
+        Ok(Box::pin(async move {
+            // First, notify all protocols about the connection establishment
+            protocol_set.report_connection_established(peer, endpoint_clone).await?;
 
-        Ok(())
+            // After protocols are notified, create connection and spawn event loop
+            let connection = WebRtcConnection::new(
+                rtc,
+                peer,
+                source,
+                listen_address,
+                socket,
+                protocol_set,
+                endpoint,
+                rx,
+            );
+
+            executor.run(Box::pin(async move {
+                connection.run_event_loop().await;
+            }));
+
+            Ok(())
+        }))
     }
 
     fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
@@ -739,12 +776,7 @@ impl Stream for WebRtcTransport {
                             return None;
                         }
                         ConnectionEvent::Timeout { duration } => {
-                            this.timeouts.insert(
-                                source,
-                                Box::pin(async move {
-                                    Delay::new(duration);
-                                }),
-                            );
+                            this.timeouts.insert(source, Box::pin(Delay::new(duration)));
                             break;
                         }
                     }
@@ -783,6 +815,7 @@ impl Stream for WebRtcTransport {
 ///     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 /// ```
 fn is_stun_packet(bytes: &[u8]) -> bool {
+    const STUN_MAGIC_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];
     // 20 bytes for the header, then follows attributes.
-    bytes.len() >= 20 && bytes[0] < 2
+    bytes.len() >= 20 && bytes[0] < 2 && bytes[4..8] == STUN_MAGIC_COOKIE
 }

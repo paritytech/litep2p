@@ -176,14 +176,14 @@ impl OpeningWebRtcConnection {
             .rtc
             .direct_api()
             .remote_dtls_fingerprint()
-            .clone()
-            .expect("fingerprint to exist");
+            .expect("fingerprint to exist")
+            .clone();
         Self::fingerprint_to_bytes(&fingerprint)
     }
 
     /// Get local fingerprint as bytes.
     fn local_fingerprint(&mut self) -> Vec<u8> {
-        Self::fingerprint_to_bytes(&self.rtc.direct_api().local_dtls_fingerprint())
+        Self::fingerprint_to_bytes(self.rtc.direct_api().local_dtls_fingerprint())
     }
 
     /// Convert `Fingerprint` to bytes.
@@ -207,7 +207,7 @@ impl OpeningWebRtcConnection {
         };
 
         // create first noise handshake and send it to remote peer
-        let payload = WebRtcMessage::encode(context.first_message(Role::Dialer)?);
+        let payload = WebRtcMessage::encode(context.first_message(Role::Dialer)?, None);
 
         self.rtc
             .channel(self.noise_channel_id)
@@ -268,8 +268,8 @@ impl OpeningWebRtcConnection {
             .rtc
             .direct_api()
             .remote_dtls_fingerprint()
-            .clone()
             .expect("fingerprint to exist")
+            .clone()
             .bytes;
 
         const MULTIHASH_SHA256_CODE: u64 = 0x12;
@@ -300,7 +300,7 @@ impl OpeningWebRtcConnection {
         };
 
         // create second noise handshake message and send it to remote
-        let payload = WebRtcMessage::encode(context.second_message()?);
+        let payload = WebRtcMessage::encode(context.second_message()?, None);
 
         let mut channel =
             self.rtc.channel(self.noise_channel_id).ok_or(Error::ChannelDoesntExist)?;
@@ -409,8 +409,15 @@ impl OpeningWebRtcConnection {
                             continue;
                         }
 
-                        // TODO: https://github.com/paritytech/litep2p/issues/350 no expect
-                        self.on_noise_channel_open().expect("to succeed");
+                        if let Err(error) = self.on_noise_channel_open() {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                connection_id = ?self.connection_id,
+                                ?error,
+                                "noise channel open failed",
+                            );
+                            return WebRtcEvent::ConnectionClosed;
+                        }
                     }
                     Event::ChannelData(data) => {
                         tracing::trace!(
@@ -428,8 +435,18 @@ impl OpeningWebRtcConnection {
                             continue;
                         }
 
-                        // TODO: https://github.com/paritytech/litep2p/issues/350 no expect
-                        return self.on_noise_channel_data(data.data).expect("to succeed");
+                        match self.on_noise_channel_data(data.data) {
+                            Ok(event) => return event,
+                            Err(error) => {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    connection_id = ?self.connection_id,
+                                    ?error,
+                                    "noise channel data handling failed",
+                                );
+                                return WebRtcEvent::ConnectionClosed;
+                            }
+                        }
                     }
                     Event::ChannelClose(channel_id) => {
                         tracing::debug!(target: LOG_TARGET, ?channel_id, "channel closed");

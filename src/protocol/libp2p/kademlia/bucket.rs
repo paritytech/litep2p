@@ -104,7 +104,7 @@ impl KBucket {
     /// by distance.
     pub fn closest_iter<K: Clone>(&self, target: &Key<K>) -> impl Iterator<Item = &KademliaPeer> {
         let mut nodes: Vec<_> = self.nodes.iter().collect();
-        nodes.sort_by(|a, b| target.distance(&a.key).cmp(&target.distance(&b.key)));
+        nodes.sort_by_key(|a| target.distance(&a.key));
         nodes.into_iter().filter(|peer| !peer.address_store.is_empty())
     }
 }

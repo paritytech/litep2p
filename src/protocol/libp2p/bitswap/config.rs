@@ -30,8 +30,13 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 /// IPFS Bitswap protocol name as a string.
 pub const PROTOCOL_NAME: &str = "/ipfs/bitswap/1.2.0";
 
-/// Maximum Size for `/ipfs/bitswap/1.2.0` payloads.
-const MAX_PAYLOAD_SIZE: usize = 2_097_152;
+/// Maximum size for `/ipfs/bitswap/1.2.0` substream message. Includes enough room for protobuf
+/// overhead. Enforced on the transport level.
+pub const MAX_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
+
+/// Maximum batch size of all blocks in a single Bitswap message combined. Enforced on the
+/// application protocol level.
+pub const MAX_BATCH_SIZE: usize = 2 * 1024 * 1024;
 
 /// Bitswap configuration.
 #[derive(Debug)]
@@ -60,7 +65,7 @@ impl Config {
                 cmd_rx,
                 event_tx,
                 protocol: ProtocolName::from(PROTOCOL_NAME),
-                codec: ProtocolCodec::UnsignedVarint(Some(MAX_PAYLOAD_SIZE)),
+                codec: ProtocolCodec::UnsignedVarint(Some(MAX_MESSAGE_SIZE)),
             },
             BitswapHandle::new(event_rx, cmd_tx),
         )

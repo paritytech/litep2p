@@ -260,6 +260,23 @@ impl Stream for KeepAliveTracker {
     }
 }
 
+/// Whether this protocol substream activity can keep connection alive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubstreamKeepAlive {
+    /// Yes.
+    Yes,
+    /// No.
+    No,
+}
+
+impl SubstreamKeepAlive {
+    /// Shortcut to `(self == SubstreamKeepAlive::Yes).then()`.
+    #[inline]
+    pub fn then<T, F: FnOnce() -> T>(&self, f: F) -> Option<T> {
+        (*self == SubstreamKeepAlive::Yes).then(f)
+    }
+}
+
 /// Provides an interfaces for [`Litep2p`](crate::Litep2p) protocols to interact
 /// with the underlying transport protocols.
 #[derive(Debug)]
@@ -287,6 +304,9 @@ pub struct TransportService {
 
     /// Close the connection if no substreams are open within this time frame.
     keep_alive_tracker: KeepAliveTracker,
+
+    /// Whether this protocol susbstreams should keep connection alive.
+    substream_keep_alive: SubstreamKeepAlive,
 }
 
 impl TransportService {
@@ -298,6 +318,7 @@ impl TransportService {
         next_substream_id: Arc<AtomicUsize>,
         transport_handle: TransportManagerHandle,
         keep_alive_timeout: Duration,
+        substream_keep_alive: SubstreamKeepAlive,
     ) -> (Self, Sender<InnerTransportEvent>) {
         let (tx, rx) = channel(DEFAULT_CHANNEL_SIZE);
 
@@ -313,6 +334,7 @@ impl TransportService {
                 next_substream_id,
                 connections: HashMap::new(),
                 keep_alive_tracker,
+                substream_keep_alive,
             },
             tx,
         )
@@ -339,10 +361,11 @@ impl TransportService {
         tracing::debug!(
             target: LOG_TARGET,
             ?peer,
-            protocol = %self.protocol,
             ?endpoint,
             ?connection_id,
-            "connection established",
+            protocol = %self.protocol,
+            current_state = ?self.connections.get(&peer),
+            "on connection established",
         );
 
         match self.connections.get_mut(&peer) {
@@ -353,6 +376,7 @@ impl TransportService {
                         ?peer,
                         ?connection_id,
                         ?endpoint,
+                        protocol = %self.protocol,
                         "ignoring third connection",
                     );
                     None
@@ -360,12 +384,30 @@ impl TransportService {
                 None => {
                     self.keep_alive_tracker.on_connection_established(peer, connection_id);
 
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?endpoint,
+                        ?connection_id,
+                        protocol = %self.protocol,
+                        "secondary connection established",
+                    );
+
                     context.secondary = Some(handle);
 
                     None
                 }
             },
             None => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?endpoint,
+                    ?connection_id,
+                    protocol = %self.protocol,
+                    "primary connection established",
+                );
+
                 self.connections.insert(peer, ConnectionContext::new(handle));
 
                 self.keep_alive_tracker.on_connection_established(peer, connection_id);
@@ -381,6 +423,15 @@ impl TransportService {
         peer: PeerId,
         connection_id: ConnectionId,
     ) -> Option<TransportEvent> {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            ?connection_id,
+            protocol = %self.protocol,
+            current_state = ?self.connections.get(&peer),
+            "on connection closed",
+        );
+
         self.keep_alive_tracker.on_connection_closed(peer, connection_id);
 
         let Some(context) = self.connections.get_mut(&peer) else {
@@ -388,6 +439,7 @@ impl TransportService {
                 target: LOG_TARGET,
                 ?peer,
                 ?connection_id,
+                protocol = %self.protocol,
                 "connection closed to a non-existent peer",
             );
 
@@ -398,7 +450,13 @@ impl TransportService {
         // if the primary connection was closed, check if there exist a secondary connection
         // and if it does, convert the secondary connection a primary connection
         if context.primary.connection_id() == &connection_id {
-            tracing::trace!(target: LOG_TARGET, ?peer, ?connection_id, "primary connection closed");
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?peer,
+                ?connection_id,
+                protocol = %self.protocol,
+                "primary connection closed"
+            );
 
             match context.secondary.take() {
                 None => {
@@ -410,6 +468,7 @@ impl TransportService {
                         target: LOG_TARGET,
                         ?peer,
                         ?connection_id,
+                        protocol = %self.protocol,
                         "switch to secondary connection",
                     );
 
@@ -425,6 +484,7 @@ impl TransportService {
                     target: LOG_TARGET,
                     ?peer,
                     ?connection_id,
+                    protocol = %self.protocol,
                     "secondary connection closed",
                 );
 
@@ -436,6 +496,7 @@ impl TransportService {
                     ?peer,
                     ?connection_id,
                     ?connection_state,
+                    protocol = %self.protocol,
                     "connection closed but it doesn't exist",
                 );
 
@@ -448,6 +509,13 @@ impl TransportService {
     ///
     /// Call fails if `Litep2p` doesn't have a known address for the peer.
     pub fn dial(&mut self, peer: &PeerId) -> Result<(), ImmediateDialError> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            protocol = %self.protocol,
+            "Dial peer requested",
+        );
+
         self.transport_handle.dial(peer)
     }
 
@@ -460,6 +528,13 @@ impl TransportService {
     /// since `Litep2p` internally keeps track of all peer addresses it has learned through user
     /// calling this function, Kademlia peer discoveries and `Identify` responses.
     pub fn dial_address(&mut self, address: Multiaddr) -> Result<(), ImmediateDialError> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?address,
+            protocol = %self.protocol,
+            "Dial address requested",
+        );
+
         self.transport_handle.dial_address(address)
     }
 
@@ -494,7 +569,11 @@ impl TransportService {
 
         let connection_id = *connection.connection_id();
 
+        // This permit will be passed on until the substream is reported back to
+        // [`TransportService`] in [`InnerTransportEvent::SubstreamOpened`] and connection
+        // upgraded.
         let permit = connection.try_get_permit().ok_or(SubstreamError::ConnectionClosed)?;
+
         let substream_id =
             SubstreamId::from(self.next_substream_id.fetch_add(1usize, Ordering::Relaxed));
 
@@ -507,8 +586,10 @@ impl TransportService {
             "open substream",
         );
 
-        self.keep_alive_tracker.substream_activity(peer, connection_id);
-        connection.try_upgrade();
+        if self.substream_keep_alive == SubstreamKeepAlive::Yes {
+            self.keep_alive_tracker.substream_activity(peer, connection_id);
+            connection.try_upgrade();
+        }
 
         connection
             .open_substream(
@@ -516,6 +597,7 @@ impl TransportService {
                 self.fallback_names.clone(),
                 substream_id,
                 permit,
+                self.substream_keep_alive,
             )
             .map(|_| substream_id)
     }
@@ -559,12 +641,16 @@ impl Stream for TransportService {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let protocol_name = self.protocol.clone();
-        let duration = self.keep_alive_tracker.keep_alive_timeout;
+        let keep_alive_timeout = self.keep_alive_tracker.keep_alive_timeout;
 
         while let Poll::Ready(event) = self.rx.poll_recv(cx) {
             match event {
                 None => {
-                    tracing::warn!(target: LOG_TARGET, "transport service closed");
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        protocol = ?protocol_name,
+                        "transport service closed"
+                    );
                     return Poll::Ready(None);
                 }
                 Some(InnerTransportEvent::ConnectionEstablished {
@@ -591,13 +677,20 @@ impl Stream for TransportService {
                     direction,
                     substream,
                     connection_id,
+                    opening_permit,
                 }) => {
-                    if protocol == self.protocol {
+                    if protocol == self.protocol
+                        && self.substream_keep_alive == SubstreamKeepAlive::Yes
+                    {
                         self.keep_alive_tracker.substream_activity(peer, connection_id);
                         if let Some(context) = self.connections.get_mut(&peer) {
                             context.try_upgrade(&connection_id);
                         }
                     }
+
+                    // Connection is upgraded, we must now drop the permit.
+                    // This is for the reader, not for compiler.
+                    drop(opening_permit);
 
                     return Poll::Ready(Some(TransportEvent::SubstreamOpened {
                         peer,
@@ -620,7 +713,7 @@ impl Stream for TransportService {
                     ?peer,
                     ?connection_id,
                     protocol = ?protocol_name,
-                    ?duration,
+                    timeout = ?keep_alive_timeout,
                     "keep-alive timeout over, downgrade connection",
                 );
 
@@ -636,7 +729,7 @@ impl Stream for TransportService {
 mod tests {
     use super::*;
     use crate::{
-        protocol::{ProtocolCommand, TransportService},
+        protocol::{ProtocolCommand, SubstreamKeepAlive, TransportService},
         transport::{
             manager::{handle::InnerTransportManagerCommand, TransportManagerHandle},
             KEEP_ALIVE_TIMEOUT,
@@ -671,6 +764,7 @@ mod tests {
             Arc::new(AtomicUsize::new(0usize)),
             handle,
             KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
         );
 
         (service, sender, cmd_rx)
@@ -983,7 +1077,7 @@ mod tests {
         };
 
         // verify that the primary connection has been replaced
-        assert!(service.connections.get(&peer).is_none());
+        assert!(!service.connections.contains_key(&peer));
         assert!(cmd_rx2.try_recv().is_err());
     }
 
@@ -1054,7 +1148,7 @@ mod tests {
         // Because the connection was closed, the peer is no longer tracked for keep-alive.
         // This leads to better tracking overall since we don't have to track stale connections.
         assert!(service.keep_alive_tracker.last_activity.is_empty());
-        assert!(service.connections.get(&peer).is_none());
+        assert!(!service.connections.contains_key(&peer));
 
         // Register new primary connection.
         let (cmd_tx1, _cmd_rx1) = channel(64);

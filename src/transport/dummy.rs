@@ -25,7 +25,7 @@ use crate::{
     types::ConnectionId,
 };
 
-use futures::Stream;
+use futures::{future::BoxFuture, Stream};
 use multiaddr::Multiaddr;
 
 use std::{
@@ -71,8 +71,8 @@ impl Transport for DummyTransport {
         Ok(())
     }
 
-    fn accept(&mut self, _: ConnectionId) -> crate::Result<()> {
-        Ok(())
+    fn accept(&mut self, _: ConnectionId) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
+        Ok(Box::pin(async { Ok(()) }))
     }
 
     fn accept_pending(&mut self, _connection_id: ConnectionId) -> crate::Result<()> {

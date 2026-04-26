@@ -104,7 +104,7 @@ pub struct ConfigBuilder {
     identify: Option<identify::Config>,
 
     /// Kademlia protocol config.
-    kademlia: Option<kademlia::Config>,
+    kademlia: Vec<kademlia::Config>,
 
     /// Bitswap protocol config.
     bitswap: Option<bitswap::Config>,
@@ -161,7 +161,7 @@ impl ConfigBuilder {
             keypair: None,
             ping: None,
             identify: None,
-            kademlia: None,
+            kademlia: Vec::new(),
             bitswap: None,
             mdns: None,
             executor: None,
@@ -245,7 +245,7 @@ impl ConfigBuilder {
 
     /// Enable IPFS Kademlia protocol.
     pub fn with_libp2p_kademlia(mut self, config: kademlia::Config) -> Self {
-        self.kademlia = Some(config);
+        self.kademlia.push(config);
         self
     }
 
@@ -291,8 +291,10 @@ impl ConfigBuilder {
     }
 
     /// How many addresses should litep2p attempt to dial in parallel.
+    ///
+    /// The provided number is clamped to a minimum of 1.
     pub fn with_max_parallel_dials(mut self, max_parallel_dials: usize) -> Self {
-        self.max_parallel_dials = max_parallel_dials;
+        self.max_parallel_dials = max_parallel_dials.max(1);
         self
     }
 
@@ -334,7 +336,7 @@ impl ConfigBuilder {
             custom_transports: self.custom_transports,
             ping: self.ping.take(),
             identify: self.identify.take(),
-            kademlia: self.kademlia.take(),
+            kademlia: self.kademlia,
             bitswap: self.bitswap.take(),
             max_parallel_dials: self.max_parallel_dials,
             executor: self.executor.map_or(Arc::new(DefaultExecutor {}), |executor| executor),
@@ -385,7 +387,7 @@ pub struct Litep2pConfig {
     pub(crate) identify: Option<identify::Config>,
 
     /// Kademlia protocol configuration, if enabled.
-    pub(crate) kademlia: Option<kademlia::Config>,
+    pub(crate) kademlia: Vec<kademlia::Config>,
 
     /// Bitswap protocol configuration, if enabled.
     pub(crate) bitswap: Option<bitswap::Config>,
