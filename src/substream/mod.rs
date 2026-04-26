@@ -38,9 +38,8 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use unsigned_varint::{decode, encode};
 
 use std::{
-    collections::{hash_map::Entry, HashMap, VecDeque},
+    collections::VecDeque,
     fmt,
-    hash::Hash,
     io::ErrorKind,
     pin::Pin,
     task::{Context, Poll},
@@ -418,28 +417,34 @@ impl Substream {
 
         match &mut self.substream {
             #[cfg(test)]
-            SubstreamType::Mock(ref mut substream) =>
-                futures::SinkExt::send(substream, bytes).await,
+            SubstreamType::Mock(ref mut substream) => {
+                futures::SinkExt::send(substream, bytes).await
+            }
             SubstreamType::Tcp(ref mut substream) => match self.codec {
                 ProtocolCodec::Unspecified => panic!("codec is unspecified"),
-                ProtocolCodec::Identity(payload_size) =>
-                    Self::send_identity_payload(substream, payload_size, bytes).await,
-                ProtocolCodec::UnsignedVarint(max_size) =>
-                    Self::send_unsigned_varint_payload(substream, bytes, max_size).await,
+                ProtocolCodec::Identity(payload_size) => {
+                    Self::send_identity_payload(substream, payload_size, bytes).await
+                }
+                ProtocolCodec::UnsignedVarint(max_size) => {
+                    Self::send_unsigned_varint_payload(substream, bytes, max_size).await
+                }
             },
             #[cfg(feature = "websocket")]
             SubstreamType::WebSocket(ref mut substream) => match self.codec {
                 ProtocolCodec::Unspecified => panic!("codec is unspecified"),
-                ProtocolCodec::Identity(payload_size) =>
-                    Self::send_identity_payload(substream, payload_size, bytes).await,
-                ProtocolCodec::UnsignedVarint(max_size) =>
-                    Self::send_unsigned_varint_payload(substream, bytes, max_size).await,
+                ProtocolCodec::Identity(payload_size) => {
+                    Self::send_identity_payload(substream, payload_size, bytes).await
+                }
+                ProtocolCodec::UnsignedVarint(max_size) => {
+                    Self::send_unsigned_varint_payload(substream, bytes, max_size).await
+                }
             },
             #[cfg(feature = "quic")]
             SubstreamType::Quic(ref mut substream) => match self.codec {
                 ProtocolCodec::Unspecified => panic!("codec is unspecified"),
-                ProtocolCodec::Identity(payload_size) =>
-                    Self::send_identity_payload(substream, payload_size, bytes).await,
+                ProtocolCodec::Identity(payload_size) => {
+                    Self::send_identity_payload(substream, payload_size, bytes).await
+                }
                 ProtocolCodec::UnsignedVarint(max_size) => {
                     check_size!(max_size, bytes.len());
 
@@ -453,10 +458,12 @@ impl Substream {
             #[cfg(feature = "webrtc")]
             SubstreamType::WebRtc(ref mut substream) => match self.codec {
                 ProtocolCodec::Unspecified => panic!("codec is unspecified"),
-                ProtocolCodec::Identity(payload_size) =>
-                    Self::send_identity_payload(substream, payload_size, bytes).await,
-                ProtocolCodec::UnsignedVarint(max_size) =>
-                    Self::send_unsigned_varint_payload(substream, bytes, max_size).await,
+                ProtocolCodec::Identity(payload_size) => {
+                    Self::send_identity_payload(substream, payload_size, bytes).await
+                }
+                ProtocolCodec::UnsignedVarint(max_size) => {
+                    Self::send_unsigned_varint_payload(substream, bytes, max_size).await
+                }
             },
         }
     }
@@ -625,12 +632,13 @@ impl Stream for Substream {
 
                                         match read_payload_size(&this.size_vec[..this.offset]) {
                                             Err(ReadError::NotEnoughBytes) => continue,
-                                            Err(_) =>
+                                            Err(_) => {
                                                 return Poll::Ready(Some(Err(
                                                     SubstreamError::ReadFailure(Some(
                                                         this.substream_id,
                                                     )),
-                                                ))),
+                                                )))
+                                            }
                                             Ok((size, num_bytes)) => {
                                                 debug_assert_eq!(num_bytes, this.offset);
 
@@ -769,91 +777,5 @@ impl Sink<Bytes> for Substream {
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         poll_shutdown!(&mut self.substream, cx).map_err(From::from)
-    }
-}
-
-/// Substream set key.
-pub trait SubstreamSetKey: Hash + Unpin + fmt::Debug + PartialEq + Eq + Copy {}
-
-impl<K: Hash + Unpin + fmt::Debug + PartialEq + Eq + Copy> SubstreamSetKey for K {}
-
-/// Substream set.
-// TODO: https://github.com/paritytech/litep2p/issues/342 remove this.
-#[derive(Debug, Default)]
-pub struct SubstreamSet<K, S>
-where
-    K: SubstreamSetKey,
-    S: Stream<Item = Result<BytesMut, SubstreamError>> + Unpin,
-{
-    substreams: HashMap<K, S>,
-}
-
-impl<K, S> SubstreamSet<K, S>
-where
-    K: SubstreamSetKey,
-    S: Stream<Item = Result<BytesMut, SubstreamError>> + Unpin,
-{
-    /// Create new [`SubstreamSet`].
-    pub fn new() -> Self {
-        Self {
-            substreams: HashMap::new(),
-        }
-    }
-
-    /// Add new substream to the set.
-    pub fn insert(&mut self, key: K, substream: S) {
-        match self.substreams.entry(key) {
-            Entry::Vacant(entry) => {
-                entry.insert(substream);
-            }
-            Entry::Occupied(_) => {
-                tracing::error!(?key, "substream already exists");
-                debug_assert!(false);
-            }
-        }
-    }
-
-    /// Remove substream from the set.
-    pub fn remove(&mut self, key: &K) -> Option<S> {
-        self.substreams.remove(key)
-    }
-
-    /// Get mutable reference to stored substream.
-    #[cfg(test)]
-    pub fn get_mut(&mut self, key: &K) -> Option<&mut S> {
-        self.substreams.get_mut(key)
-    }
-
-    /// Get size of [`SubstreamSet`].
-    pub fn len(&self) -> usize {
-        self.substreams.len()
-    }
-
-    /// Check if [`SubstreamSet`] is empty.
-    pub fn is_empty(&self) -> bool {
-        self.substreams.is_empty()
-    }
-}
-
-impl<K, S> Stream for SubstreamSet<K, S>
-where
-    K: SubstreamSetKey,
-    S: Stream<Item = Result<BytesMut, SubstreamError>> + Unpin,
-{
-    type Item = (K, <S as Stream>::Item);
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let inner = Pin::into_inner(self);
-
-        for (key, substream) in inner.substreams.iter_mut() {
-            match Pin::new(substream).poll_next(cx) {
-                Poll::Pending => continue,
-                Poll::Ready(Some(data)) => return Poll::Ready(Some((*key, data))),
-                Poll::Ready(None) =>
-                    return Poll::Ready(Some((*key, Err(SubstreamError::ConnectionClosed)))),
-            }
-        }
-
-        Poll::Pending
     }
 }
