@@ -417,34 +417,28 @@ impl Substream {
 
         match &mut self.substream {
             #[cfg(test)]
-            SubstreamType::Mock(ref mut substream) => {
-                futures::SinkExt::send(substream, bytes).await
-            }
+            SubstreamType::Mock(ref mut substream) =>
+                futures::SinkExt::send(substream, bytes).await,
             SubstreamType::Tcp(ref mut substream) => match self.codec {
                 ProtocolCodec::Unspecified => panic!("codec is unspecified"),
-                ProtocolCodec::Identity(payload_size) => {
-                    Self::send_identity_payload(substream, payload_size, bytes).await
-                }
-                ProtocolCodec::UnsignedVarint(max_size) => {
-                    Self::send_unsigned_varint_payload(substream, bytes, max_size).await
-                }
+                ProtocolCodec::Identity(payload_size) =>
+                    Self::send_identity_payload(substream, payload_size, bytes).await,
+                ProtocolCodec::UnsignedVarint(max_size) =>
+                    Self::send_unsigned_varint_payload(substream, bytes, max_size).await,
             },
             #[cfg(feature = "websocket")]
             SubstreamType::WebSocket(ref mut substream) => match self.codec {
                 ProtocolCodec::Unspecified => panic!("codec is unspecified"),
-                ProtocolCodec::Identity(payload_size) => {
-                    Self::send_identity_payload(substream, payload_size, bytes).await
-                }
-                ProtocolCodec::UnsignedVarint(max_size) => {
-                    Self::send_unsigned_varint_payload(substream, bytes, max_size).await
-                }
+                ProtocolCodec::Identity(payload_size) =>
+                    Self::send_identity_payload(substream, payload_size, bytes).await,
+                ProtocolCodec::UnsignedVarint(max_size) =>
+                    Self::send_unsigned_varint_payload(substream, bytes, max_size).await,
             },
             #[cfg(feature = "quic")]
             SubstreamType::Quic(ref mut substream) => match self.codec {
                 ProtocolCodec::Unspecified => panic!("codec is unspecified"),
-                ProtocolCodec::Identity(payload_size) => {
-                    Self::send_identity_payload(substream, payload_size, bytes).await
-                }
+                ProtocolCodec::Identity(payload_size) =>
+                    Self::send_identity_payload(substream, payload_size, bytes).await,
                 ProtocolCodec::UnsignedVarint(max_size) => {
                     check_size!(max_size, bytes.len());
 
@@ -458,12 +452,10 @@ impl Substream {
             #[cfg(feature = "webrtc")]
             SubstreamType::WebRtc(ref mut substream) => match self.codec {
                 ProtocolCodec::Unspecified => panic!("codec is unspecified"),
-                ProtocolCodec::Identity(payload_size) => {
-                    Self::send_identity_payload(substream, payload_size, bytes).await
-                }
-                ProtocolCodec::UnsignedVarint(max_size) => {
-                    Self::send_unsigned_varint_payload(substream, bytes, max_size).await
-                }
+                ProtocolCodec::Identity(payload_size) =>
+                    Self::send_identity_payload(substream, payload_size, bytes).await,
+                ProtocolCodec::UnsignedVarint(max_size) =>
+                    Self::send_unsigned_varint_payload(substream, bytes, max_size).await,
             },
         }
     }
@@ -632,13 +624,12 @@ impl Stream for Substream {
 
                                         match read_payload_size(&this.size_vec[..this.offset]) {
                                             Err(ReadError::NotEnoughBytes) => continue,
-                                            Err(_) => {
+                                            Err(_) =>
                                                 return Poll::Ready(Some(Err(
                                                     SubstreamError::ReadFailure(Some(
                                                         this.substream_id,
                                                     )),
-                                                )))
-                                            }
+                                                ))),
                                             Ok((size, num_bytes)) => {
                                                 debug_assert_eq!(num_bytes, this.offset);
 
