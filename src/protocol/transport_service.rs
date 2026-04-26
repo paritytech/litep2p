@@ -296,7 +296,7 @@ pub struct TransportService {
     /// Transport handle.
     transport_handle: TransportManagerHandle,
 
-    /// RX channel for receiving events from tranports and connections.
+    /// RX channel for receiving events from transports and connections.
     rx: Receiver<InnerTransportEvent>,
 
     /// Next substream ID.
