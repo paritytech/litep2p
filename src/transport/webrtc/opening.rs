@@ -189,7 +189,7 @@ impl OpeningWebRtcConnection {
 
     /// Convert `Fingerprint` to bytes.
     fn fingerprint_to_bytes(fingerprint: &Fingerprint) -> Vec<u8> {
-        multihash::Multihash::<64>::wrap(u64::from(Code::Sha2_256), &fingerprint.bytes)
+        multihash::Multihash::<64>::wrap(Code::Sha2_256.into(), &fingerprint.bytes)
             .expect("fingerprint's len to be 32 bytes")
             .to_bytes()
     }
@@ -273,7 +273,7 @@ impl OpeningWebRtcConnection {
             .bytes;
 
         let certificate =
-            multihash::Multihash::<64>::wrap(u64::from(Code::Sha2_256), &remote_fingerprint)
+            multihash::Multihash::<64>::wrap(Code::Sha2_256.into(), &remote_fingerprint)
                 .expect("fingerprint's len to be 32 bytes");
 
         let address = Multiaddr::empty()
