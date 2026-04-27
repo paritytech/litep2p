@@ -32,24 +32,24 @@ use litep2p::transport::quic::config::Config as QuicConfig;
 #[cfg(feature = "websocket")]
 use litep2p::transport::websocket::config::Config as WebSocketConfig;
 
+type CustomTransportEntry = (
+    &'static str,
+    fn(
+        TransportHandle,
+        Arc<TokioResolver>,
+    ) -> litep2p::Result<(
+        Box<dyn litep2p::transport::Transport<Item = TransportEvent>>,
+        Vec<Multiaddr>,
+    )>,
+);
+
 pub(crate) enum Transport {
     Tcp(TcpConfig),
     #[cfg(feature = "quic")]
     Quic(QuicConfig),
     #[cfg(feature = "websocket")]
     WebSocket(WebSocketConfig),
-    Custom(
-        (
-            &'static str,
-            fn(
-                TransportHandle,
-                Arc<TokioResolver>,
-            ) -> litep2p::Result<(
-                Box<dyn litep2p::transport::Transport<Item = TransportEvent>>,
-                Vec<Multiaddr>,
-            )>,
-        ),
-    ),
+    Custom(CustomTransportEntry),
 }
 
 pub(crate) fn add_transport(config: ConfigBuilder, transport: Transport) -> ConfigBuilder {
