@@ -499,6 +499,15 @@ impl TransportManager {
         self.transport_manager_handle.add_known_address(&peer, address)
     }
 
+    /// Add one or more known addresses for `peer` with priority.
+    pub fn add_priority_address(
+        &mut self,
+        peer: PeerId,
+        address: impl Iterator<Item = Multiaddr>,
+    ) -> usize {
+        self.transport_manager_handle.add_priority_address(&peer, address)
+    }
+
     /// Return multiple addresses to dial on supported protocols.
     fn supported_transports_addresses(
         addresses: &[Multiaddr],
