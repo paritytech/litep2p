@@ -605,8 +605,6 @@ mod tests {
         assert_eq!(store.addresses.get(&address).unwrap().score, failure_score);
     }
 
-    // --- AddressRecord::new peer ID handling ---
-
     #[test]
     fn address_record_new_appends_peer_id_when_missing() {
         let peer = PeerId::random();

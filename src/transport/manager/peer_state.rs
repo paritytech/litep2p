@@ -945,8 +945,6 @@ mod tests {
         );
     }
 
-    // --- ensure_peer_id (tested via ConnectionRecord::new) ---
-
     #[test]
     fn ensure_peer_id_appended_when_missing() {
         let peer = PeerId::random();
