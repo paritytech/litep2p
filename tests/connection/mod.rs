@@ -96,6 +96,7 @@ async fn two_litep2ps_work_websocket() {
     .await;
 }
 
+#[allow(clippy::result_large_err)]
 #[tokio::test]
 async fn two_litep2ps_work_custom() {
     let transport1 = Transport::Custom(("tcp1", |handle, resolver| {
