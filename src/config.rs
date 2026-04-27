@@ -29,8 +29,9 @@ use crate::{
         notification, request_response, UserProtocol,
     },
     transport::{
-        manager::limits::ConnectionLimitsConfig, tcp::config::Config as TcpConfig,
-        KEEP_ALIVE_TIMEOUT, MAX_PARALLEL_DIALS,
+        manager::{limits::ConnectionLimitsConfig, TransportHandle},
+        tcp::config::Config as TcpConfig,
+        Transport, TransportEvent, KEEP_ALIVE_TIMEOUT, MAX_PARALLEL_DIALS,
     },
     types::protocol::ProtocolName,
     PeerId,
@@ -43,6 +44,7 @@ use crate::transport::webrtc::config::Config as WebRtcConfig;
 #[cfg(feature = "websocket")]
 use crate::transport::websocket::config::Config as WebSocketConfig;
 
+use hickory_resolver::TokioResolver;
 use multiaddr::Multiaddr;
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
@@ -82,6 +84,15 @@ pub struct ConfigBuilder {
     /// WebSocket transport config.
     #[cfg(feature = "websocket")]
     websocket: Option<WebSocketConfig>,
+
+    /// List of custom transports.
+    custom_transports: Vec<(
+        &'static str,
+        fn(
+            TransportHandle,
+            Arc<TokioResolver>,
+        ) -> crate::Result<(Box<dyn Transport<Item = TransportEvent>>, Vec<Multiaddr>)>,
+    )>,
 
     /// Keypair.
     keypair: Option<Keypair>,
@@ -146,6 +157,7 @@ impl ConfigBuilder {
             webrtc: None,
             #[cfg(feature = "websocket")]
             websocket: None,
+            custom_transports: Vec::new(),
             keypair: None,
             ping: None,
             identify: None,
@@ -188,6 +200,20 @@ impl ConfigBuilder {
     #[cfg(feature = "websocket")]
     pub fn with_websocket(mut self, config: WebSocketConfig) -> Self {
         self.websocket = Some(config);
+        self
+    }
+
+    /// Add a custom transport configuration, enabling the transport.
+    pub fn with_custom_transport(
+        mut self,
+        name: &'static str,
+        transport: fn(
+            TransportHandle,
+            Arc<TokioResolver>,
+        )
+            -> crate::Result<(Box<dyn Transport<Item = TransportEvent>>, Vec<Multiaddr>)>,
+    ) -> Self {
+        self.custom_transports.push((name, transport));
         self
     }
 
@@ -307,6 +333,7 @@ impl ConfigBuilder {
             webrtc: self.webrtc.take(),
             #[cfg(feature = "websocket")]
             websocket: self.websocket.take(),
+            custom_transports: self.custom_transports,
             ping: self.ping.take(),
             identify: self.identify.take(),
             kademlia: self.kademlia,
@@ -340,6 +367,15 @@ pub struct Litep2pConfig {
     /// WebSocket transport config.
     #[cfg(feature = "websocket")]
     pub(crate) websocket: Option<WebSocketConfig>,
+
+    /// Custom transports.
+    pub(crate) custom_transports: Vec<(
+        &'static str,
+        fn(
+            TransportHandle,
+            Arc<TokioResolver>,
+        ) -> crate::Result<(Box<dyn Transport<Item = TransportEvent>>, Vec<Multiaddr>)>,
+    )>,
 
     /// Keypair.
     pub(crate) keypair: Keypair,

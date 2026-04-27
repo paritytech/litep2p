@@ -382,7 +382,7 @@ impl Litep2p {
             config.max_parallel_dials = litep2p_config.max_parallel_dials;
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
-                <WebSocketTransport as TransportBuilder>::new(handle, config, resolver)?;
+                <WebSocketTransport as TransportBuilder>::new(handle, config, resolver.clone())?;
 
             for address in transport_listen_addresses {
                 transport_manager.register_listen_address(address.clone());
@@ -391,6 +391,21 @@ impl Litep2p {
 
             transport_manager
                 .register_transport(SupportedTransport::WebSocket, Box::new(transport));
+        }
+
+        // enable custom transports
+        for (name, transport_factory) in litep2p_config.custom_transports {
+            let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
+
+            let (transport, transport_listen_addresses) =
+                transport_factory(handle, resolver.clone())?;
+
+            for address in transport_listen_addresses {
+                transport_manager.register_listen_address(address.clone());
+                listen_addresses.push(address.with(Protocol::P2p(*local_peer_id.as_ref())));
+            }
+
+            transport_manager.register_transport(SupportedTransport::Custom(name), transport);
         }
 
         // enable mdns if the config exists
