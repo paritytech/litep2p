@@ -25,7 +25,6 @@ use crate::{
     executor::Executor,
     protocol::ProtocolSet,
     transport::manager::{
-        address::AddressRecord,
         peer_state::StateDialResult,
         types::{PeerContext, SupportedTransport},
         ProtocolContext, TransportManagerEvent, LOG_TARGET,
@@ -284,9 +283,7 @@ impl TransportManagerHandle {
 
         // All addresses should be valid at this point, since the peer ID was either added or
         // double checked.
-        entry
-            .addresses
-            .extend(peer_addresses.into_iter().filter_map(AddressRecord::from_multiaddr));
+        entry.addresses.insert_with_priority(peer_addresses.into_iter().collect());
 
         num_added
     }
