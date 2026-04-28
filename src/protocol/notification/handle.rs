@@ -190,6 +190,9 @@ pub struct NotificationHandle {
 
     /// Handshake.
     handshake: Arc<RwLock<Vec<u8>>>,
+
+    /// Protocol name.
+    protocol_name: ProtocolName,
 }
 
 impl NotificationHandle {
@@ -199,6 +202,7 @@ impl NotificationHandle {
         notif_rx: Receiver<(PeerId, BytesMut)>,
         command_tx: Sender<NotificationCommand>,
         handshake: Arc<RwLock<Vec<u8>>>,
+        protocol_name: ProtocolName,
     ) -> Self {
         Self {
             event_rx,
@@ -208,6 +212,7 @@ impl NotificationHandle {
             peers: HashMap::new(),
             clogged: HashSet::new(),
             pending_validations: HashMap::new(),
+            protocol_name,
         }
     }
 
@@ -220,7 +225,7 @@ impl NotificationHandle {
     /// dial succeeds, tries to open a substream. This behavior can be disabled with
     /// [`ConfigBuilder::with_dialing_enabled(false)`](super::config::ConfigBuilder::with_dialing_enabled()).
     pub async fn open_substream(&self, peer: PeerId) -> crate::Result<()> {
-        tracing::trace!(target: LOG_TARGET, ?peer, "open substream");
+        tracing::trace!(target: LOG_TARGET, ?peer, protocol_name = ?self.protocol_name, "open substream");
 
         if self.peers.contains_key(&peer) {
             return Err(Error::PeerAlreadyExists(peer));
@@ -258,6 +263,7 @@ impl NotificationHandle {
             target: LOG_TARGET,
             peers_to_add = ?to_add.len(),
             peers_to_ignore = ?to_ignore.len(),
+            protocol_name = ?self.protocol_name,
             "open substream",
         );
 
@@ -294,6 +300,7 @@ impl NotificationHandle {
             target: LOG_TARGET,
             peers_to_add = ?to_add.len(),
             peers_to_ignore = ?to_ignore.len(),
+            protocol_name = ?self.protocol_name,
             "open substream",
         );
 
@@ -306,7 +313,7 @@ impl NotificationHandle {
 
     /// Close substream to `peer`.
     pub async fn close_substream(&self, peer: PeerId) {
-        tracing::trace!(target: LOG_TARGET, ?peer, "close substream");
+        tracing::trace!(target: LOG_TARGET, ?peer, protocol_name = ?self.protocol_name, "close substream");
 
         if !self.peers.contains_key(&peer) {
             return;
@@ -334,6 +341,7 @@ impl NotificationHandle {
         tracing::trace!(
             target: LOG_TARGET,
             ?peers,
+            protocol_name = ?self.protocol_name,
             "close substreams",
         );
 
@@ -362,6 +370,7 @@ impl NotificationHandle {
         tracing::trace!(
             target: LOG_TARGET,
             ?peers,
+            protocol_name = ?self.protocol_name,
             "close substreams",
         );
 
@@ -374,7 +383,7 @@ impl NotificationHandle {
 
     /// Set new handshake.
     pub fn set_handshake(&mut self, handshake: Vec<u8>) {
-        tracing::trace!(target: LOG_TARGET, ?handshake, "set handshake");
+        tracing::trace!(target: LOG_TARGET, ?handshake, protocol_name = ?self.protocol_name, "set handshake");
 
         *self.handshake.write() = handshake;
     }
@@ -382,7 +391,7 @@ impl NotificationHandle {
     /// Send validation result to the notification protocol for an inbound substream received from
     /// `peer`.
     pub fn send_validation_result(&mut self, peer: PeerId, result: ValidationResult) {
-        tracing::trace!(target: LOG_TARGET, ?peer, ?result, "send validation result");
+        tracing::trace!(target: LOG_TARGET, ?peer, ?result, protocol_name = ?self.protocol_name, "send validation result");
 
         self.pending_validations.remove(&peer).map(|tx| tx.send(result));
     }
@@ -402,6 +411,13 @@ impl NotificationHandle {
                     NotificationError::NoConnection => Err(NotificationError::NoConnection),
                     NotificationError::ChannelClogged => {
                         let _ = self.clogged.insert(peer).then(|| {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                protocol_name = ?self.protocol_name,
+                                "notification channel clogged, force close connection",
+                            );
+
                             self.command_tx.try_send(NotificationCommand::ForceClose { peer })
                         });
 
