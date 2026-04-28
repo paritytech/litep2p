@@ -505,6 +505,15 @@ impl Litep2p {
         self.transport_manager.add_known_address(peer, address)
     }
 
+    /// Add one ore more known addresses for peer with priority.
+    pub fn add_priority_address(
+        &mut self,
+        peer: PeerId,
+        address: impl Iterator<Item = Multiaddr>,
+    ) -> usize {
+        self.transport_manager.add_priority_address(peer, address)
+    }
+
     /// Poll next event.
     ///
     /// This function must be called in order for litep2p to make progress.
