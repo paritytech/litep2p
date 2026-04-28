@@ -253,13 +253,16 @@ impl AddressStore {
     /// Insert the priority addresses into the store.
     pub fn insert_with_priority(&mut self, records: Vec<Multiaddr>) {
         for record in records {
-            let exists = self.priority_addresses.iter().any(|a| a == &record);
-            if exists {
+            if self.priority_addresses.iter().any(|a| a == &record) {
                 continue;
             }
 
             if self.priority_addresses.len() >= MAX_PRIORITY_ADDRESS {
-                self.priority_addresses.pop_front();
+                if let Some(evicted) = self.priority_addresses.pop_front() {
+                    if let Some(rec) = AddressRecord::from_multiaddr(evicted) {
+                        self.insert(rec);
+                    }
+                }
             }
 
             self.priority_addresses.push_back(record);
@@ -650,6 +653,7 @@ mod tests {
         let mut store = AddressStore {
             addresses: HashMap::new(),
             max_capacity: 2,
+            priority_addresses: VecDeque::new(),
         };
 
         let mut rng = rand::thread_rng();
