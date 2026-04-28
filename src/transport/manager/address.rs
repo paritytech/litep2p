@@ -253,7 +253,7 @@ impl AddressStore {
     /// Insert the priority addresses into the store.
     pub fn insert_with_priority(&mut self, records: Vec<Multiaddr>) {
         for record in records {
-            if self.priority_addresses.iter().any(|a| a == &record) {
+            if self.priority_addresses.contains(&record) {
                 continue;
             }
 
@@ -324,15 +324,22 @@ impl AddressStore {
 
     /// Return the available addresses sorted by score.
     pub fn addresses(&self, limit: usize) -> Vec<Multiaddr> {
-        let mut priority = self.priority_addresses.iter().cloned().collect::<Vec<_>>();
+        let mut result =
+            Vec::with_capacity(self.priority_addresses.len() + self.addresses.len().min(limit));
 
-        let mut records = self.addresses.values().cloned().collect::<Vec<_>>();
-        records.sort_by_key(|rhs| std::cmp::Reverse(rhs.score));
-        let records: Vec<_> =
-            records.into_iter().take(limit).map(|record| record.address).collect();
-        priority.extend(records);
+        result.extend(self.priority_addresses.iter().cloned());
 
-        priority
+        let mut candidates: Vec<_> = self
+            .addresses
+            .values()
+            .filter(|record| !self.priority_addresses.contains(record.address()))
+            .collect();
+
+        candidates.sort_unstable_by_key(|rec| std::cmp::Reverse(rec.score));
+
+        result.extend(candidates.into_iter().take(limit).map(|record| record.address().clone()));
+
+        result
     }
 }
 
