@@ -28,7 +28,8 @@ use crate::{
     Error, PeerId,
 };
 
-use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
+use multiaddr::{Multiaddr, Protocol};
+use multihash_codetable::Code;
 use str0m::{
     channel::ChannelId,
     config::Fingerprint,
@@ -188,8 +189,7 @@ impl OpeningWebRtcConnection {
 
     /// Convert `Fingerprint` to bytes.
     fn fingerprint_to_bytes(fingerprint: &Fingerprint) -> Vec<u8> {
-        const MULTIHASH_SHA256_CODE: u64 = 0x12;
-        Multihash::wrap(MULTIHASH_SHA256_CODE, &fingerprint.bytes)
+        multihash::Multihash::<64>::wrap(Code::Sha2_256.into(), &fingerprint.bytes)
             .expect("fingerprint's len to be 32 bytes")
             .to_bytes()
     }
@@ -272,9 +272,9 @@ impl OpeningWebRtcConnection {
             .clone()
             .bytes;
 
-        const MULTIHASH_SHA256_CODE: u64 = 0x12;
-        let certificate = Multihash::wrap(MULTIHASH_SHA256_CODE, &remote_fingerprint)
-            .expect("fingerprint's len to be 32 bytes");
+        let certificate =
+            multihash::Multihash::<64>::wrap(Code::Sha2_256.into(), &remote_fingerprint)
+                .expect("fingerprint's len to be 32 bytes");
 
         let address = Multiaddr::empty()
             .with(Protocol::from(self.peer_address.ip()))

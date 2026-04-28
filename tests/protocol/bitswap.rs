@@ -29,7 +29,7 @@ use litep2p::{
     types::{cid::Cid, multihash::Code},
     Litep2p,
 };
-use multihash::MultihashDigest;
+use multihash_codetable::MultihashDigest;
 use std::{pin::pin, time::Duration};
 use tracing::debug;
 
