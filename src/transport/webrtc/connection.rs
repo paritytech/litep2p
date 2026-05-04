@@ -48,7 +48,7 @@ use str0m::{
 use tokio::{net::UdpSocket, sync::mpsc::Receiver};
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
@@ -58,6 +58,9 @@ use std::{
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::webrtc::connection";
+
+/// Threshold under which str0m emits Event::ChannelBufferedAmountLow.
+const BACKPRESSURE_THRESHOLD: usize = 16 * (1 << 10); // 16 KB
 
 /// Opening channel context.
 #[derive(Debug)]
@@ -88,6 +91,9 @@ struct SubstreamHandleSet {
 
     /// Substream handles.
     handles: IndexMap<ChannelId, SubstreamHandle>,
+
+    /// Substream which has pending messages.
+    pending: HashSet<ChannelId>,
 }
 
 impl SubstreamHandleSet {
@@ -96,6 +102,7 @@ impl SubstreamHandleSet {
         Self {
             index: 0usize,
             handles: IndexMap::new(),
+            pending: HashSet::new(),
         }
     }
 
@@ -111,7 +118,18 @@ impl SubstreamHandleSet {
 
     /// Remove handle from [`SubstreamHandleSet`].
     pub fn remove(&mut self, key: &ChannelId) -> Option<SubstreamHandle> {
+        self.pending.remove(key);
         self.handles.shift_remove(key)
+    }
+
+    /// Add a channel to the ones which has pending messages.
+    pub fn add_pending(&mut self, key: ChannelId) {
+        self.pending.insert(key);
+    }
+
+    /// Remove the channel from the ones with pending messages.
+    pub fn clear_pending(&mut self, key: &ChannelId) {
+        self.pending.remove(key);
     }
 }
 
@@ -129,10 +147,15 @@ impl Stream for SubstreamHandleSet {
             let index = self.index % len;
             self.index += 1;
 
-            let (key, stream) = self.handles.get_index_mut(index).expect("handle to exist");
-            match stream.poll_next_unpin(cx) {
-                Poll::Pending => {}
-                Poll::Ready(event) => return Poll::Ready(Some((*key, event))),
+            let key =
+                self.handles.get_index(index).map(|(k, _)| k).cloned().expect("handle to exist");
+
+            if !self.pending.contains(&key) {
+                let (key, stream) = self.handles.get_index_mut(index).expect("handle to exist");
+                match stream.poll_next_unpin(cx) {
+                    Poll::Pending => {}
+                    Poll::Ready(event) => return Poll::Ready(Some((*key, event))),
+                }
             }
 
             if self.index == start_index + len {
@@ -205,6 +228,9 @@ pub struct WebRtcConnection {
     /// Pending outbound channels.
     pending_outbound: HashMap<ChannelId, ChannelContext>,
 
+    /// Pending outboud messages, at most one per channel.
+    pending_messages: HashMap<ChannelId, Vec<u8>>,
+
     /// Open channels.
     channels: HashMap<ChannelId, ChannelState>,
 
@@ -234,6 +260,7 @@ impl WebRtcConnection {
             endpoint,
             dgram_rx,
             pending_outbound: HashMap::new(),
+            pending_messages: HashMap::new(),
             channels: HashMap::new(),
             handles: SubstreamHandleSet::new(),
         }
@@ -276,16 +303,16 @@ impl WebRtcConnection {
             return Ok(());
         };
 
+        if let Some(mut channel) = self.rtc.channel(channel_id.clone()) {
+            channel.set_buffered_amount_low_threshold(BACKPRESSURE_THRESHOLD);
+        }
+
         let fallback_names = std::mem::take(&mut context.fallback_names);
         let (dialer_state, message) =
             WebRtcDialerState::propose(context.protocol.clone(), fallback_names)?;
         let message = WebRtcMessage::encode(message, None);
 
-        self.rtc
-            .channel(channel_id)
-            .ok_or(Error::ChannelDoesntExist)?
-            .write(true, message.as_ref())
-            .map_err(Error::WebRtc)?;
+        self.write(channel_id, message)?;
 
         self.channels.insert(
             channel_id,
@@ -296,6 +323,42 @@ impl WebRtcConnection {
         );
 
         Ok(())
+    }
+
+    // Attempt to write a message over the specified channel,
+    // save the message as pening if `WebRtcConnection` didn't have
+    // enough space.
+    fn write(&mut self, channel_id: ChannelId, message: Vec<u8>) -> Result<bool, Error> {
+        let succeeded = self
+            .rtc
+            .channel(channel_id)
+            .ok_or(Error::ChannelDoesntExist)?
+            .write(true, message.as_ref())
+            .map_err(Error::WebRtc)?;
+
+        if !succeeded {
+            self.pending_messages.insert(channel_id.clone(), message);
+            self.handles.add_pending(channel_id);
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
+    // Attempt to write all pending messages of the specified ChannelId.
+    // Returns either all messages has been sent or not.
+    fn write_pending(&mut self, channel_id: ChannelId) -> Result<bool, Error> {
+        let Some(message) = self.pending_messages.remove(&channel_id) else {
+            // This should never happen, `write_pending` should be called
+            // for only chennel with pending messages. Anyway let's not panic
+            // but just short-circuit the function.
+            return Ok(true);
+        };
+        let succeeded = self.write(channel_id.clone(), message)?;
+        if succeeded {
+            self.handles.clear_pending(&channel_id);
+        }
+        Ok(succeeded)
     }
 
     /// Handle closed channel.
@@ -351,6 +414,7 @@ impl WebRtcConnection {
                 .await;
         }
 
+        self.pending_messages.remove(&channel_id);
         self.handles.remove(&channel_id);
 
         Ok(())
@@ -393,14 +457,8 @@ impl WebRtcConnection {
                 | ListenerSelectResult::PendingProtocol { message } => (message, None),
             };
 
-        self.rtc
-            .channel(channel_id)
-            .ok_or(Error::ChannelDoesntExist)?
-            .write(
-                true,
-                WebRtcMessage::encode(response.to_vec(), None).as_ref(),
-            )
-            .map_err(Error::WebRtc)?;
+        let message = WebRtcMessage::encode(response.to_vec(), None);
+        self.write(channel_id, message)?;
 
         let Some(protocol) = negotiated else {
             tracing::trace!(
@@ -509,16 +567,10 @@ impl WebRtcConnection {
                     );
 
                     let message = WebRtcMessage::encode(message, None);
-                    self.rtc
-                        .channel(channel_id)
-                        .ok_or(Error::ChannelDoesntExist)
-                        .map_err(|_| {
-                            SubstreamError::NegotiationError(NegotiationError::Failed.into())
-                        })?
-                        .write(true, message.as_ref())
-                        .map_err(|_| {
-                            SubstreamError::NegotiationError(NegotiationError::Failed.into())
-                        })?;
+
+                    self.write(channel_id, message).map_err(|_| {
+                        SubstreamError::NegotiationError(NegotiationError::Failed.into())
+                    })?;
 
                     self.channels.insert(
                         channel_id,
@@ -774,12 +826,8 @@ impl WebRtcConnection {
             "send data",
         );
 
-        self.rtc
-            .channel(channel_id)
-            .ok_or(Error::ChannelDoesntExist)?
-            .write(true, WebRtcMessage::encode(data, flag).as_ref())
-            .map_err(Error::WebRtc)
-            .map(|_| ())
+        let message = WebRtcMessage::encode(data, flag);
+        self.write(channel_id, message).map(|_| ())
     }
 
     /// Open outbound substream.
@@ -910,6 +958,14 @@ impl WebRtcConnection {
                             );
                         }
 
+                        continue;
+                    }
+                    Event::ChannelBufferedAmountLow(_channel_id) => {
+                        let channel_ids: Vec<_> =
+                            self.pending_messages.keys().into_iter().cloned().collect();
+                        for channel_id in channel_ids {
+                            let _ = self.write_pending(channel_id);
+                        }
                         continue;
                     }
                     event => {

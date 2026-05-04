@@ -209,11 +209,21 @@ impl OpeningWebRtcConnection {
         // create first noise handshake and send it to remote peer
         let payload = WebRtcMessage::encode(context.first_message(Role::Dialer)?, None);
 
-        self.rtc
+        let succeeded = self
+            .rtc
             .channel(self.noise_channel_id)
             .ok_or(Error::ChannelDoesntExist)?
             .write(true, payload.as_slice())
             .map_err(Error::WebRtc)?;
+
+        if !succeeded {
+            tracing::error!(
+                target: LOG_TARGET,
+                connection_id = ?self.connection_id,
+                "noise channel full during initial handshake write"
+            );
+            return Err(Error::ChannelClogged);
+        }
 
         self.state = State::HandshakeSent { context };
         Ok(())
@@ -305,9 +315,18 @@ impl OpeningWebRtcConnection {
         let mut channel =
             self.rtc.channel(self.noise_channel_id).ok_or(Error::ChannelDoesntExist)?;
 
-        channel.write(true, payload.as_slice()).map_err(Error::WebRtc)?;
-        self.rtc.direct_api().close_data_channel(self.noise_channel_id);
+        let succeeded = channel.write(true, payload.as_slice()).map_err(Error::WebRtc)?;
 
+        if !succeeded {
+            tracing::error!(
+                target: LOG_TARGET,
+                connection_id = ?self.connection_id,
+                "noise channel full during initial handshake write"
+            );
+            return Err(Error::ChannelClogged);
+        }
+
+        self.rtc.direct_api().close_data_channel(self.noise_channel_id);
         Ok(self.rtc)
     }
 
