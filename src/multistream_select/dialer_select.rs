@@ -369,13 +369,12 @@ impl WebRtcDialerState {
 
         let next = self.fallback_names.remove(0);
         self.protocol = next;
-        self.state = HandshakeState::WaitingResponse;
 
         let message = webrtc_encode_multistream_message(
             Message::Protocol(
                 Protocol::try_from(self.protocol.as_ref()).map_err(|_| Error::InvalidData)?,
             ),
-            true,
+            false,
         )?
         .freeze()
         .to_vec();
@@ -474,7 +473,7 @@ mod tests {
     use super::*;
     use crate::multistream_select::{listener_select_proto, protocol::MSG_MULTISTREAM_1_0};
     use bytes::BufMut;
-    use std::time::Duration;
+    use std::{sync::OnceState, time::Duration};
     #[tokio::test]
     async fn select_proto_basic() {
         async fn run(version: Version) {
@@ -876,23 +875,45 @@ mod tests {
             event => panic!("expected Rejected, got: {event:?}"),
         }
 
+        // After having received the header the state stays always at WaitingProtocol.
+        assert!(matches!(
+            dialer_state.state,
+            HandshakeState::WaitingProtocol
+        ));
+
         // Now propose the next fallback.
         let fallback_message = dialer_state
             .propose_next_fallback()
             .expect("no error")
             .expect("should have a fallback");
 
+        // TODO: this is wrong, this is *NOT* expected!
         let mut expected = BytesMut::with_capacity(32);
-        expected.put_u8(MSG_MULTISTREAM_1_0.len() as u8);
-        let _ = Message::Header(HeaderLine::V1).encode(&mut expected).unwrap();
         let proto = Protocol::try_from(&b"/sup/proto/1"[..]).expect("valid protocol name");
         expected.put_u8((proto.as_ref().len() + 1) as u8);
         let _ = Message::Protocol(proto).encode(&mut expected).unwrap();
-
-        assert_eq!(fallback_message, expected.freeze().to_vec());
+        let protocol_message = expected.freeze().to_vec();
+        assert_eq!(fallback_message, protocol_message);
 
         // No more fallbacks.
         assert!(dialer_state.propose_next_fallback().unwrap().is_none());
+
+        match dialer_state.register_response(protocol_message) {
+            Ok(HandshakeResult::Succeeded(_)) => {}
+            event => panic!("expected Succeeded, got: {event:?}"),
+        }
+
+        let mut na_response = BytesMut::with_capacity(32);
+        let na_bytes = b"na\n";
+        na_response.put_u8(na_bytes.len() as u8);
+        na_response.put_slice(na_bytes);
+
+        dialer_state.state = HandshakeState::WaitingProtocol;
+
+        match dialer_state.register_response(na_response.to_vec()) {
+            Ok(HandshakeResult::Rejected) => {}
+            event => panic!("expected Rejected, got: {event:?}"),
+        }
     }
 
     #[test]
