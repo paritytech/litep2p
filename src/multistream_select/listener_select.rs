@@ -400,7 +400,8 @@ pub fn webrtc_listener_negotiate(
     let first_msg = decode_multistream_message(&mut payload)?;
 
     let (protocol, header_in_this_payload) = match first_msg {
-        Message::Header(HeaderLine::V1) => {
+        // Header is expected only if not already received.
+        Message::Header(HeaderLine::V1) if !header_received => {
             if payload.is_empty() {
                 // Header only — echo the exact received bytes back (zero alloc).
                 return Ok(ListenerSelectResult::PendingProtocol {
