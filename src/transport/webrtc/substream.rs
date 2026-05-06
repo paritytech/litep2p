@@ -267,7 +267,15 @@ impl SubstreamHandle {
                     return Ok(());
                 }
                 Flag::StopSending => {
-                    *self.state.lock() = State::SendClosed;
+                    let mut state = self.state.lock();
+
+                    // Shutdown process has alredy started or it already reached
+                    // conclusion. Sending already stopped.
+                    if matches!(*state, State::FinSent | State::FinAcked) {
+                        return Ok(());
+                    }
+
+                    *state = State::SendClosed;
                     // Wake any blocked poll_write so it can see the state change
                     self.write_waker.wake();
                     return Ok(());
@@ -277,10 +285,25 @@ impl SubstreamHandle {
                     // (matching go-libp2p behavior)
                     // Close the read side
                     let _ = self.inbound_tx.try_send(Event::RecvClosed);
-                    // Close the write side
-                    *self.state.lock() = State::SendClosed;
-                    // Wake any blocked poll_write so it can see the state change
-                    self.write_waker.wake();
+
+                    // Close the write side.
+                    let mut state = self.state.lock();
+
+                    match *state {
+                        // Write side has already been closed.
+                        State::FinAcked => (),
+                        // Remote sent RESET_STREAM, there will never be a FIN_ACK.
+                        State::FinSent => {
+                            *state = State::FinAcked;
+                            self.shutdown_waker.wake();
+                        }
+                        _ => {
+                            *state = State::SendClosed;
+                            // Wake any blocked poll_write so it can see the state change.
+                            self.write_waker.wake();
+                        }
+                    }
+
                     return Err(Error::ConnectionClosed);
                 }
             }
@@ -465,19 +488,19 @@ impl tokio::io::AsyncWrite for Substream {
                 *self.state.lock() = State::Closing;
             }
 
-            State::Closing => {
-                // Already in closing state, continue with shutdown process.
+            State::Closing | State::SendClosed => {
+                // State::Closing: already in closing state, continue with shutdown process.
                 // Guard against duplicate FIN sends: if timeout is already set, we've
                 // already sent FIN and are waiting for FIN_ACK. This shouldn't happen
                 // with correct AsyncWrite usage (&mut self), but provides defense in depth.
+                //
+                // State::SendClosed: peer sent STOP_SENDING (no longer accepting our
+                // writes), we can still send FIN and wait for FIN_ACK, unless already sent.
+
                 if self.fin_ack_timeout.is_some() {
                     self.shutdown_waker.register(cx.waker());
                     return Poll::Pending;
                 }
-            }
-
-            State::SendClosed => {
-                // Remote closed send, we can still send FIN
             }
         }
 
