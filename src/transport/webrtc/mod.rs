@@ -190,12 +190,12 @@ impl WebRtcTransport {
         };
 
         match iter.next() {
-            Some(Protocol::WebRTC) => {}
+            Some(Protocol::WebRTCDirect) => {}
             protocol => {
                 tracing::error!(
                     target: LOG_TARGET,
                     ?protocol,
-                    "invalid protocol, expected `WebRTC`"
+                    "invalid protocol, expected `WebRTCDirect`"
                 );
                 return Err(Error::AddressError(AddressError::InvalidProtocol));
             }
@@ -502,7 +502,7 @@ impl TransportBuilder for WebRtcTransport {
             vec![Multiaddr::empty()
                 .with(Protocol::from(listen_address.ip()))
                 .with(Protocol::Udp(listen_address.port()))
-                .with(Protocol::WebRTC)
+                .with(Protocol::WebRTCDirect)
                 .with(Protocol::Certhash(certificate))]
         };
 
