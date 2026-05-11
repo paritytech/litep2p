@@ -23,9 +23,9 @@ use litep2p::{
     config::ConfigBuilder,
     error::SubstreamError,
     protocol::{Direction, TransportEvent, TransportService, UserProtocol},
-    substream::{Substream, SubstreamSet},
     transport::tcp::config::Config as TcpConfig,
     types::{protocol::ProtocolName, SubstreamId},
+    utils::futures_stream::FuturesStream,
     Error, Litep2p, Litep2pEvent, PeerId,
 };
 
@@ -35,7 +35,7 @@ use litep2p::transport::quic::config::Config as QuicConfig;
 use litep2p::transport::websocket::config::Config as WebSocketConfig;
 
 use bytes::Bytes;
-use futures::{Sink, SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use tokio::{
     io::AsyncWrite,
     sync::{
@@ -46,7 +46,9 @@ use tokio::{
 
 use std::{
     collections::{HashMap, HashSet},
+    future::Future,
     io::ErrorKind,
+    pin::Pin,
     sync::Arc,
     task::Poll,
 };
@@ -72,7 +74,8 @@ struct CustomProtocol {
     peers: HashSet<PeerId>,
     rx: Receiver<Command>,
     pending_opens: HashMap<SubstreamId, (PeerId, oneshot::Sender<()>)>,
-    substreams: SubstreamSet<PeerId, Substream>,
+    substreams: FuturesStream<Pin<Box<dyn Future<Output = PeerId> + Send>>>,
+    mappings: HashMap<PeerId, Sender<Command>>,
 }
 
 impl CustomProtocol {
@@ -87,7 +90,8 @@ impl CustomProtocol {
                 codec,
                 rx,
                 pending_opens: HashMap::new(),
-                substreams: SubstreamSet::new(),
+                substreams: FuturesStream::new(),
+                mappings: HashMap::new(),
             },
             tx,
         )
@@ -110,6 +114,7 @@ impl UserProtocol for CustomProtocol {
                 event = service.next() => match event.unwrap() {
                     TransportEvent::ConnectionEstablished { peer, .. } => {
                         self.peers.insert(peer);
+
                     }
                     TransportEvent::ConnectionClosed { peer } => {
                         self.peers.remove(&peer);
@@ -120,7 +125,62 @@ impl UserProtocol for CustomProtocol {
                         direction,
                         ..
                     } => {
-                        self.substreams.insert(peer, substream);
+                        let (tx, mut rx) = channel(1024);
+                        self.mappings.insert(peer, tx);
+
+                        self.substreams.push(Box::pin(async move {
+                            let mut substream = substream;
+                            loop {
+                                tokio::select! {
+                                    command = rx.recv() => match command {
+                                        None => return peer,
+                                        Some(Command::SendPayloadFramed(_, payload, result_tx)) => {
+                                            let payload = Bytes::from(payload);
+                                            let res = substream.send_framed(payload).await.map_err(Into::into);
+                                            result_tx.send(res).unwrap();
+                                            substream.close().await;
+                                            return peer;
+                                        }
+                                        Some(Command::SendPayloadSink(_, payload, result_tx)) => {
+                                            let payload = Bytes::from(payload);
+                                            let res = substream.send(payload).await.map_err(Into::into);
+                                            result_tx.send(res).unwrap();
+                                            substream.close().await;
+                                            return peer;
+                                        }
+                                        Some(Command::SendPayloadAsyncWrite(_, payload, result_tx)) => {
+                                            let res = futures::future::poll_fn(|cx| {
+                                                if let Err(error) = futures::ready!(Pin::new(&mut substream).poll_write(cx, &payload)) {
+                                                    return Poll::Ready(Err(error.into()));
+                                                }
+                                                if let Err(error) = futures::ready!(tokio::io::AsyncWrite::poll_flush(
+                                                    Pin::new(&mut substream),
+                                                    cx
+                                                )) {
+                                                    return Poll::Ready(Err(error.into()));
+                                                }
+                                                if let Err(error) = futures::ready!(tokio::io::AsyncWrite::poll_shutdown(
+                                                    Pin::new(&mut substream),
+                                                    cx
+                                                )) {
+                                                    return Poll::Ready(Err(error.into()));
+                                                }
+                                                Poll::Ready(Ok(()))
+                                            })
+                                            .await;
+                                            result_tx.send(res).unwrap();
+                                            return peer;
+                                        }
+                                        Some(Command::OpenSubstream(..)) => {}
+                                    },
+                                    _ = substream.next() => {
+                                        substream.close().await;
+                                        return peer;
+                                    }
+                                }
+                            }
+                        }));
+
 
                         if let Direction::Outbound(substream_id) = direction {
                             self.pending_opens.remove(&substream_id).unwrap().1.send(()).unwrap();
@@ -128,82 +188,28 @@ impl UserProtocol for CustomProtocol {
                     }
                     _ => {}
                 },
-                event = self.substreams.next() => match event {
-                    None => panic!("`SubstreamSet` returned `None`"),
-                    Some((peer, Err(_))) => {
-                        if let Some(mut substream) = self.substreams.remove(&peer) {
-                            futures::future::poll_fn(|cx| {
-                                let _ = futures::ready!(Sink::poll_close(Pin::new(&mut substream), cx));
-                                Poll::Ready(())
-                            }).await;
-                        }
+                event = self.substreams.next() => {
+                    if let Some(peer) = event {
+                        self.mappings.remove(&peer);
                     }
-                    Some((peer, Ok(_))) => {
-                        if let Some(mut substream) = self.substreams.remove(&peer) {
-                            futures::future::poll_fn(|cx| {
-                                let _ = futures::ready!(Sink::poll_close(Pin::new(&mut substream), cx));
-                                Poll::Ready(())
-                            }).await;
-                        }
-                    },
                 },
                 command = self.rx.recv() => match command.unwrap() {
                     Command::SendPayloadFramed(peer, payload, tx) => {
-                        match self.substreams.remove(&peer) {
-                            None => {
-                                tx.send(Err(Error::PeerDoesntExist(peer))).unwrap();
-                            }
-                            Some(mut substream) => {
-                                let payload = Bytes::from(payload);
-                                let res = substream.send_framed(payload).await.map_err(Into::into);
-                                tx.send(res).unwrap();
-                                let _ = substream.close().await;
-                            }
+                        match self.mappings.get(&peer).cloned() {
+                            None => { tx.send(Err(Error::PeerDoesntExist(peer))).unwrap(); }
+                            Some(sender) => { sender.try_send(Command::SendPayloadFramed(peer, payload, tx)).ok(); }
                         }
                     }
                     Command::SendPayloadSink(peer, payload, tx) => {
-                        match self.substreams.remove(&peer) {
-                            None => {
-                                tx.send(Err(Error::PeerDoesntExist(peer))).unwrap();
-                            }
-                            Some(mut substream) => {
-                                let payload = Bytes::from(payload);
-                                let res = substream.send(payload).await.map_err(Into::into);
-                                tx.send(res).unwrap();
-                                let _ = substream.close().await;
-                            }
+                        match self.mappings.get(&peer).cloned() {
+                            None => { tx.send(Err(Error::PeerDoesntExist(peer))).unwrap(); }
+                            Some(sender) => { sender.try_send(Command::SendPayloadSink(peer, payload, tx)).ok(); }
                         }
                     }
                     Command::SendPayloadAsyncWrite(peer, payload, tx) => {
-                        match self.substreams.remove(&peer) {
-                            None => {
-                                tx.send(Err(Error::PeerDoesntExist(peer))).unwrap();
-                            }
-                            Some(mut substream) => {
-                                let res = futures::future::poll_fn(|cx| {
-                                    if let Err(error) = futures::ready!(Pin::new(&mut substream).poll_write(cx, &payload)) {
-                                        return Poll::Ready(Err(error.into()));
-                                    }
-
-                                    if let Err(error) = futures::ready!(tokio::io::AsyncWrite::poll_flush(
-                                        Pin::new(&mut substream),
-                                        cx
-                                    )) {
-                                        return Poll::Ready(Err(error.into()));
-                                    }
-
-                                    if let Err(error) = futures::ready!(tokio::io::AsyncWrite::poll_shutdown(
-                                        Pin::new(&mut substream),
-                                        cx
-                                    )) {
-                                        return Poll::Ready(Err(error.into()));
-                                    }
-
-                                    Poll::Ready(Ok(()))
-                                })
-                                .await;
-                                tx.send(res).unwrap();
-                            }
+                        match self.mappings.get(&peer).cloned() {
+                            None => { tx.send(Err(Error::PeerDoesntExist(peer))).unwrap(); }
+                            Some(sender) => { sender.try_send(Command::SendPayloadAsyncWrite(peer, payload, tx)).ok(); }
                         }
                     }
                     Command::OpenSubstream(peer, tx) => {
