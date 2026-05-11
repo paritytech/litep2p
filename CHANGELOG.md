@@ -5,13 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [0.14.0] - 2026-05-11
+
+This release updates several core dependencies, aligns clippy rules with the latest Rust version, and enhances observability for notification protocols.
+
+Notably, this version introduces a breaking change to error handling: the `PeerId::from_bytes` method now returns a specialized `ParseError` instead of a `multihash::Error`.
 
 ### Changed
 
-  - **Breaking:** `PeerId::from_bytes` now returns `ParseError` instead of
-    `multihash::Error`. Multihash decoding failures and multihashes that are not
-    valid peer IDs are reported as `ParseError::MultiHash`.
+- deps: upgrade multiaddr 0.18, multihash 0.19, libp2p 0.56  ([#564](https://github.com/paritytech/litep2p/pull/564))
+
+### Fixed
+
+- fix clippy errors and warnings  ([#565](https://github.com/paritytech/litep2p/pull/565))
+
+### Added
+
+- notification: Expose protocol name through trace logs  ([#563](https://github.com/paritytech/litep2p/pull/563))
 
 ## [0.13.3] - 2026-03-09
 
