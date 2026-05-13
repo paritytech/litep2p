@@ -252,10 +252,8 @@ impl Mdns {
                 match &record.rdata {
                     RData::TXT(text) => text
                         .attributes()
-                        .iter()
-                        .filter_map(|(_, address)| {
-                            address.as_ref().and_then(|inner| inner.parse().ok())
-                        })
+                        .values()
+                        .filter_map(|address| address.as_ref().and_then(|inner| inner.parse().ok()))
                         .collect(),
                     _ => vec![],
                 }

@@ -28,9 +28,9 @@ use crate::{
 };
 
 use bytes::Bytes;
-use multihash::Multihash;
-
 use std::{borrow::Borrow, time::Instant};
+
+type Multihash = multihash::Multihash<64>;
 
 /// The (opaque) key of a record.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

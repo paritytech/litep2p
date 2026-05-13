@@ -650,8 +650,8 @@ mod tests {
         };
 
         // First 10 providers are inserted.
-        for i in 0..10 {
-            assert!(store.put_provider(key.clone(), sorted_providers[i].clone()));
+        for provider in sorted_providers.iter().take(10) {
+            assert!(store.put_provider(key.clone(), provider.clone()));
         }
         assert_eq!(store.get_providers(&key), sorted_providers[..10]);
 

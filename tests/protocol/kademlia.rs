@@ -46,7 +46,7 @@ fn spawn_litep2p(port: u16) {
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
 
-    tokio::spawn(async move { while let Some(_) = litep2p1.next_event().await {} });
+    tokio::spawn(async move { while litep2p1.next_event().await.is_some() {} });
 }
 
 #[tokio::test]
@@ -271,20 +271,17 @@ async fn records_are_stored_manually() {
             _ = litep2p1.next_event() => {}
             _ = litep2p2.next_event() => {}
             event = kad_handle1.next() => {
-                match event {
-                    Some(KademliaEvent::PutRecordSuccess { query_id: got_query_id, key }) => {
-                        assert_eq!(got_query_id, query_id);
-                        assert_eq!(key, record.key);
+                if let Some(KademliaEvent::PutRecordSuccess { query_id: got_query_id, key }) = event {
+                    assert_eq!(got_query_id, query_id);
+                    assert_eq!(key, record.key);
 
-                        // Due to manual validation, the record will be stored later, so we request
-                        // it in `kad_handle2` after receiving the incoming record
-                        put_record_success = true;
+                    // Due to manual validation, the record will be stored later, so we request
+                    // it in `kad_handle2` after receiving the incoming record
+                    put_record_success = true;
 
-                        if get_record_success {
-                            break;
-                        }
+                    if get_record_success {
+                        break;
                     }
-                    _ => {}
                 }
             }
             event = kad_handle2.next() => {
@@ -379,18 +376,15 @@ async fn not_validated_records_are_not_stored() {
             event = litep2p1.next_event() => {}
             event = litep2p2.next_event() => {}
             event = kad_handle1.next() => {
-                match event {
-                    Some(KademliaEvent::PutRecordSuccess { query_id: got_query_id, key }) => {
-                        assert_eq!(got_query_id, query_id);
-                        assert_eq!(key, record.key);
+                if let Some(KademliaEvent::PutRecordSuccess { query_id: got_query_id, key }) = event {
+                    assert_eq!(got_query_id, query_id);
+                    assert_eq!(key, record.key);
 
-                        put_record_success = true;
+                    put_record_success = true;
 
-                        if get_record_success || query_failed {
-                            break;
-                        }
+                    if get_record_success || query_failed {
+                        break;
                     }
-                    _ => {}
                 }
             }
             event = kad_handle2.next() => {
@@ -580,16 +574,13 @@ async fn get_record_retrieves_local_and_remote_records() {
             event = litep2p1.next_event() => {}
             event = litep2p2.next_event() => {}
             event = kad_handle1.next() => {
-                match event {
-                    Some(KademliaEvent::PutRecordSuccess { query_id: got_query_id, key }) => {
-                        assert_eq!(got_query_id, query1);
-                        assert_eq!(key, original_record.key);
+                if let Some(KademliaEvent::PutRecordSuccess { query_id: got_query_id, key }) = event {
+                    assert_eq!(got_query_id, query1);
+                    assert_eq!(key, original_record.key);
 
-                        // Due to manual validation, the record will be stored later, so we request
-                        // it in `kad_handle2` after receiving the incoming record
-                        put_record_success = true;
-                    }
-                    _ => {}
+                    // Due to manual validation, the record will be stored later, so we request
+                    // it in `kad_handle2` after receiving the incoming record
+                    put_record_success = true;
                 }
             }
             event = kad_handle2.next() => {
