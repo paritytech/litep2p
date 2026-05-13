@@ -57,30 +57,39 @@ impl QuicListener {
         keypair: &Keypair,
         addresses: Vec<Multiaddr>,
     ) -> crate::Result<(Self, Vec<Multiaddr>)> {
-        let mut listeners: Vec<Endpoint> = Vec::new();
-        let mut listen_addresses = Vec::new();
-
-        for address in addresses.into_iter() {
-            let listen_address = match Self::get_socket_address(&address)?.0 {
-                AddressType::Socket(address) => address,
-                AddressType::Dns { address, port, .. } => {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?address,
-                        ?port,
-                        "dns not supported as bind address",
-                    );
-                    continue;
-                }
-            };
-            let crypto_config = Arc::new(make_server_config(keypair).expect("to succeed"));
-            let server_config = ServerConfig::with_crypto(crypto_config);
-            let listener = Endpoint::server(server_config, listen_address).unwrap();
-
-            let listen_address = listener.local_addr()?;
-            listen_addresses.push(listen_address);
-            listeners.push(listener);
-        }
+        let (mut listeners, listen_addresses): (Vec<Endpoint>, Vec<SocketAddr>) = addresses
+            .into_iter()
+            .filter_map(|address| {
+                let bind_address = match Self::get_socket_address(&address).ok()?.0 {
+                    AddressType::Socket(address) => address,
+                    AddressType::Dns { address, port, .. } => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?address,
+                            ?port,
+                            "dns not supported as bind address",
+                        );
+                        return None;
+                    }
+                };
+                let crypto_config = Arc::new(make_server_config(keypair).expect("to succeed"));
+                let server_config = ServerConfig::with_crypto(crypto_config);
+                let listener = match Endpoint::server(server_config, bind_address) {
+                    Ok(listener) => listener,
+                    Err(error) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?address,
+                            ?error,
+                            "failed to bind quic listener",
+                        );
+                        return None;
+                    }
+                };
+                let local_address = listener.local_addr().ok()?;
+                Some((listener, local_address))
+            })
+            .unzip();
 
         let listen_multi_addresses = listen_addresses
             .iter()
