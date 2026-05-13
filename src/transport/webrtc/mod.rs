@@ -21,10 +21,13 @@
 //! WebRTC transport.
 
 use crate::{
-    error::{AddressError, Error},
+    error::Error,
     transport::{
         manager::TransportHandle,
-        webrtc::{config::Config, connection::WebRtcConnection, opening::OpeningWebRtcConnection},
+        webrtc::{
+            config::Config, connection::WebRtcConnection, listener::WebRtcListener,
+            opening::OpeningWebRtcConnection,
+        },
         Endpoint, Transport, TransportBuilder, TransportEvent,
     },
     types::ConnectionId,
@@ -34,8 +37,7 @@ use crate::{
 use futures::{future::BoxFuture, Future, Stream};
 use futures_timer::Delay;
 use hickory_resolver::TokioResolver;
-use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
-use socket2::{Domain, Socket, Type};
+use multiaddr::{multihash::Multihash, Multiaddr};
 use str0m::{
     channel::{ChannelConfig, ChannelId},
     config::DtlsCert,
@@ -48,13 +50,12 @@ use str0m::{
 
 use tokio::{
     io::ReadBuf,
-    net::UdpSocket,
     sync::mpsc::{channel, error::TrySendError, Sender},
 };
 
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -64,6 +65,7 @@ use std::{
 pub(crate) use substream::Substream;
 
 mod connection;
+mod listener;
 mod opening;
 mod substream;
 mod util;
@@ -121,102 +123,47 @@ enum ConnectionEvent {
     },
 }
 
+/// Endpoints of a received UDP datagram: which local socket received it,
+/// and the remote socket that sent it.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+struct AddressPair {
+    /// Address of the local listening socket that received the datagram.
+    local: SocketAddr,
+    /// Address of the remote peer that sent the datagram.
+    source: SocketAddr,
+}
+
 /// WebRTC transport.
 pub(crate) struct WebRtcTransport {
     /// Transport context.
     context: TransportHandle,
 
-    /// UDP socket.
-    socket: Arc<UdpSocket>,
-
     /// DTLS certificate.
     dtls_cert: DtlsCert,
 
-    /// Assigned listen addresss.
-    listen_address: SocketAddr,
+    /// WebRtc Listener.
+    listener: WebRtcListener,
 
     /// Datagram buffer size.
     datagram_buffer_size: usize,
 
     /// Connected peers.
-    open: HashMap<SocketAddr, ConnectionContext>,
+    open: HashMap<AddressPair, ConnectionContext>,
 
     /// OpeningWebRtc connections.
-    opening: HashMap<SocketAddr, OpeningWebRtcConnection>,
+    opening: HashMap<AddressPair, OpeningWebRtcConnection>,
 
-    /// `ConnectionId -> SocketAddr` mappings.
-    connections: HashMap<ConnectionId, (PeerId, SocketAddr, Endpoint)>,
+    /// `ConnectionId -> (peer id, address_pair, endpoint)` mappings.
+    connections: HashMap<ConnectionId, (PeerId, AddressPair, Endpoint)>,
 
     /// Pending timeouts.
-    timeouts: HashMap<SocketAddr, BoxFuture<'static, ()>>,
+    timeouts: HashMap<AddressPair, BoxFuture<'static, ()>>,
 
     /// Pending events.
     pending_events: VecDeque<TransportEvent>,
 }
 
 impl WebRtcTransport {
-    /// Extract socket address and `PeerId`, if found, from `address`.
-    fn get_socket_address(address: &Multiaddr) -> crate::Result<(SocketAddr, Option<PeerId>)> {
-        tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
-
-        let mut iter = address.iter();
-        let socket_address = match iter.next() {
-            Some(Protocol::Ip6(address)) => match iter.next() {
-                Some(Protocol::Udp(port)) => SocketAddr::new(IpAddr::V6(address), port),
-                protocol => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?protocol,
-                        "invalid transport protocol, expected `Upd`",
-                    );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
-                }
-            },
-            Some(Protocol::Ip4(address)) => match iter.next() {
-                Some(Protocol::Udp(port)) => SocketAddr::new(IpAddr::V4(address), port),
-                protocol => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?protocol,
-                        "invalid transport protocol, expected `Udp`",
-                    );
-                    return Err(Error::AddressError(AddressError::InvalidProtocol));
-                }
-            },
-            protocol => {
-                tracing::error!(target: LOG_TARGET, ?protocol, "invalid transport protocol");
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
-            }
-        };
-
-        match iter.next() {
-            Some(Protocol::WebRTCDirect) => {}
-            protocol => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?protocol,
-                    "invalid protocol, expected `WebRTCDirect`"
-                );
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
-            }
-        }
-
-        let maybe_peer = match iter.next() {
-            Some(Protocol::P2p(multihash)) => Some(PeerId::from_multihash(multihash)?),
-            None => None,
-            protocol => {
-                tracing::error!(
-                    target: LOG_TARGET,
-                    ?protocol,
-                    "invalid protocol, expected `P2p` or `None`"
-                );
-                return Err(Error::AddressError(AddressError::InvalidProtocol));
-            }
-        };
-
-        Ok((socket_address, maybe_peer))
-    }
-
     /// Create RTC client and open channel for Noise handshake.
     fn make_rtc_client(
         &self,
@@ -258,11 +205,11 @@ impl WebRtcTransport {
     }
 
     /// Poll opening connection.
-    fn poll_connection(&mut self, source: &SocketAddr) -> ConnectionEvent {
-        let Some(connection) = self.opening.get_mut(source) else {
+    fn poll_connection(&mut self, addrs: &AddressPair) -> ConnectionEvent {
+        let Some(connection) = self.opening.get_mut(addrs) else {
             tracing::warn!(
                 target: LOG_TARGET,
-                ?source,
+                ?addrs,
                 "connection doesn't exist",
             );
             return ConnectionEvent::ConnectionClosed;
@@ -279,7 +226,7 @@ impl WebRtcTransport {
                             Err(error) => {
                                 tracing::debug!(
                                     target: LOG_TARGET,
-                                    ?source,
+                                    ?addrs,
                                     ?error,
                                     "failed to handle timeout",
                                 );
@@ -293,15 +240,18 @@ impl WebRtcTransport {
                 opening::WebRtcEvent::Transmit {
                     destination,
                     datagram,
-                } =>
-                    if let Err(error) = self.socket.try_send_to(&datagram, destination) {
+                } => {
+                    // UNWRAP: local addr originated from self.listener, must be present.
+                    let socket = self.listener.socket(&addrs.local).unwrap();
+                    if let Err(error) = socket.try_send_to(&datagram, destination) {
                         tracing::warn!(
                             target: LOG_TARGET,
-                            ?source,
+                            ?addrs,
                             ?error,
                             "failed to send datagram",
                         );
-                    },
+                    }
+                }
                 opening::WebRtcEvent::ConnectionClosed => return ConnectionEvent::ConnectionClosed,
                 opening::WebRtcEvent::ConnectionOpened { peer, endpoint } => {
                     return ConnectionEvent::ConnectionEstablished { peer, endpoint };
@@ -318,8 +268,8 @@ impl WebRtcTransport {
     /// until it timeouts.
     ///
     /// Returns `true` if the client should be polled.
-    fn on_socket_input(&mut self, source: SocketAddr, buffer: Vec<u8>) -> crate::Result<bool> {
-        if let Entry::Occupied(mut entry) = self.open.entry(source) {
+    fn on_socket_input(&mut self, addrs: AddressPair, buffer: Vec<u8>) -> crate::Result<bool> {
+        if let Entry::Occupied(mut entry) = self.open.entry(addrs) {
             let ConnectionContext {
                 peer,
                 connection_id,
@@ -331,7 +281,7 @@ impl WebRtcTransport {
                 Err(TrySendError::Full(_)) => {
                     tracing::warn!(
                         target: LOG_TARGET,
-                        ?source,
+                        ?addrs,
                         ?peer,
                         ?connection_id,
                         "channel full, dropping datagram",
@@ -342,7 +292,7 @@ impl WebRtcTransport {
                 Err(TrySendError::Closed(_)) => {
                     tracing::debug!(
                         target: LOG_TARGET,
-                        ?source,
+                        ?addrs,
                         ?peer,
                         ?connection_id,
                         "connection closed, removing stale entry",
@@ -366,10 +316,10 @@ impl WebRtcTransport {
             buffer.as_slice().try_into().map_err(|_| Error::InvalidData)?;
 
         // If an opening connection already exists for this source, route all packets to it
-        if let Some(opening_conn) = self.opening.get_mut(&source) {
+        if let Some(opening_conn) = self.opening.get_mut(&addrs) {
             tracing::trace!(
                 target: LOG_TARGET,
-                ?source,
+                ?addrs,
                 is_stun = is_stun_packet(&buffer),
                 "routing packet to existing opening connection"
             );
@@ -378,7 +328,7 @@ impl WebRtcTransport {
                 tracing::error!(
                     target: LOG_TARGET,
                     ?error,
-                    ?source,
+                    ?addrs,
                     "failed to handle inbound datagram"
                 );
             }
@@ -389,7 +339,7 @@ impl WebRtcTransport {
         if !is_stun_packet(&buffer) {
             tracing::warn!(
                 target: LOG_TARGET,
-                ?source,
+                ?addrs,
                 "received non-stun packet without existing connection, ignoring"
             );
             return Ok(false);
@@ -400,7 +350,7 @@ impl WebRtcTransport {
         let Some((ufrag, pass)) = stun_message.split_username() else {
             tracing::warn!(
                 target: LOG_TARGET,
-                ?source,
+                ?addrs,
                 "failed to split username/password",
             );
             return Err(Error::InvalidData);
@@ -408,7 +358,7 @@ impl WebRtcTransport {
 
         tracing::debug!(
             target: LOG_TARGET,
-            ?source,
+            ?addrs,
             ?ufrag,
             ?pass,
             "received stun message"
@@ -416,14 +366,14 @@ impl WebRtcTransport {
 
         // create new `Rtc` object for the peer and give it the received STUN message
         let (mut rtc, noise_channel_id) =
-            self.make_rtc_client(ufrag, pass, source, self.socket.local_addr().unwrap());
+            self.make_rtc_client(ufrag, pass, addrs.source, addrs.local);
 
         rtc.handle_input(Input::Receive(
             Instant::now(),
             Receive {
-                source,
+                source: addrs.source,
                 proto: Str0mProtocol::Udp,
-                destination: self.socket.local_addr().unwrap(),
+                destination: addrs.local,
                 contents,
             },
         ))
@@ -435,10 +385,10 @@ impl WebRtcTransport {
             connection_id,
             noise_channel_id,
             self.context.keypair.clone(),
-            source,
-            self.listen_address,
+            addrs.source,
+            addrs.local,
         );
-        self.opening.insert(source, connection);
+        self.opening.insert(addrs, connection);
 
         Ok(true)
     }
@@ -463,27 +413,6 @@ impl TransportBuilder for WebRtcTransport {
             "start webrtc transport",
         );
 
-        let (listen_address, _) = Self::get_socket_address(&config.listen_addresses[0])?;
-
-        let socket = if listen_address.is_ipv4() {
-            let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(socket2::Protocol::UDP))?;
-            socket.bind(&listen_address.into())?;
-            socket
-        } else {
-            let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(socket2::Protocol::UDP))?;
-            socket.set_only_v6(true)?;
-            socket.bind(&listen_address.into())?;
-            socket
-        };
-
-        socket.set_reuse_address(true)?;
-        socket.set_nonblocking(true)?;
-        #[cfg(unix)]
-        socket.set_reuse_port(true)?;
-
-        let socket = UdpSocket::from_std(socket.into())?;
-        let listen_address = socket.local_addr()?;
-
         // OpenSsl as crypto provider is specified through the 'openssl' str0m feature flag.
         let crypto_provider = str0m::crypto::from_feature_flags();
         let dtls_cert = crypto_provider.dtls_provider.generate_certificate().ok_or(
@@ -492,29 +421,23 @@ impl TransportBuilder for WebRtcTransport {
             ))),
         )?;
 
-        let listen_multi_addresses = {
-            let fingerprint = crypto_provider.sha256_provider.sha256(&dtls_cert.certificate);
+        let fingerprint = crypto_provider.sha256_provider.sha256(&dtls_cert.certificate);
 
-            const MULTIHASH_SHA256_CODE: u64 = 0x12;
-            let certificate = Multihash::wrap(MULTIHASH_SHA256_CODE, &fingerprint)
-                .expect("fingerprint's len to be 32 bytes");
+        const MULTIHASH_SHA256_CODE: u64 = 0x12;
+        let certificate = Multihash::wrap(MULTIHASH_SHA256_CODE, &fingerprint)
+            .expect("fingerprint's len to be 32 bytes");
 
-            vec![Multiaddr::empty()
-                .with(Protocol::from(listen_address.ip()))
-                .with(Protocol::Udp(listen_address.port()))
-                .with(Protocol::WebRTCDirect)
-                .with(Protocol::Certhash(certificate))]
-        };
+        let (listener, listen_multi_addresses) =
+            WebRtcListener::new(config.listen_addresses, certificate)?;
 
         Ok((
             Self {
                 context,
                 dtls_cert,
-                listen_address,
+                listener,
                 open: HashMap::new(),
                 opening: HashMap::new(),
                 connections: HashMap::new(),
-                socket: Arc::new(socket),
                 timeouts: HashMap::new(),
                 pending_events: VecDeque::new(),
                 datagram_buffer_size: config.datagram_buffer_size,
@@ -573,18 +496,17 @@ impl Transport for WebRtcTransport {
             "inbound connection accepted",
         );
 
-        let (peer, source, endpoint) =
-            self.connections.remove(&connection_id).ok_or_else(|| {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?connection_id,
-                    "pending connection doens't exist",
-                );
+        let (peer, addrs, endpoint) = self.connections.remove(&connection_id).ok_or_else(|| {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?connection_id,
+                "pending connection doens't exist",
+            );
 
-                Error::InvalidState
-            })?;
+            Error::InvalidState
+        })?;
 
-        let connection = self.opening.remove(&source).ok_or_else(|| {
+        let connection = self.opening.remove(&addrs).ok_or_else(|| {
             tracing::warn!(
                 target: LOG_TARGET,
                 ?connection_id,
@@ -600,11 +522,9 @@ impl Transport for WebRtcTransport {
         let connection_id = endpoint.connection_id();
         let endpoint_clone = endpoint.clone();
         let executor = self.context.executor.clone();
-        let socket = Arc::clone(&self.socket);
-        let listen_address = self.listen_address;
 
         self.open.insert(
-            source,
+            addrs,
             ConnectionContext {
                 tx,
                 peer,
@@ -612,6 +532,8 @@ impl Transport for WebRtcTransport {
             },
         );
 
+        // UNWRAP: local addr originated from this.listener, must be present.
+        let socket = self.listener.socket(&addrs.local).unwrap();
         Ok(Box::pin(async move {
             // First, notify all protocols about the connection establishment
             protocol_set.report_connection_established(peer, endpoint_clone).await?;
@@ -620,8 +542,8 @@ impl Transport for WebRtcTransport {
             let connection = WebRtcConnection::new(
                 rtc,
                 peer,
-                source,
-                listen_address,
+                addrs.source,
+                addrs.local,
                 socket,
                 protocol_set,
                 endpoint,
@@ -643,7 +565,7 @@ impl Transport for WebRtcTransport {
             "inbound connection rejected",
         );
 
-        let (_, source, _) = self.connections.remove(&connection_id).ok_or_else(|| {
+        let (_, addrs, _) = self.connections.remove(&connection_id).ok_or_else(|| {
             tracing::warn!(
                 target: LOG_TARGET,
                 ?connection_id,
@@ -654,7 +576,7 @@ impl Transport for WebRtcTransport {
         })?;
 
         self.opening
-            .remove(&source)
+            .remove(&addrs)
             .ok_or_else(|| {
                 tracing::warn!(
                     target: LOG_TARGET,
@@ -696,61 +618,58 @@ impl Stream for WebRtcTransport {
             let mut buf = vec![0u8; 16384];
             let mut read_buf = ReadBuf::new(&mut buf);
 
-            match this.socket.poll_recv_from(cx, &mut read_buf) {
-                Poll::Pending => break,
+            let addrs = match this.listener.poll_recv_from(cx, &mut read_buf) {
+                // No error is expected to be returned by the listener.
                 Poll::Ready(Err(error)) => {
                     tracing::info!(
                         target: LOG_TARGET,
                         ?error,
                         "webrtc udp socket closed",
                     );
-
                     return Poll::Ready(None);
                 }
-                Poll::Ready(Ok(source)) => {
-                    let nread = read_buf.filled().len();
-                    buf.truncate(nread);
+                Poll::Pending => break,
+                Poll::Ready(Ok(addrs)) => addrs,
+            };
 
-                    match this.on_socket_input(source, buf) {
-                        Ok(false) => {}
-                        Ok(true) => loop {
-                            match this.poll_connection(&source) {
-                                ConnectionEvent::ConnectionEstablished { peer, endpoint } => {
-                                    this.connections.insert(
-                                        endpoint.connection_id(),
-                                        (peer, source, endpoint.clone()),
-                                    );
+            let nread = read_buf.filled().len();
+            buf.truncate(nread);
 
-                                    // keep polling the connection until it registers a timeout
-                                    this.pending_events.push_back(
-                                        TransportEvent::ConnectionEstablished { peer, endpoint },
-                                    );
-                                }
-                                ConnectionEvent::ConnectionClosed => {
-                                    this.opening.remove(&source);
-                                    this.timeouts.remove(&source);
+            match this.on_socket_input(addrs, buf) {
+                Ok(false) => {}
+                Ok(true) => loop {
+                    match this.poll_connection(&addrs) {
+                        ConnectionEvent::ConnectionEstablished { peer, endpoint } => {
+                            this.connections
+                                .insert(endpoint.connection_id(), (peer, addrs, endpoint.clone()));
 
-                                    break;
-                                }
-                                ConnectionEvent::Timeout { duration } => {
-                                    this.timeouts.insert(
-                                        source,
-                                        Box::pin(async move { Delay::new(duration).await }),
-                                    );
+                            // keep polling the connection until it registers a timeout
+                            this.pending_events.push_back(TransportEvent::ConnectionEstablished {
+                                peer,
+                                endpoint,
+                            });
+                        }
+                        ConnectionEvent::ConnectionClosed => {
+                            this.opening.remove(&addrs);
+                            this.timeouts.remove(&addrs);
 
-                                    break;
-                                }
-                            }
-                        },
-                        Err(error) => {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?source,
-                                ?error,
-                                "failed to handle datagram",
-                            );
+                            break;
+                        }
+                        ConnectionEvent::Timeout { duration } => {
+                            this.timeouts
+                                .insert(addrs, Box::pin(async move { Delay::new(duration).await }));
+
+                            break;
                         }
                     }
+                },
+                Err(error) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?addrs,
+                        ?error,
+                        "failed to handle datagram",
+                    );
                 }
             }
         }
@@ -766,25 +685,25 @@ impl Stream for WebRtcTransport {
             })
             .collect::<Vec<_>>()
             .into_iter()
-            .filter_map(|source| {
+            .filter_map(|addrs| {
                 let mut pending_event = None;
 
                 loop {
-                    match this.poll_connection(&source) {
+                    match this.poll_connection(&addrs) {
                         ConnectionEvent::ConnectionEstablished { peer, endpoint } => {
                             this.connections
-                                .insert(endpoint.connection_id(), (peer, source, endpoint.clone()));
+                                .insert(endpoint.connection_id(), (peer, addrs, endpoint.clone()));
 
                             // keep polling the connection until it registers a timeout
                             pending_event =
                                 Some(TransportEvent::ConnectionEstablished { peer, endpoint });
                         }
                         ConnectionEvent::ConnectionClosed => {
-                            this.opening.remove(&source);
+                            this.opening.remove(&addrs);
                             return None;
                         }
                         ConnectionEvent::Timeout { duration } => {
-                            this.timeouts.insert(source, Box::pin(Delay::new(duration)));
+                            this.timeouts.insert(addrs, Box::pin(Delay::new(duration)));
                             break;
                         }
                     }
@@ -794,7 +713,7 @@ impl Stream for WebRtcTransport {
             })
             .collect::<VecDeque<_>>();
 
-        this.timeouts.retain(|source, _| this.opening.contains_key(source));
+        this.timeouts.retain(|addrs, _| this.opening.contains_key(addrs));
         this.pending_events.extend(pending_events);
         this.pending_events
             .pop_front()
