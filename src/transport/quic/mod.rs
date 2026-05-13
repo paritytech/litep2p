@@ -641,7 +641,7 @@ mod tests {
                 },
             )]),
         };
-        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
 
         let (mut transport1, listen_addresses) =
             QuicTransport::new(handle1, Default::default(), resolver.clone()).unwrap();
