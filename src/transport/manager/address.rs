@@ -23,10 +23,13 @@ use crate::{error::DialError, PeerId};
 use ip_network::IpNetwork;
 use multiaddr::{Multiaddr, Protocol};
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
 /// Maximum number of addresses tracked for a peer.
 const MAX_ADDRESSES: usize = 64;
+
+/// Maximum number of priority addresses returned by [`AddressStore::addresses`].
+const MAX_PRIORITY_ADDRESS: usize = 4;
 
 /// Scores for address records.
 pub mod scores {
@@ -170,6 +173,13 @@ impl Ord for AddressRecord {
 pub struct AddressStore {
     /// Addresses available.
     pub addresses: HashMap<Multiaddr, AddressRecord>,
+
+    /// Stateless priority addresses that also ignore the capacity limit of the store.
+    ///
+    /// They represent the authority discovery records from the DHT and should always be
+    /// returned by the store.
+    pub priority_addresses: VecDeque<Multiaddr>,
+
     /// Maximum capacity of the address store.
     max_capacity: usize,
 }
@@ -219,6 +229,7 @@ impl AddressStore {
     pub fn new() -> Self {
         Self {
             addresses: HashMap::with_capacity(MAX_ADDRESSES),
+            priority_addresses: VecDeque::with_capacity(MAX_PRIORITY_ADDRESS),
             max_capacity: MAX_ADDRESSES,
         }
     }
@@ -234,6 +245,25 @@ impl AddressStore {
     /// Check if [`AddressStore`] is empty.
     pub fn is_empty(&self) -> bool {
         self.addresses.is_empty()
+    }
+
+    /// Insert the priority addresses into the store.
+    pub fn insert_with_priority(&mut self, records: Vec<Multiaddr>) {
+        for record in records {
+            if self.priority_addresses.contains(&record) {
+                continue;
+            }
+
+            if self.priority_addresses.len() >= MAX_PRIORITY_ADDRESS {
+                if let Some(evicted) = self.priority_addresses.pop_front() {
+                    if let Some(rec) = AddressRecord::from_multiaddr(evicted) {
+                        self.insert(rec);
+                    }
+                }
+            }
+
+            self.priority_addresses.push_back(record);
+        }
     }
 
     /// Insert the address record into [`AddressStore`] with the provided score.
@@ -291,9 +321,22 @@ impl AddressStore {
 
     /// Return the available addresses sorted by score.
     pub fn addresses(&self, limit: usize) -> Vec<Multiaddr> {
-        let mut records = self.addresses.values().cloned().collect::<Vec<_>>();
-        records.sort_by_key(|rhs| std::cmp::Reverse(rhs.score));
-        records.into_iter().take(limit).map(|record| record.address).collect()
+        let mut result =
+            Vec::with_capacity(self.priority_addresses.len() + self.addresses.len().min(limit));
+
+        result.extend(self.priority_addresses.iter().cloned());
+
+        let mut candidates: Vec<_> = self
+            .addresses
+            .values()
+            .filter(|record| !self.priority_addresses.contains(record.address()))
+            .collect();
+
+        candidates.sort_unstable_by_key(|rec| std::cmp::Reverse(rec.score));
+
+        result.extend(candidates.into_iter().take(limit).map(|record| record.address().clone()));
+
+        result
     }
 }
 
@@ -633,6 +676,7 @@ mod tests {
         let mut store = AddressStore {
             addresses: HashMap::new(),
             max_capacity: 2,
+            priority_addresses: VecDeque::new(),
         };
 
         let mut rng = rand::thread_rng();
