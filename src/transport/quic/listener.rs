@@ -307,8 +307,7 @@ mod tests {
             panic!("invalid address");
         };
 
-        let Some(Protocol::Udp(port2)) =
-            listen_addresses.iter().nth(1).unwrap().clone().iter().nth(1)
+        let Some(Protocol::Udp(port2)) = listen_addresses.get(1).unwrap().clone().iter().nth(1)
         else {
             panic!("invalid address");
         };

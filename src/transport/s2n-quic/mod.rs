@@ -201,7 +201,7 @@ impl QuicTransport {
                             .with(Protocol::Udp(address.port()))
                             .with(Protocol::QuicV1)
                             .with(Protocol::P2p(
-                                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
+                                peer.into(),
                             ))
                     }
                 };
@@ -506,9 +506,7 @@ mod tests {
             .with(Protocol::from(std::net::Ipv4Addr::new(255, 254, 253, 252)))
             .with(Protocol::Udp(8888))
             .with(Protocol::QuicV1)
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(peer.into()));
         manager.dial_address(address.clone()).await.unwrap();
 
         assert!(transport.pending_dials.is_empty());
@@ -551,9 +549,7 @@ mod tests {
             .with(Protocol::from(std::net::Ipv4Addr::new(255, 254, 253, 252)))
             .with(Protocol::Udp(8888))
             .with(Protocol::QuicV1)
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(peer.into()));
 
         assert!(transport.pending_dials.is_empty());
 

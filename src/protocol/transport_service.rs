@@ -29,7 +29,6 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
@@ -543,11 +542,11 @@ impl TransportService {
     /// The list is filtered for duplicates and unsupported transports.
     pub fn add_known_address(&mut self, peer: &PeerId, addresses: impl Iterator<Item = Multiaddr>) {
         let addresses: HashSet<Multiaddr> = addresses
-            .filter_map(|address| {
+            .map(|address| {
                 if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
-                    Some(address.with(Protocol::P2p(Multihash::from_bytes(&peer.to_bytes()).ok()?)))
+                    address.with(Protocol::P2p((*peer).into()))
                 } else {
-                    Some(address)
+                    address
                 }
             })
             .collect();
@@ -1077,7 +1076,7 @@ mod tests {
         };
 
         // verify that the primary connection has been replaced
-        assert!(service.connections.get(&peer).is_none());
+        assert!(!service.connections.contains_key(&peer));
         assert!(cmd_rx2.try_recv().is_err());
     }
 
@@ -1148,7 +1147,7 @@ mod tests {
         // Because the connection was closed, the peer is no longer tracked for keep-alive.
         // This leads to better tracking overall since we don't have to track stale connections.
         assert!(service.keep_alive_tracker.last_activity.is_empty());
-        assert!(service.connections.get(&peer).is_none());
+        assert!(!service.connections.contains_key(&peer));
 
         // Register new primary connection.
         let (cmd_tx1, _cmd_rx1) = channel(64);

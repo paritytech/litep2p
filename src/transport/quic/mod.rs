@@ -611,7 +611,6 @@ mod tests {
         types::protocol::ProtocolName,
         BandwidthSink,
     };
-    use multihash::Multihash;
     use tokio::sync::mpsc::channel;
 
     #[tokio::test]
@@ -675,9 +674,7 @@ mod tests {
             QuicTransport::new(handle2, Default::default(), resolver).unwrap();
         let peer1: PeerId = PeerId::from_public_key(&keypair1.public().into());
         let _peer2: PeerId = PeerId::from_public_key(&keypair2.public().into());
-        let listen_address = listen_address.with(Protocol::P2p(
-            Multihash::from_bytes(&peer1.to_bytes()).unwrap(),
-        ));
+        let listen_address = listen_address.with(Protocol::P2p(peer1.into()));
 
         transport2.dial(ConnectionId::new(), listen_address).unwrap();
 
