@@ -74,15 +74,21 @@ tokio-tungstenite = { version = "0.27.0", features = [
 # End of websocket related dependencies.
 
 # Quic related dependencies. Quic is an experimental feature flag. The dependencies must be updated.
-quinn = { version = "0.9.3", default-features = false, features = [
-    "tls-rustls",
+quinn = { version = "0.11", default-features = false, features = [
+    "rustls-ring",
     "runtime-tokio",
+    "log",
 ], optional = true }
-rustls = { version = "0.20.7", default-features = false, features = [
-    "dangerous_configuration",
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+    # `tls12` deliberately omitted: libp2p TLS is TLS 1.3-only.
+], optional = true }
+rustls-webpki = { version = "0.103", default-features = false, features = [
+    "std",
+    "ring",
 ], optional = true }
 ring = { version = "0.17.14", optional = true }
-webpki = { version = "0.22.4", optional = true }
 rcgen = { version = "0.14.5", optional = true }
 # End of Quic related dependencies.
 
@@ -131,7 +137,7 @@ fuzz = [
 
 # Unstable / experimental feature flags. These features are not guaranteed to be stable and may change in the future.
 # They are not yet suitable for production use-cases and should be used with caution.
-quic = ["dep:webpki", "dep:quinn", "dep:rustls", "dep:ring", "dep:rcgen"]
+quic = ["dep:quinn", "dep:rustls", "dep:rustls-webpki", "dep:ring", "dep:rcgen"]
 webrtc = ["dep:str0m"]
 rsa = ["dep:ring"]
 

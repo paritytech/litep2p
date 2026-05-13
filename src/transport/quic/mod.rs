@@ -131,7 +131,7 @@ pub(crate) struct QuicTransport {
 impl QuicTransport {
     /// Attempt to extract `PeerId` from connection certificates.
     fn extract_peer_id(connection: &Connection) -> Option<PeerId> {
-        let certificates: Box<Vec<rustls::Certificate>> =
+        let certificates: Box<Vec<rustls::pki_types::CertificateDer<'static>>> =
             connection.peer_identity()?.downcast().ok()?;
         let p2p_cert = crate::crypto::tls::certificate::parse(certificates.first()?)
             .expect("the certificate was validated during TLS handshake; qed");
@@ -263,7 +263,9 @@ impl Transport for QuicTransport {
         let timeout =
             IdleTimeout::try_from(self.config.connection_open_timeout).expect("to succeed");
         transport_config.max_idle_timeout(Some(timeout));
-        let mut client_config = ClientConfig::new(crypto_config);
+        let quic_crypto = quinn::crypto::rustls::QuicClientConfig::try_from(crypto_config)
+            .map_err(|error| Error::Other(format!("quic crypto config rejected by quinn: {error}")))?;
+        let mut client_config = ClientConfig::new(Arc::new(quic_crypto));
         client_config.transport_config(Arc::new(transport_config));
 
         let client_listen_address = match address.iter().next() {
@@ -399,7 +401,9 @@ impl Transport for QuicTransport {
                     let timeout =
                         IdleTimeout::try_from(connection_open_timeout).expect("to succeed");
                     transport_config.max_idle_timeout(Some(timeout));
-                    let mut client_config = ClientConfig::new(crypto_config);
+                    let quic_crypto = quinn::crypto::rustls::QuicClientConfig::try_from(crypto_config)
+                        .expect("rustls config is QUIC-compatible; qed");
+                    let mut client_config = ClientConfig::new(Arc::new(quic_crypto));
                     client_config.transport_config(Arc::new(transport_config));
 
                     let client_listen_address = match address.iter().next() {

@@ -34,20 +34,38 @@ mod verifier;
 
 const P2P_ALPN: [u8; 6] = *b"libp2p";
 
+/// `CryptoProvider` narrowed to the libp2p TLS 1.3 cipher-suite and kx-group set.
+///
+/// `kx_groups` is pinned rather than inherited from the ring default so that a
+/// future ring release can't silently widen the negotiation surface.
+fn crypto_provider() -> Arc<rustls::crypto::CryptoProvider> {
+    use rustls::crypto::ring::kx_group;
+
+    let mut provider = rustls::crypto::ring::default_provider();
+    provider.cipher_suites = verifier::CIPHERSUITES.to_vec();
+    provider.kx_groups = vec![kx_group::X25519, kx_group::SECP256R1, kx_group::SECP384R1];
+    Arc::new(provider)
+}
+
 /// Create a TLS server configuration for litep2p.
 pub fn make_server_config(
     keypair: &Keypair,
 ) -> Result<rustls::ServerConfig, certificate::GenError> {
     let (certificate, private_key) = certificate::generate(keypair)?;
 
-    let mut crypto = rustls::ServerConfig::builder()
-        .with_cipher_suites(verifier::CIPHERSUITES)
-        .with_safe_default_kx_groups()
+    // Custom `ResolvesServerCert` bypasses `with_single_cert`'s validation
+    // path; rustls 0.23 rejects our libp2p extension as an unsupported
+    // critical X.509 extension if it goes through the standard path.
+    let cert_resolver = Arc::new(
+        certificate::AlwaysResolvesCert::new(certificate, &private_key)
+            .expect("Server cert key DER is valid; qed"),
+    );
+
+    let mut crypto = rustls::ServerConfig::builder_with_provider(crypto_provider())
         .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
         .expect("Cipher suites and kx groups are configured; qed")
         .with_client_cert_verifier(Arc::new(verifier::Libp2pCertificateVerifier::new()))
-        .with_single_cert(vec![certificate], private_key)
-        .expect("Server cert key DER is valid; qed");
+        .with_cert_resolver(cert_resolver);
     crypto.alpn_protocols = vec![P2P_ALPN.to_vec()];
 
     Ok(crypto)
@@ -60,16 +78,19 @@ pub fn make_client_config(
 ) -> Result<rustls::ClientConfig, certificate::GenError> {
     let (certificate, private_key) = certificate::generate(keypair)?;
 
-    let mut crypto = rustls::ClientConfig::builder()
-        .with_cipher_suites(verifier::CIPHERSUITES)
-        .with_safe_default_kx_groups()
+    let cert_resolver = Arc::new(
+        certificate::AlwaysResolvesCert::new(certificate, &private_key)
+            .expect("Client cert key DER is valid; qed"),
+    );
+
+    let mut crypto = rustls::ClientConfig::builder_with_provider(crypto_provider())
         .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
         .expect("Cipher suites and kx groups are configured; qed")
+        .dangerous()
         .with_custom_certificate_verifier(Arc::new(
             verifier::Libp2pCertificateVerifier::with_remote_peer_id(remote_peer_id),
         ))
-        .with_single_cert(vec![certificate], private_key)
-        .expect("Client cert key DER is valid; qed");
+        .with_client_cert_resolver(cert_resolver);
     crypto.alpn_protocols = vec![P2P_ALPN.to_vec()];
 
     Ok(crypto)

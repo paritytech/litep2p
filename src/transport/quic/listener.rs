@@ -62,7 +62,11 @@ impl QuicListener {
         for address in addresses.into_iter() {
             let (listen_address, _) = Self::get_socket_address(&address)?;
             let crypto_config = Arc::new(make_server_config(keypair).expect("to succeed"));
-            let server_config = ServerConfig::with_crypto(crypto_config);
+            let quic_crypto = quinn::crypto::rustls::QuicServerConfig::try_from(crypto_config)
+                .map_err(|error| crate::Error::Other(format!(
+                    "quic server crypto config rejected by quinn: {error}"
+                )))?;
+            let server_config = ServerConfig::with_crypto(Arc::new(quic_crypto));
             let listener = Endpoint::server(server_config, listen_address).unwrap();
 
             let listen_address = listener.local_addr()?;
@@ -89,8 +93,25 @@ impl QuicListener {
                     .enumerate()
                     .map(|(i, listener)| {
                         let inner = listener.clone();
-                        async move { inner.accept().await.map(|connecting| (i, connecting)) }
-                            .boxed()
+                        async move {
+                            // Yield `None` on an accept failure so the polling
+                            // loop re-arms this listener instead of tearing the
+                            // whole stream down.
+                            let incoming = inner.accept().await?;
+                            match incoming.accept() {
+                                Ok(connecting) => Some((i, connecting)),
+                                Err(error) => {
+                                    tracing::debug!(
+                                        target: LOG_TARGET,
+                                        ?error,
+                                        listener = i,
+                                        "quic incoming.accept() failed; will re-arm listener",
+                                    );
+                                    None
+                                }
+                            }
+                        }
+                        .boxed()
                     })
                     .collect(),
                 listeners,
@@ -163,21 +184,41 @@ impl Stream for QuicListener {
     type Item = Connecting;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.incoming.is_empty() {
-            return Poll::Pending;
-        }
+        loop {
+            if self.incoming.is_empty() {
+                return Poll::Pending;
+            }
 
-        match futures::ready!(self.incoming.poll_next_unpin(cx)) {
-            None => Poll::Ready(None),
-            Some(None) => Poll::Ready(None),
-            Some(Some((listener, future))) => {
-                let inner = self.listeners[listener].clone();
-                self.incoming.push(
-                    async move { inner.accept().await.map(|connecting| (listener, connecting)) }
+            match futures::ready!(self.incoming.poll_next_unpin(cx)) {
+                None => return Poll::Ready(None),
+                Some(None) => {
+                    // Re-poll on a transient accept failure (see constructor);
+                    // only return `None` when `incoming` is genuinely empty.
+                    continue;
+                }
+                Some(Some((listener, future))) => {
+                    let inner = self.listeners[listener].clone();
+                    self.incoming.push(
+                        async move {
+                            let incoming = inner.accept().await?;
+                            match incoming.accept() {
+                                Ok(connecting) => Some((listener, connecting)),
+                                Err(error) => {
+                                    tracing::debug!(
+                                        target: LOG_TARGET,
+                                        ?error,
+                                        listener,
+                                        "quic incoming.accept() failed; re-arming",
+                                    );
+                                    None
+                                }
+                            }
+                        }
                         .boxed(),
-                );
+                    );
 
-                Poll::Ready(Some(future))
+                    return Poll::Ready(Some(future));
+                }
             }
         }
     }
@@ -268,7 +309,8 @@ mod tests {
 
         let crypto_config =
             Arc::new(make_client_config(&Keypair::generate(), Some(peer)).expect("to succeed"));
-        let client_config = ClientConfig::new(crypto_config);
+        let quic_crypto = quinn::crypto::rustls::QuicClientConfig::try_from(crypto_config).expect("rustls config is QUIC-compatible; qed");
+        let client_config = ClientConfig::new(Arc::new(quic_crypto));
         let client =
             Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)).unwrap();
         let connection = client
@@ -314,7 +356,8 @@ mod tests {
 
         let crypto_config1 =
             Arc::new(make_client_config(&Keypair::generate(), Some(peer)).expect("to succeed"));
-        let client_config1 = ClientConfig::new(crypto_config1);
+        let quic_crypto1 = quinn::crypto::rustls::QuicClientConfig::try_from(crypto_config1).expect("rustls config is QUIC-compatible; qed");
+        let client_config1 = ClientConfig::new(Arc::new(quic_crypto1));
         let client1 =
             Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)).unwrap();
         let connection1 = client1
@@ -327,7 +370,8 @@ mod tests {
 
         let crypto_config2 =
             Arc::new(make_client_config(&Keypair::generate(), Some(peer)).expect("to succeed"));
-        let client_config2 = ClientConfig::new(crypto_config2);
+        let quic_crypto2 = quinn::crypto::rustls::QuicClientConfig::try_from(crypto_config2).expect("rustls config is QUIC-compatible; qed");
+        let client_config2 = ClientConfig::new(Arc::new(quic_crypto2));
         let client2 =
             Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)).unwrap();
         let connection2 = client2
@@ -382,7 +426,8 @@ mod tests {
 
         let crypto_config1 =
             Arc::new(make_client_config(&Keypair::generate(), Some(peer)).expect("to succeed"));
-        let client_config1 = ClientConfig::new(crypto_config1);
+        let quic_crypto1 = quinn::crypto::rustls::QuicClientConfig::try_from(crypto_config1).expect("rustls config is QUIC-compatible; qed");
+        let client_config1 = ClientConfig::new(Arc::new(quic_crypto1));
         let client1 =
             Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)).unwrap();
         let connection1 = client1
@@ -395,7 +440,8 @@ mod tests {
 
         let crypto_config2 =
             Arc::new(make_client_config(&Keypair::generate(), Some(peer)).expect("to succeed"));
-        let client_config2 = ClientConfig::new(crypto_config2);
+        let quic_crypto2 = quinn::crypto::rustls::QuicClientConfig::try_from(crypto_config2).expect("rustls config is QUIC-compatible; qed");
+        let client_config2 = ClientConfig::new(Arc::new(quic_crypto2));
         let client2 =
             Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)).unwrap();
         let connection2 = client2
@@ -423,5 +469,58 @@ mod tests {
         for _ in 0..2 {
             let _ = listener.next().await;
         }
+    }
+
+    #[tokio::test]
+    async fn handshake_extracts_peer_id_both_sides() {
+        // End-to-end QUIC handshake: assert that after the libp2p TLS
+        // exchange completes, both peers can extract the *other* side's
+        // PeerId from the certificate via the libp2p X.509 extension.
+        let server_keypair = Keypair::generate();
+        let server_peer = PeerId::from_public_key(&server_keypair.public().into());
+        let client_keypair = Keypair::generate();
+        let client_peer = PeerId::from_public_key(&client_keypair.public().into());
+
+        let address: Multiaddr = "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap();
+        let (mut listener, listen_addresses) =
+            QuicListener::new(&server_keypair, vec![address]).unwrap();
+        let Some(Protocol::Udp(port)) = listen_addresses.first().unwrap().clone().iter().nth(1)
+        else {
+            panic!("invalid address");
+        };
+
+        let crypto = Arc::new(make_client_config(&client_keypair, Some(server_peer)).unwrap());
+        let quic_crypto =
+            quinn::crypto::rustls::QuicClientConfig::try_from(crypto).unwrap();
+        let client_config = ClientConfig::new(Arc::new(quic_crypto));
+        let client =
+            Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)).unwrap();
+        let connecting = client
+            .connect_with(client_config, format!("127.0.0.1:{port}").parse().unwrap(), "l")
+            .unwrap();
+
+        let (accepted, dialed) =
+            tokio::join!(listener.next(), async move { connecting.await });
+        let server_side = accepted.expect("listener yielded").await.expect("accept");
+        let client_side = dialed.expect("dial");
+
+        // The certificate the peer presented carries the libp2p extension.
+        // Round-trip both directions: server learns the client's PeerId,
+        // client learns the server's PeerId.
+        let peer_id_from = |c: &quinn::Connection| -> PeerId {
+            let certs: Box<Vec<rustls::pki_types::CertificateDer<'static>>> = c
+                .peer_identity()
+                .expect("peer identity present")
+                .downcast()
+                .expect("identity is a cert chain");
+            let parsed = crate::crypto::tls::certificate::parse(
+                certs.first().expect("at least one cert"),
+            )
+            .expect("libp2p cert parses");
+            parsed.peer_id()
+        };
+
+        assert_eq!(peer_id_from(&server_side), client_peer);
+        assert_eq!(peer_id_from(&client_side), server_peer);
     }
 }

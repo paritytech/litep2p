@@ -26,14 +26,14 @@
 use crate::{crypto::tls::certificate, PeerId};
 
 use rustls::{
-    cipher_suite::{
+    client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+    crypto::ring::cipher_suite::{
         TLS13_AES_128_GCM_SHA256, TLS13_AES_256_GCM_SHA384, TLS13_CHACHA20_POLY1305_SHA256,
     },
-    client::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
-    internal::msgs::handshake::DigitallySignedStruct,
-    server::{ClientCertVerified, ClientCertVerifier},
-    Certificate, DistinguishedNames, SignatureScheme, SupportedCipherSuite,
-    SupportedProtocolVersion,
+    pki_types::{CertificateDer, ServerName, UnixTime},
+    server::danger::{ClientCertVerified, ClientCertVerifier},
+    CertificateError, DigitallySignedStruct, DistinguishedName, SignatureScheme,
+    SupportedCipherSuite, SupportedProtocolVersion,
 };
 
 /// The protocol versions supported by this verifier.
@@ -57,6 +57,7 @@ pub static CIPHERSUITES: &[SupportedCipherSuite] = &[
 /// Implementation of the `rustls` certificate verification traits for libp2p.
 ///
 /// Only TLS 1.3 is supported. TLS 1.2 should be disabled in the configuration of `rustls`.
+#[derive(Debug)]
 pub struct Libp2pCertificateVerifier {
     /// The peer ID we intend to connect to
     remote_peer_id: Option<PeerId>,
@@ -105,12 +106,11 @@ impl Libp2pCertificateVerifier {
 impl ServerCertVerifier for Libp2pCertificateVerifier {
     fn verify_server_cert(
         &self,
-        end_entity: &Certificate,
-        intermediates: &[Certificate],
-        _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
         _ocsp_response: &[u8],
-        _now: std::time::SystemTime,
+        _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
         let peer_id = verify_presented_certs(end_entity, intermediates)?;
 
@@ -120,8 +120,10 @@ impl ServerCertVerifier for Libp2pCertificateVerifier {
             // the certificate matches the peer ID they intended to connect to,
             // and MUST abort the connection if there is a mismatch.
             if remote_peer_id != peer_id {
-                return Err(rustls::Error::PeerMisbehavedError(
-                    "Wrong peer ID in p2p extension".to_string(),
+                // Ships a `bad_certificate` / `access_denied` TLS alert;
+                // `Error::General` would emit the less specific `internal_error`.
+                return Err(rustls::Error::InvalidCertificate(
+                    CertificateError::ApplicationVerificationFailure,
                 ));
             }
         }
@@ -132,7 +134,7 @@ impl ServerCertVerifier for Libp2pCertificateVerifier {
     fn verify_tls12_signature(
         &self,
         _message: &[u8],
-        _cert: &Certificate,
+        _cert: &CertificateDer<'_>,
         _dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
         unreachable!("`PROTOCOL_VERSIONS` only allows TLS 1.3")
@@ -141,7 +143,7 @@ impl ServerCertVerifier for Libp2pCertificateVerifier {
     fn verify_tls13_signature(
         &self,
         message: &[u8],
-        cert: &Certificate,
+        cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
         verify_tls13_signature(cert, dss.scheme, message, dss.signature())
@@ -164,15 +166,17 @@ impl ClientCertVerifier for Libp2pCertificateVerifier {
         true
     }
 
-    fn client_auth_root_subjects(&self) -> Option<DistinguishedNames> {
-        Some(vec![])
+    fn root_hint_subjects(&self) -> &[DistinguishedName] {
+        // libp2p does not authenticate via PKI / root CAs; the cert is self-signed and
+        // identity is bound through the libp2p extension. No subject hints to offer.
+        &[]
     }
 
     fn verify_client_cert(
         &self,
-        end_entity: &Certificate,
-        intermediates: &[Certificate],
-        _now: std::time::SystemTime,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        _now: UnixTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
         let _: PeerId = verify_presented_certs(end_entity, intermediates)?;
 
@@ -182,7 +186,7 @@ impl ClientCertVerifier for Libp2pCertificateVerifier {
     fn verify_tls12_signature(
         &self,
         _message: &[u8],
-        _cert: &Certificate,
+        _cert: &CertificateDer<'_>,
         _dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
         unreachable!("`PROTOCOL_VERSIONS` only allows TLS 1.3")
@@ -191,7 +195,7 @@ impl ClientCertVerifier for Libp2pCertificateVerifier {
     fn verify_tls13_signature(
         &self,
         message: &[u8],
-        cert: &Certificate,
+        cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
         verify_tls13_signature(cert, dss.scheme, message, dss.signature())
@@ -209,8 +213,8 @@ impl ClientCertVerifier for Libp2pCertificateVerifier {
 /// Endpoints MUST abort the connection attempt if more than one certificate is received,
 /// or if the certificate’s self-signature is not valid.
 fn verify_presented_certs(
-    end_entity: &Certificate,
-    intermediates: &[Certificate],
+    end_entity: &CertificateDer<'_>,
+    intermediates: &[CertificateDer<'_>],
 ) -> Result<PeerId, rustls::Error> {
     if !intermediates.is_empty() {
         return Err(rustls::Error::General(
@@ -224,7 +228,7 @@ fn verify_presented_certs(
 }
 
 fn verify_tls13_signature(
-    cert: &Certificate,
+    cert: &CertificateDer<'_>,
     signature_scheme: SignatureScheme,
     message: &[u8],
     signature: &[u8],
@@ -238,8 +242,10 @@ impl From<certificate::ParseError> for rustls::Error {
     fn from(certificate::ParseError(e): certificate::ParseError) -> Self {
         use webpki::Error::*;
         match e {
-            BadDer => rustls::Error::InvalidCertificateEncoding,
-            e => rustls::Error::InvalidCertificateData(format!("invalid peer certificate: {e}")),
+            BadDer => rustls::Error::InvalidCertificate(CertificateError::BadEncoding),
+            e => rustls::Error::InvalidCertificate(CertificateError::Other(
+                rustls::OtherError(std::sync::Arc::new(InvalidLibp2pCertificate(e))),
+            )),
         }
     }
 }
@@ -247,10 +253,28 @@ impl From<certificate::VerificationError> for rustls::Error {
     fn from(certificate::VerificationError(e): certificate::VerificationError) -> Self {
         use webpki::Error::*;
         match e {
-            InvalidSignatureForPublicKey => rustls::Error::InvalidCertificateSignature,
+            InvalidSignatureForPublicKey =>
+                rustls::Error::InvalidCertificate(CertificateError::BadSignature),
             UnsupportedSignatureAlgorithm | UnsupportedSignatureAlgorithmForPublicKey =>
-                rustls::Error::InvalidCertificateSignatureType,
-            e => rustls::Error::InvalidCertificateData(format!("invalid peer certificate: {e}")),
+                rustls::Error::InvalidCertificate(
+                    CertificateError::UnsupportedSignatureAlgorithm,
+                ),
+            e => rustls::Error::InvalidCertificate(CertificateError::Other(
+                rustls::OtherError(std::sync::Arc::new(InvalidLibp2pCertificate(e))),
+            )),
         }
     }
 }
+
+/// Wrapper to turn a `webpki::Error` into something that satisfies the bounds on
+/// `rustls::CertificateError::Other`, which requires `std::error::Error + Send + Sync + 'static`.
+#[derive(Debug)]
+struct InvalidLibp2pCertificate(webpki::Error);
+
+impl std::fmt::Display for InvalidLibp2pCertificate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid peer certificate: {}", self.0)
+    }
+}
+
+impl std::error::Error for InvalidLibp2pCertificate {}
