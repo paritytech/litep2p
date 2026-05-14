@@ -333,11 +333,14 @@ pub struct WebRtcDialerState {
 impl WebRtcDialerState {
     /// Propose protocol to remote peer.
     ///
+    /// `fallback_names` must be in preference order, the first element is the
+    /// next protocol to try.
+    ///
     /// Return [`WebRtcDialerState`] which is used to drive forward the negotiation and an encoded
     /// `multistream-select` message that contains the protocol proposal for the substream.
     pub fn propose(
         protocol: ProtocolName,
-        fallback_names: Vec<ProtocolName>,
+        mut fallback_names: Vec<ProtocolName>,
     ) -> crate::Result<(Self, Vec<u8>)> {
         let message = webrtc_encode_multistream_message(
             Message::Protocol(
@@ -347,6 +350,9 @@ impl WebRtcDialerState {
         )?
         .freeze()
         .to_vec();
+
+        // Reverse fallback_names so that we can pop from it.
+        fallback_names.reverse();
 
         Ok((
             Self {
@@ -367,7 +373,8 @@ impl WebRtcDialerState {
             return Ok(None);
         }
 
-        let next = self.fallback_names.remove(0);
+        // UNWRAP: fallback_names has just been checked to not be empty.
+        let next = self.fallback_names.pop().unwrap();
         self.protocol = next;
 
         let message = webrtc_encode_multistream_message(
