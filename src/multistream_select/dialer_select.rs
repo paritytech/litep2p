@@ -427,16 +427,32 @@ impl WebRtcDialerState {
                 "Decoded message while registering response",
             );
 
+            let check_trailing_bytes = |bytes: &Bytes| {
+                // remote may be optimistically pipelining the first application frame
+                if !bytes.is_empty() {
+                    tracing::warn!(
+                        bytes_len = bytes.len(),
+                        "trailing bytes after multistream-select negotiation were discarded"
+                    );
+                }
+            };
+
             match (&self.state, message) {
                 (HandshakeState::WaitingResponse, Ok(Message::Header(HeaderLine::V1))) => {
                     self.state = HandshakeState::WaitingProtocol;
                 }
-                (HandshakeState::WaitingResponse, Ok(Message::Protocol(_))) => {
+                (HandshakeState::WaitingResponse, Ok(msg)) => {
+                    tracing::trace!(
+                      target: LOG_TARGET,
+                      ?msg,
+                      "Expected header response from peer, got different message"
+                    );
                     return Err(crate::error::NegotiationError::MultistreamSelectError(
                         NegotiationError::Failed,
                     ));
                 }
-                (_, Ok(Message::NotAvailable)) => {
+                (HandshakeState::WaitingProtocol, Ok(Message::NotAvailable)) => {
+                    check_trailing_bytes(&remaining);
                     return Ok(HandshakeResult::Rejected);
                 }
                 (HandshakeState::WaitingProtocol, Ok(Message::Protocol(protocol))) => {
@@ -445,11 +461,13 @@ impl WebRtcDialerState {
                     }
 
                     if self.protocol.as_bytes() == protocol.as_ref() {
+                        check_trailing_bytes(&remaining);
                         return Ok(HandshakeResult::Succeeded(self.protocol.clone()));
                     }
 
                     for fallback in &self.fallback_names {
                         if fallback.as_bytes() == protocol.as_ref() {
+                            check_trailing_bytes(&remaining);
                             return Ok(HandshakeResult::Succeeded(fallback.clone()));
                         }
                     }
