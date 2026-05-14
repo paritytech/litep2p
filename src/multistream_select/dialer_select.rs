@@ -33,7 +33,7 @@ use crate::{
     types::protocol::ProtocolName,
 };
 
-use bytes::{Bytes, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 use futures::prelude::*;
 use std::{
     convert::TryFrom as _,
@@ -369,12 +369,10 @@ impl WebRtcDialerState {
     /// Returns `None` if there are no more fallback protocols to try.
     /// Returns `Some(message)` with the encoded message to send, containing the protocol name.
     pub fn propose_next_fallback(&mut self) -> crate::Result<Option<Vec<u8>>> {
-        if self.fallback_names.is_empty() {
+        let Some(next) = self.fallback_names.pop() else {
             return Ok(None);
-        }
+        };
 
-        // UNWRAP: fallback_names has just been checked to not be empty.
-        let next = self.fallback_names.pop().unwrap();
         self.protocol = next;
 
         let message = webrtc_encode_multistream_message(
@@ -394,8 +392,7 @@ impl WebRtcDialerState {
         &mut self,
         payload: Vec<u8>,
     ) -> Result<HandshakeResult, crate::error::NegotiationError> {
-        let bytes = Bytes::from(payload);
-        let mut remaining = bytes.clone();
+        let mut remaining = Bytes::from(payload);
 
         while !remaining.is_empty() {
             let (len, tail) = unsigned_varint::decode::usize(&remaining).map_err(|error| {
@@ -408,8 +405,6 @@ impl WebRtcDialerState {
                 error::NegotiationError::ParseError(ParseError::InvalidData)
             })?;
 
-            let len_size = remaining.len() - tail.len();
-
             if len > tail.len() {
                 tracing::debug!(
                     target: LOG_TARGET,
@@ -421,8 +416,9 @@ impl WebRtcDialerState {
                 return Err(error::NegotiationError::ParseError(ParseError::InvalidData));
             }
 
-            let payload = remaining.slice(len_size..len_size + len);
-            remaining = remaining.slice(len_size + len..);
+            let len_size = remaining.len() - tail.len();
+            remaining.advance(len_size);
+            let payload = remaining.split_to(len);
             let message = Message::decode(payload);
 
             tracing::trace!(
@@ -462,6 +458,11 @@ impl WebRtcDialerState {
                         NegotiationError::Failed,
                     ));
                 }
+                (HandshakeState::WaitingProtocol, Ok(Message::ListProtocols)) => {
+                    return Err(crate::error::NegotiationError::MultistreamSelectError(
+                        NegotiationError::ProtocolError(ProtocolError::InvalidMessage),
+                    ));
+                }
                 _ => {
                     return Err(crate::error::NegotiationError::StateMismatch);
                 }
@@ -480,7 +481,7 @@ mod tests {
     use super::*;
     use crate::multistream_select::{listener_select_proto, protocol::MSG_MULTISTREAM_1_0};
     use bytes::BufMut;
-    use std::{sync::OnceState, time::Duration};
+    use std::time::Duration;
     #[tokio::test]
     async fn select_proto_basic() {
         async fn run(version: Version) {

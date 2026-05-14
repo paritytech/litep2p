@@ -270,7 +270,7 @@ pub fn webrtc_encode_multistream_message(
     };
 
     if capacity > super::length_delimited::MAX_FRAME_SIZE as usize {
-        tracing::debug!(
+        tracing::warn!(
             target: LOG_TARGET,
             capacity,
             max = super::length_delimited::MAX_FRAME_SIZE,

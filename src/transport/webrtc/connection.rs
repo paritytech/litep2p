@@ -467,16 +467,31 @@ impl WebRtcConnection {
                     );
 
                     let message = WebRtcMessage::encode(message, None);
-                    self.rtc
-                        .channel(channel_id)
-                        .ok_or(Error::ChannelDoesntExist)
-                        .map_err(|_| {
-                            SubstreamError::NegotiationError(NegotiationError::Failed.into())
-                        })?
-                        .write(true, message.as_ref())
-                        .map_err(|_| {
-                            SubstreamError::NegotiationError(NegotiationError::Failed.into())
-                        })?;
+
+                    let Some(mut channel) = self.rtc.channel(channel_id) else {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            peer = ?self.peer,
+                            ?channel_id,
+                            "protocol rejected received for non-existing channel",
+                        );
+                        return Err(SubstreamError::NegotiationError(
+                            NegotiationError::Failed.into(),
+                        ));
+                    };
+
+                    if let Err(err) = channel.write(true, message.as_ref()) {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            peer = ?self.peer,
+                            ?channel_id,
+                            ?err,
+                             "failed to write multistream-select fallback proposal",
+                        );
+                        return Err(SubstreamError::NegotiationError(
+                            NegotiationError::Failed.into(),
+                        ));
+                    };
 
                     self.channels.insert(
                         channel_id,
@@ -500,7 +515,15 @@ impl WebRtcConnection {
                         NegotiationError::Failed.into(),
                     ));
                 }
-                Err(_) => {
+                Err(e) => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        peer = ?self.peer,
+                        ?channel_id,
+                        ?e,
+                        "dialer failed proposing next fallback",
+                    );
+
                     return Err(SubstreamError::NegotiationError(
                         NegotiationError::Failed.into(),
                     ));

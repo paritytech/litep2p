@@ -411,10 +411,15 @@ pub fn webrtc_listener_negotiate(
             // Header + protocol in same payload.
             match decode_multistream_message(&mut payload)? {
                 Message::Protocol(protocol) => (protocol, true),
-                _ =>
+                _ => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        "failed to decode multistream message",
+                    );
                     return Err(Error::NegotiationError(
                         error::NegotiationError::ParseError(error::ParseError::InvalidData),
-                    )),
+                    ));
+                }
             }
         }
         // Protocol without header is only valid if the header was already exchanged.
@@ -427,6 +432,11 @@ pub fn webrtc_listener_negotiate(
 
     // Reject messages with unexpected trailing data.
     if !payload.is_empty() {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?payload,
+            "rejecting message with unexpected trailing data",
+        );
         return Err(Error::NegotiationError(
             error::NegotiationError::ParseError(error::ParseError::InvalidData),
         ));
