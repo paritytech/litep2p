@@ -260,15 +260,25 @@ pub fn webrtc_encode_multistream_message(
 
     let capacity = {
         let msg_varint_len = unsigned_varint::encode::usize(msg_len, &mut varint_buf).len();
-        let total = if prepend_header {
+        if prepend_header {
             let header_varint_len =
                 unsigned_varint::encode::usize(header_len, &mut varint_buf).len();
             header_varint_len + header_len + msg_varint_len + msg_len
         } else {
             msg_varint_len + msg_len
-        };
-        total.min(super::length_delimited::MAX_FRAME_SIZE as usize)
+        }
     };
+
+    if capacity > super::length_delimited::MAX_FRAME_SIZE as usize {
+        tracing::debug!(
+            target: LOG_TARGET,
+            capacity,
+            max = super::length_delimited::MAX_FRAME_SIZE,
+            ?message,
+            "encoded multistream message exceeds MAX_FRAME_SIZE",
+        );
+        return Err(Litep2pError::InvalidData);
+    }
 
     let mut output = BytesMut::with_capacity(capacity);
 
