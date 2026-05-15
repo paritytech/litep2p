@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    transport::webrtc::{schema::webrtc::message::Flag, util::WebRtcMessage},
+    transport::webrtc::{schema::webrtc::message::Flag, util::WebRtcMessage, LOG_TARGET},
     Error,
 };
 
@@ -40,8 +40,8 @@ use std::{
 const MAX_FRAME_SIZE: usize = 16384;
 
 /// Timeout for waiting on FIN_ACK after sending FIN.
-/// Matches go-libp2p's 5 second stream close timeout.
-const FIN_ACK_TIMEOUT: Duration = Duration::from_secs(5);
+/// Matches go-libp2p and js-libp2p's 10-second stream close timeout.
+const FIN_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Substream event.
 #[derive(Debug, PartialEq, Eq)]
@@ -172,7 +172,7 @@ impl SubstreamHandle {
         if let Some(payload) = message.payload {
             if !payload.is_empty() {
                 tracing::trace!(
-                    target: "litep2p::webrtc::substream",
+                    target: LOG_TARGET,
                     payload_len = payload.len(),
                     "forwarding payload to substream",
                 );
@@ -192,10 +192,7 @@ impl SubstreamHandle {
                     // Guard against duplicate FIN messages - only send RecvClosed once
                     if self.read_closed.swap(true, std::sync::atomic::Ordering::SeqCst) {
                         // Already processed FIN, ignore duplicate
-                        tracing::debug!(
-                            target: "litep2p::webrtc::substream",
-                            "received duplicate FIN, ignoring"
-                        );
+                        tracing::debug!(target: LOG_TARGET, "received duplicate FIN, ignoring");
                         return Ok(());
                     }
 
@@ -211,7 +208,7 @@ impl SubstreamHandle {
                         flag: Some(Flag::FinAck),
                     }) {
                         tracing::warn!(
-                            target: "litep2p::webrtc::substream",
+                            target: LOG_TARGET,
                             ?e,
                             "failed to send FIN_ACK, remote will timeout"
                         );
@@ -227,7 +224,7 @@ impl SubstreamHandle {
                         self.shutdown_waker.wake();
                     } else {
                         tracing::warn!(
-                            target: "litep2p::webrtc::substream",
+                            target: LOG_TARGET,
                             ?state,
                             "received FIN_ACK in unexpected state, ignoring"
                         );
@@ -405,7 +402,7 @@ impl tokio::io::AsyncWrite for Substream {
                 if let Some(timeout) = self.fin_ack_timeout.as_mut() {
                     if timeout.as_mut().poll(cx).is_ready() {
                         tracing::debug!(
-                            target: "litep2p::webrtc::substream",
+                            target: LOG_TARGET,
                             "FIN_ACK timeout exceeded, forcing shutdown completion"
                         );
                         *self.state.lock() = State::FinAcked;
