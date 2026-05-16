@@ -697,6 +697,16 @@ mod tests {
 
         transport2.dial(ConnectionId::new(), listen_address).unwrap();
 
+        // `QuicTransport::dial` now defers `Endpoint::client` / `connect_with` into the
+        // future pushed to `pending_connections`, so the QUIC handshake only progresses
+        // while `transport2` is being polled. Drive it from a background task so the
+        // listener actually sees the inbound packet.
+        let (tx, mut from_transport2) = channel(64);
+        tokio::spawn(async move {
+            let event = transport2.next().await;
+            tx.send(event).await.unwrap();
+        });
+
         let event = transport1.next().await.unwrap();
         match event {
             TransportEvent::PendingInboundConnection { connection_id } => {
@@ -705,7 +715,8 @@ mod tests {
             _ => panic!("unexpected event"),
         }
 
-        let (res1, res2) = tokio::join!(transport1.next(), transport2.next());
+        let res1 = transport1.next().await;
+        let res2 = from_transport2.recv().await.unwrap();
 
         assert!(std::matches!(
             res1,
