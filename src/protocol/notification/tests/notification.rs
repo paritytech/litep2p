@@ -30,7 +30,7 @@ use crate::{
             ConnectionState, InboundState, NotificationProtocol, OutboundState, PeerContext,
             PeerState, ValidationResult,
         },
-        InnerTransportEvent, ProtocolCommand, SubstreamError,
+        InnerTransportEvent, Permit, ProtocolCommand, SubstreamError,
     },
     substream::Substream,
     transport::Endpoint,
@@ -282,7 +282,7 @@ async fn handshake_event_invalid_state_for_outbound_substream() {
         .try_init();
 
     let (mut notif, _handle, _sender, mut tx) = make_notification_protocol();
-    let (peer, _receiver) = register_peer(&mut notif, &mut tx).await;
+    let (peer, _receiver, _permit) = register_peer(&mut notif, &mut tx).await;
 
     notif
         .on_handshake_event(
@@ -322,7 +322,7 @@ async fn substream_open_failure_for_unknown_peer() {
 #[tokio::test]
 async fn dial_failure_for_non_dialing_peer() {
     let (mut notif, mut handle, _sender, mut tx) = make_notification_protocol();
-    let (peer, _receiver) = register_peer(&mut notif, &mut tx).await;
+    let (peer, _receiver, _permit) = register_peer(&mut notif, &mut tx).await;
 
     // dial failure for the peer even though it's not dialing
     notif.on_dial_failure(peer, vec![]).await;
@@ -361,9 +361,10 @@ async fn connection_closed(peer: PeerId, state: PeerState, event: Option<Notific
 async fn register_peer(
     notif: &mut NotificationProtocol,
     sender: &mut Sender<InnerTransportEvent>,
-) -> (PeerId, Receiver<ProtocolCommand>) {
+) -> (PeerId, Receiver<ProtocolCommand>, Permit) {
     let peer = PeerId::random();
     let (conn_tx, conn_rx) = channel(64);
+    let permit = Permit::new(conn_tx.clone());
 
     sender
         .send(InnerTransportEvent::ConnectionEstablished {
@@ -385,7 +386,7 @@ async fn register_peer(
         })
     ));
 
-    (peer, conn_rx)
+    (peer, conn_rx, permit)
 }
 
 #[tokio::test]
@@ -435,7 +436,7 @@ async fn open_substream(state: PeerState, succeeds: bool) {
         .try_init();
 
     let (mut notif, _handle, _sender, mut tx) = make_notification_protocol();
-    let (peer, mut receiver) = register_peer(&mut notif, &mut tx).await;
+    let (peer, mut receiver, _permit) = register_peer(&mut notif, &mut tx).await;
 
     let context = notif.peers.get_mut(&peer).unwrap();
     context.state = state;
@@ -462,7 +463,7 @@ async fn remote_opens_multiple_inbound_substreams() {
 
     let protocol = ProtocolName::from("/notif/1");
     let (mut notif, _handle, _sender, mut tx) = make_notification_protocol();
-    let (peer, _receiver) = register_peer(&mut notif, &mut tx).await;
+    let (peer, _receiver, permit) = register_peer(&mut notif, &mut tx).await;
 
     // open substream, poll the result and verify that the peer is in correct state
     tx.send(InnerTransportEvent::SubstreamOpened {
@@ -476,6 +477,7 @@ async fn remote_opens_multiple_inbound_substreams() {
             Box::new(DummySubstream::new()),
         ),
         connection_id: ConnectionId::from(0usize),
+        opening_permit: permit.clone(),
     })
     .await
     .unwrap();
@@ -513,6 +515,7 @@ async fn remote_opens_multiple_inbound_substreams() {
             Box::new(substream),
         ),
         connection_id: ConnectionId::from(0usize),
+        opening_permit: permit,
     })
     .await
     .unwrap();
@@ -543,7 +546,7 @@ async fn pending_outbound_tracked_correctly() {
 
     let protocol = ProtocolName::from("/notif/1");
     let (mut notif, _handle, _sender, mut tx) = make_notification_protocol();
-    let (peer, _receiver) = register_peer(&mut notif, &mut tx).await;
+    let (peer, _receiver, _permit) = register_peer(&mut notif, &mut tx).await;
 
     // open outbound substream
     notif.on_open_substream(peer).await.unwrap();
@@ -661,7 +664,7 @@ async fn inbound_accepted_outbound_fails_to_open() {
 
     let protocol = ProtocolName::from("/notif/1");
     let (mut notif, mut handle, sender, mut tx) = make_notification_protocol();
-    let (peer, receiver) = register_peer(&mut notif, &mut tx).await;
+    let (peer, receiver, _permit) = register_peer(&mut notif, &mut tx).await;
 
     // register inbound substream and verify that the state is `Validating`
     notif
@@ -762,7 +765,7 @@ async fn open_substream_on_closed_connection() {
         .try_init();
 
     let (mut notif, mut handle, sender, mut tx) = make_notification_protocol();
-    let (peer, receiver) = register_peer(&mut notif, &mut tx).await;
+    let (peer, receiver, _permit) = register_peer(&mut notif, &mut tx).await;
 
     // before processing the open substream event, close the connection
     drop(sender);
@@ -803,7 +806,7 @@ async fn close_already_closed_connection() {
         .try_init();
 
     let (mut notif, mut handle, _, mut tx) = make_notification_protocol();
-    let (peer, _) = register_peer(&mut notif, &mut tx).await;
+    let (peer, _, _permit) = register_peer(&mut notif, &mut tx).await;
 
     notif.peers.insert(
         peer,
@@ -873,7 +876,7 @@ async fn open_failure_reported_once() {
         .try_init();
 
     let (mut notif, mut handle, _, mut tx) = make_notification_protocol();
-    let (peer, _) = register_peer(&mut notif, &mut tx).await;
+    let (peer, _, _permit) = register_peer(&mut notif, &mut tx).await;
 
     // move `peer` to state where the inbound substream has been negotiated
     // and the local node has initiated an outbound substream
@@ -949,7 +952,7 @@ async fn second_inbound_substream_rejected() {
         .try_init();
 
     let (mut notif, mut handle, _, mut tx) = make_notification_protocol();
-    let (peer, _) = register_peer(&mut notif, &mut tx).await;
+    let (peer, _, _permit) = register_peer(&mut notif, &mut tx).await;
 
     // move peer state to `Validating`
     let mut substream1 = MockSubstream::new();
@@ -1023,7 +1026,7 @@ async fn second_inbound_substream_opened_while_outbound_substream_was_opening() 
         .try_init();
 
     let (mut notif, mut handle, _zz, mut tx) = make_notification_protocol();
-    let (peer, _zz) = register_peer(&mut notif, &mut tx).await;
+    let (peer, _zz, _permit) = register_peer(&mut notif, &mut tx).await;
 
     // move peer state to `Validating`
     let mut substream1 = MockSubstream::new();

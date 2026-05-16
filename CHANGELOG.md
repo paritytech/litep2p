@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.3] - 2026-03-09
+
+This release bumps the rust yamux dependency to 0.13.10 to align with the latest upstream version, which includes important stability fixes.
+
+## [0.13.2] - 2026-03-02
+
+This is a hotfix release fixing ping protocol panic in debug builds. The release also includes WebRTC fixes.
+
+### Fixed
+
+- webrtc/fix: Ensure delay future is awaited ([#548](https://github.com/paritytech/litep2p/pull/548))
+- ping: Fix panic in debug builds ([#551](https://github.com/paritytech/litep2p/pull/551))
+- webrtc: Ensure nonstun packets cannot panic transport layer ([#550](https://github.com/paritytech/litep2p/pull/550))
+- webrtc: Avoid memory leaks by cleaning stale hashmap entries ([#549](https://github.com/paritytech/litep2p/pull/549))
+
+## [0.13.1] - 2026-02-27
+
+This release includes multiple fixes of transports and protocols, fixing connection stability issues with other librariies (specifically, [smoldot](https://github.com/smol-dot/smoldot/)) and increasing success rates of dialing & opening substreams, especially in extreme cases when remote nodes have a lot of private addresses published to the DHT.
+
+### Fixed
+
+- ping: Conform to the spec & exclude from connection keep-alive ([#416](https://github.com/paritytech/litep2p/pull/416))
+- transport: Make accept async to close the gap on service races ([#525](https://github.com/paritytech/litep2p/pull/525))
+- transport: Limit dial concurrency and bound total dialing time ([#538](https://github.com/paritytech/litep2p/pull/538))
+- webrtc: Support `FIN`/`FIN_ACK` handshake for substream shutdown ([#513](https://github.com/paritytech/litep2p/pull/513))
+- transport: Expose failed addresses to the transport manager ([#529](https://github.com/paritytech/litep2p/pull/529))
+
+### Changed
+
+- manager: Prioritize public addresses for dialing ([#530](https://github.com/paritytech/litep2p/pull/530))
+
 ## [0.13.0] - 2026-01-21
 
 This release brings multiple fixes to both the transport and application-level protocols.

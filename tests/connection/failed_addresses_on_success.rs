@@ -32,7 +32,6 @@ use litep2p::{
     transport::tcp::config::Config as TcpConfig, Litep2p, Litep2pEvent,
 };
 
-use futures::StreamExt;
 use multiaddr::{Multiaddr, Protocol};
 use multihash::Multihash;
 use std::time::Duration;

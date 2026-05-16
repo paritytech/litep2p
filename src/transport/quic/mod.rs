@@ -329,14 +329,18 @@ impl Transport for QuicTransport {
         Ok(())
     }
 
-    fn accept(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
+    fn accept(
+        &mut self,
+        connection_id: ConnectionId,
+    ) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
         let (connection, endpoint) = self
             .pending_open
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
         let bandwidth_sink = self.context.bandwidth_sink.clone();
-        let protocol_set = self.context.protocol_set(connection_id);
+        let mut protocol_set = self.context.protocol_set(connection_id);
         let substream_open_timeout = self.config.substream_open_timeout;
+        let executor = self.context.executor.clone();
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -344,20 +348,29 @@ impl Transport for QuicTransport {
             "start connection",
         );
 
-        self.context.executor.run(Box::pin(async move {
-            let _ = QuicConnection::new(
-                connection.peer,
-                endpoint,
-                connection.connection,
-                protocol_set,
-                bandwidth_sink,
-                substream_open_timeout,
-            )
-            .start()
-            .await;
-        }));
+        let peer = connection.peer;
+        let endpoint_clone = endpoint.clone();
 
-        Ok(())
+        Ok(Box::pin(async move {
+            // First, notify all protocols about the connection establishment
+            protocol_set.report_connection_established(peer, endpoint_clone).await?;
+
+            // After protocols are notified, spawn the connection event loop
+            executor.run(Box::pin(async move {
+                let _ = QuicConnection::new(
+                    peer,
+                    endpoint,
+                    connection.connection,
+                    protocol_set,
+                    bandwidth_sink,
+                    substream_open_timeout,
+                )
+                .start()
+                .await;
+            }));
+
+            Ok(())
+        }))
     }
 
     fn reject(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
@@ -625,6 +638,7 @@ mod tests {
         codec::ProtocolCodec,
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
+        protocol::SubstreamKeepAlive,
         transport::manager::{ProtocolContext, TransportHandle},
         types::protocol::ProtocolName,
         BandwidthSink,
@@ -656,6 +670,7 @@ mod tests {
                     tx: tx1,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
+                    keep_alive: SubstreamKeepAlive::Yes,
                 },
             )]),
         };
@@ -683,6 +698,7 @@ mod tests {
                     tx: tx2,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
+                    keep_alive: SubstreamKeepAlive::Yes,
                 },
             )]),
         };
