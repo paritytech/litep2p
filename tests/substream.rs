@@ -133,18 +133,16 @@ impl UserProtocol for CustomProtocol {
                     Some((peer, Err(_))) => {
                         if let Some(mut substream) = self.substreams.remove(&peer) {
                             futures::future::poll_fn(|cx| {
-                                match futures::ready!(Sink::poll_close(Pin::new(&mut substream), cx)) {
-                                    _ => Poll::Ready(()),
-                                }
+                                let _ = futures::ready!(Sink::poll_close(Pin::new(&mut substream), cx));
+                                Poll::Ready(())
                             }).await;
                         }
                     }
                     Some((peer, Ok(_))) => {
                         if let Some(mut substream) = self.substreams.remove(&peer) {
                             futures::future::poll_fn(|cx| {
-                                match futures::ready!(Sink::poll_close(Pin::new(&mut substream), cx)) {
-                                    _ => Poll::Ready(()),
-                                }
+                                let _ = futures::ready!(Sink::poll_close(Pin::new(&mut substream), cx));
+                                Poll::Ready(())
                             }).await;
                         }
                     },

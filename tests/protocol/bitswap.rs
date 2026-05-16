@@ -29,7 +29,7 @@ use litep2p::{
     types::{cid::Cid, multihash::Code},
     Litep2p,
 };
-use multihash::MultihashDigest;
+use multihash_codetable::MultihashDigest;
 use std::{pin::pin, time::Duration};
 use tracing::debug;
 
@@ -136,7 +136,7 @@ async fn bitswap_e2e() {
                             WantType::Have => {
                                 debug!("'Have' request received");
                                 bitswap_server.send_response(peer, vec![ResponseType::Presence {
-                                    cid: cid.clone(),
+                                    cid,
                                     presence: BlockPresenceType::Have,
                                 }])
                                 .await;
@@ -144,7 +144,7 @@ async fn bitswap_e2e() {
                             WantType::Block => {
                                 debug!("'Block' request received");
                                 bitswap_server.send_response(peer, vec![ResponseType::Block {
-                                    cid: cid.clone(),
+                                    cid,
                                     block: payload.clone(),
                                 }])
                                 .await;

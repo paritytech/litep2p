@@ -109,8 +109,8 @@ impl StabilityProtocol {
             Direction::Outbound { .. } => {
                 self.outbound.push(Box::pin(async move {
                     let mut frame = vec![0; 128];
-                    for i in 0..frame.len() {
-                        frame[i] = i as u8;
+                    for (i, f) in frame.iter_mut().enumerate() {
+                        *f = i as u8;
                     }
 
                     while total_packets > 0 {

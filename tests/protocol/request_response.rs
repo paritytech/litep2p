@@ -35,7 +35,6 @@ use litep2p::transport::websocket::config::Config as WebSocketConfig;
 
 use futures::{channel, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 use tokio::time::sleep;
 
 #[cfg(feature = "quic")]
@@ -1780,14 +1779,11 @@ async fn substream_open_failure_reported_once(transport1: Transport, transport2:
         }
     );
 
-    loop {
-        match litep2p1.next_event().await {
-            Some(Litep2pEvent::ConnectionClosed { peer, .. }) => {
-                assert_eq!(peer, peer2);
-                break;
-            }
-            event => panic!("invalid event received: {event:?}"),
+    match litep2p1.next_event().await {
+        Some(Litep2pEvent::ConnectionClosed { peer, .. }) => {
+            assert_eq!(peer, peer2);
         }
+        event => panic!("invalid event received: {event:?}"),
     }
 
     // verify that nothing is received from the handle as the request failure was already reported
@@ -2258,7 +2254,7 @@ async fn outbound_request_for_unconnected_peer(transport1: Transport) {
 
     tokio::spawn(async move {
         let mut litep2p1 = Litep2p::new(config1).unwrap();
-        while let Some(_) = litep2p1.next_event().await {}
+        tokio::spawn(async move { while litep2p1.next_event().await.is_some() {} });
     });
 
     let peer2 = PeerId::random();
@@ -2313,26 +2309,26 @@ async fn dial_failure(transport: Transport) {
         Transport::Tcp(_) => Multiaddr::empty()
             .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
             .with(Protocol::Tcp(5))
-            .with(Protocol::P2p(Multihash::from(peer))),
+            .with(Protocol::P2p(peer.into())),
         #[cfg(feature = "quic")]
         Transport::Quic(_) => Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1)))
             .with(Protocol::Udp(5))
             .with(Protocol::QuicV1)
-            .with(Protocol::P2p(Multihash::from(peer))),
+            .with(Protocol::P2p(peer.into())),
         #[cfg(feature = "websocket")]
         Transport::WebSocket(_) => Multiaddr::empty()
             .with(Protocol::Ip6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
             .with(Protocol::Tcp(5))
             .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())))
-            .with(Protocol::P2p(Multihash::from(peer))),
+            .with(Protocol::P2p(peer.into())),
     };
 
     let config = add_transport(litep2p_config, transport).build();
 
     let mut litep2p = Litep2p::new(config).unwrap();
     litep2p.add_known_address(peer, vec![known_address].into_iter());
-    tokio::spawn(async move { while let Some(_) = litep2p.next_event().await {} });
+    tokio::spawn(async move { while litep2p.next_event().await.is_some() {} });
 
     let request_id = handle.send_request(peer, vec![1, 3, 3, 7], DialOptions::Dial).await.unwrap();
 

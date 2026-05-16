@@ -148,8 +148,7 @@ impl Mdns {
     /// Get next query ID.
     fn next_query_id(&mut self) -> u16 {
         let query_id = self.next_query_id;
-        self.next_query_id += 1;
-
+        self.next_query_id = self.next_query_id.wrapping_add(1);
         query_id
     }
 
@@ -252,10 +251,8 @@ impl Mdns {
                 match &record.rdata {
                     RData::TXT(text) => text
                         .attributes()
-                        .iter()
-                        .filter_map(|(_, address)| {
-                            address.as_ref().and_then(|inner| inner.parse().ok())
-                        })
+                        .values()
+                        .filter_map(|address| address.as_ref().and_then(|inner| inner.parse().ok()))
                         .collect(),
                     _ => vec![],
                 }

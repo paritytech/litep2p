@@ -37,7 +37,6 @@ use litep2p::transport::websocket::config::Config as WebSocketConfig;
 use bytes::BytesMut;
 use futures::StreamExt;
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 
 #[cfg(feature = "quic")]
 use std::net::Ipv4Addr;
@@ -2225,7 +2224,7 @@ async fn zero_byte_handshake(transport1: Transport, transport2: Transport, hands
             fallback: None,
             direction: Direction::Outbound,
             peer: peer2,
-            handshake: handshake,
+            handshake,
         }
     );
 
@@ -3722,7 +3721,7 @@ async fn dial_failure(transport1: Transport, transport2: Transport) {
     let mut litep2p2 = Litep2p::new(config2).unwrap();
 
     let peer2 = *litep2p2.local_peer_id();
-    let known_address = known_address.with(Protocol::P2p(Multihash::from(peer2)));
+    let known_address = known_address.with(Protocol::P2p(peer2.into()));
 
     litep2p1.add_known_address(peer2, vec![known_address].into_iter());
 
@@ -4233,7 +4232,7 @@ async fn clogged_channel_disconnects_peer(transport1: Transport, transport2: Tra
     );
 
     // `peer2` is also reported that the substream is closed
-    if let Err(_) = tokio::time::timeout(Duration::from_secs(5), async move {
+    if tokio::time::timeout(Duration::from_secs(5), async move {
         loop {
             if let Some(NotificationEvent::NotificationStreamClosed { peer }) = handle2.next().await
             {
@@ -4243,6 +4242,7 @@ async fn clogged_channel_disconnects_peer(transport1: Transport, transport2: Tra
         }
     })
     .await
+    .is_err()
     {
         panic!("timeout")
     }

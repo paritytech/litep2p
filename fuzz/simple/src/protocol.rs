@@ -25,7 +25,7 @@ use litep2p::{
     types::protocol::ProtocolName,
 };
 
-use bytes::{Buf, BytesMut};
+use bytes::BytesMut;
 use futures::{SinkExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio_util::codec::{Decoder, Encoder, Framed};
@@ -40,7 +40,7 @@ impl Decoder for FuzzCodec {
     type Error = litep2p::Error;
 
     /// We do not need to decode.
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+    fn decode(&mut self, _src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         Ok(None)
     }
 }
