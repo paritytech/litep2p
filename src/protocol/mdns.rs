@@ -148,8 +148,7 @@ impl Mdns {
     /// Get next query ID.
     fn next_query_id(&mut self) -> u16 {
         let query_id = self.next_query_id;
-        self.next_query_id += 1;
-
+        self.next_query_id = self.next_query_id.wrapping_add(1);
         query_id
     }
 
