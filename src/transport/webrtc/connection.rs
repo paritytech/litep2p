@@ -111,7 +111,7 @@ impl SubstreamHandleSet {
 
     /// Remove handle from [`SubstreamHandleSet`].
     pub fn remove(&mut self, key: &ChannelId) -> Option<SubstreamHandle> {
-        self.handles.shift_remove(key)
+        self.handles.swap_remove(key)
     }
 }
 
@@ -383,6 +383,7 @@ impl WebRtcConnection {
             "handle opening inbound substream",
         );
 
+        // Decode errors are not recoverable.
         let payload = WebRtcMessage::decode(&data)?.payload.ok_or(Error::InvalidData)?;
         let protocols = self.protocol_set.protocols_with_keep_alives();
         let protocol_names = protocols.keys().cloned().collect();
@@ -609,6 +610,7 @@ impl WebRtcConnection {
         channel_id: ChannelId,
         data: Vec<u8>,
     ) -> crate::Result<()> {
+        // Decode errors are not recoverable.
         let message = WebRtcMessage::decode(&data)?;
 
         tracing::debug!(
@@ -765,6 +767,7 @@ impl WebRtcConnection {
 
                     self.rtc.direct_api().close_data_channel(channel_id);
                     self.channels.insert(channel_id, ChannelState::Closing);
+                    self.handles.remove(&channel_id);
                 }
             },
             ChannelState::Closing => {
@@ -1001,6 +1004,10 @@ impl WebRtcConnection {
                                 ?error,
                                 "failed to send data to remote peer",
                             );
+
+                            self.rtc.direct_api().close_data_channel(channel_id);
+                            self.channels.insert(channel_id, ChannelState::Closing);
+                            self.handles.remove(&channel_id);
                         }
                     }
                     Some((_, Some(SubstreamEvent::RecvClosed))) => {}
