@@ -465,13 +465,6 @@ impl WebRtcDialerState {
                         return Ok(HandshakeResult::Succeeded(self.protocol.clone()));
                     }
 
-                    for fallback in &self.fallback_names {
-                        if fallback.as_bytes() == protocol.as_ref() {
-                            check_trailing_bytes(&remaining);
-                            return Ok(HandshakeResult::Succeeded(fallback.clone()));
-                        }
-                    }
-
                     return Err(crate::error::NegotiationError::MultistreamSelectError(
                         NegotiationError::Failed,
                     ));
@@ -1024,6 +1017,30 @@ mod tests {
                 assert_eq!(negotiated, ProtocolName::from("/sup/proto/1"))
             }
             _ => panic!("invalid event"),
+        }
+    }
+
+    #[test]
+    fn reject_unproposed_fallback_confirmation() {
+        let (mut dialer_state, _message) = WebRtcDialerState::propose(
+            ProtocolName::from("/13371338/proto/1"),
+            vec![ProtocolName::from("/sup/proto/1")],
+        )
+        .unwrap();
+
+        // The dialer has only proposed the main protocol. The fallback is stored for a
+        // later round and must not be accepted until `propose_next_fallback()` sends it.
+        let mut response = BytesMut::with_capacity(64);
+        response.put_u8(MSG_MULTISTREAM_1_0.len() as u8);
+        Message::Header(HeaderLine::V1).encode(&mut response).unwrap();
+
+        let fallback = Protocol::try_from(&b"/sup/proto/1"[..]).expect("valid protocol name");
+        response.put_u8((fallback.as_ref().len() + 1) as u8);
+        Message::Protocol(fallback).encode(&mut response).unwrap();
+
+        match dialer_state.register_response(response.freeze().to_vec()) {
+            Err(error::NegotiationError::MultistreamSelectError(NegotiationError::Failed)) => {}
+            event => panic!("expected unproposed fallback to be rejected, got: {event:?}"),
         }
     }
 }
