@@ -1012,6 +1012,8 @@ mod tests {
         )
         .unwrap();
 
+        dialer_state.propose_next_fallback();
+
         match dialer_state.register_response(message.to_vec()) {
             Ok(HandshakeResult::Succeeded(negotiated)) => {
                 assert_eq!(negotiated, ProtocolName::from("/sup/proto/1"))
