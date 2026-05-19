@@ -102,6 +102,9 @@ pub(crate) struct QuicTransport {
     /// QUIC listener.
     listener: QuicListener,
 
+    /// DNS resolver.
+    resolver: Arc<TokioResolver>,
+
     /// Pending dials.
     pending_dials: HashMap<ConnectionId, Multiaddr>,
 
@@ -217,7 +220,7 @@ impl TransportBuilder for QuicTransport {
     fn new(
         context: TransportHandle,
         mut config: Self::Config,
-        _resolver: Arc<TokioResolver>,
+        resolver: Arc<TokioResolver>,
     ) -> crate::Result<(Self, Vec<Multiaddr>)>
     where
         Self: Sized,
@@ -238,6 +241,7 @@ impl TransportBuilder for QuicTransport {
                 context,
                 config,
                 listener,
+                resolver,
                 opened_raw: HashMap::new(),
                 pending_open: HashMap::new(),
                 pending_dials: HashMap::new(),
@@ -253,42 +257,60 @@ impl TransportBuilder for QuicTransport {
 
 impl Transport for QuicTransport {
     fn dial(&mut self, connection_id: ConnectionId, address: Multiaddr) -> crate::Result<()> {
-        let Ok((socket_address, Some(peer))) = QuicListener::get_socket_address(&address) else {
+        let (address_type, Some(peer)) =
+            QuicListener::get_socket_address(&address).map_err(Error::AddressError)?
+        else {
             return Err(Error::AddressError(AddressError::PeerIdMissing));
         };
 
-        let crypto_config =
-            Arc::new(make_client_config(&self.context.keypair, Some(peer)).expect("to succeed"));
-        let mut transport_config = quinn::TransportConfig::default();
-        let timeout =
-            IdleTimeout::try_from(self.config.connection_open_timeout).expect("to succeed");
-        transport_config.max_idle_timeout(Some(timeout));
-        let mut client_config = ClientConfig::new(crypto_config);
-        client_config.transport_config(Arc::new(transport_config));
-
-        let client_listen_address = match address.iter().next() {
-            Some(Protocol::Ip6(_)) => SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
-            Some(Protocol::Ip4(_)) => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-            _ => return Err(Error::AddressError(AddressError::InvalidProtocol)),
-        };
-
-        let client = Endpoint::client(client_listen_address)
-            .map_err(|error| Error::Other(error.to_string()))?;
-        let connection = client
-            .connect_with(client_config, socket_address, "l")
-            .map_err(|error| Error::Other(error.to_string()))?;
+        let keypair = self.context.keypair.clone();
+        let connection_open_timeout = self.config.connection_open_timeout;
+        let resolver = self.resolver.clone();
 
         tracing::trace!(
             target: LOG_TARGET,
             ?address,
             ?peer,
-            ?client_listen_address,
             "dial peer",
         );
 
         self.pending_dials.insert(connection_id, address);
 
         self.pending_connections.push(Box::pin(async move {
+            let socket_address = match tokio::time::timeout(
+                connection_open_timeout,
+                address_type.lookup_ip(resolver),
+            )
+            .await
+            {
+                Err(_) => return (connection_id, Err(DialError::Timeout)),
+                Ok(Err(error)) => return (connection_id, Err(error.into())),
+                Ok(Ok(address)) => address,
+            };
+
+            let crypto_config =
+                Arc::new(make_client_config(&keypair, Some(peer)).expect("to succeed"));
+            let mut transport_config = quinn::TransportConfig::default();
+            let timeout = IdleTimeout::try_from(connection_open_timeout).expect("to succeed");
+            transport_config.max_idle_timeout(Some(timeout));
+            let mut client_config = ClientConfig::new(crypto_config);
+            client_config.transport_config(Arc::new(transport_config));
+
+            let client_listen_address = if socket_address.is_ipv4() {
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)
+            } else {
+                SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)
+            };
+
+            let client = match Endpoint::client(client_listen_address) {
+                Ok(client) => client,
+                Err(error) => return (connection_id, Err(DialError::from(error))),
+            };
+            let connection = match client.connect_with(client_config, socket_address, "l") {
+                Ok(connection) => connection,
+                Err(error) => return (connection_id, Err(DialError::from(error))),
+            };
+
             let connection = match connection.await {
                 Ok(connection) => connection,
                 Err(error) => return (connection_id, Err(DialError::from(error))),
@@ -385,13 +407,25 @@ impl Transport for QuicTransport {
             .map(|address| {
                 let keypair = self.context.keypair.clone();
                 let connection_open_timeout = self.config.connection_open_timeout;
+                let resolver = self.resolver.clone();
                 let addr = address.clone();
 
                 let future = async move {
-                    let (socket_address, peer) = QuicListener::get_socket_address(&address)
+                    let (address_type, peer) = QuicListener::get_socket_address(&address)
                         .map_err(DialError::AddressError)?;
                     let peer =
                         peer.ok_or_else(|| DialError::AddressError(AddressError::PeerIdMissing))?;
+
+                    let socket_address = match tokio::time::timeout(
+                        connection_open_timeout,
+                        address_type.lookup_ip(resolver),
+                    )
+                    .await
+                    {
+                        Err(_) => return Err(DialError::Timeout),
+                        Ok(Err(error)) => return Err(error.into()),
+                        Ok(Ok(address)) => address,
+                    };
 
                     let crypto_config =
                         Arc::new(make_client_config(&keypair, Some(peer)).expect("to succeed"));
@@ -402,12 +436,10 @@ impl Transport for QuicTransport {
                     let mut client_config = ClientConfig::new(crypto_config);
                     client_config.transport_config(Arc::new(transport_config));
 
-                    let client_listen_address = match address.iter().next() {
-                        Some(Protocol::Ip6(_)) =>
-                            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
-                        Some(Protocol::Ip4(_)) =>
-                            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-                        _ => return Err(AddressError::InvalidProtocol.into()),
+                    let client_listen_address = if socket_address.is_ipv4() {
+                        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)
+                    } else {
+                        SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)
                     };
 
                     let client = match Endpoint::client(client_listen_address) {
@@ -678,6 +710,16 @@ mod tests {
 
         transport2.dial(ConnectionId::new(), listen_address).unwrap();
 
+        // `QuicTransport::dial` now defers `Endpoint::client` / `connect_with` into the
+        // future pushed to `pending_connections`, so the QUIC handshake only progresses
+        // while `transport2` is being polled. Drive it from a background task so the
+        // listener actually sees the inbound packet.
+        let (tx, mut from_transport2) = channel(64);
+        tokio::spawn(async move {
+            let event = transport2.next().await;
+            tx.send(event).await.unwrap();
+        });
+
         let event = transport1.next().await.unwrap();
         match event {
             TransportEvent::PendingInboundConnection { connection_id } => {
@@ -686,7 +728,8 @@ mod tests {
             _ => panic!("unexpected event"),
         }
 
-        let (res1, res2) = tokio::join!(transport1.next(), transport2.next());
+        let res1 = transport1.next().await;
+        let res2 = from_transport2.recv().await.unwrap();
 
         assert!(std::matches!(
             res1,
