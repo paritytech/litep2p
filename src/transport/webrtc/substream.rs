@@ -78,6 +78,16 @@ enum State {
     FinAcked,
 }
 
+/// State of the reading side of the stream.
+enum ReadingState {
+    /// The reading stream is open.
+    Open,
+    /// A Fin flag was received.
+    Fin,
+    /// FinAck was sent back.
+    FinAck,
+}
+
 /// Channel-backed substream. Must be owned and polled by exactly one task at a time.
 pub struct Substream {
     /// Substream state.
@@ -121,12 +131,11 @@ impl Substream {
 
         let handle = SubstreamHandle {
             inbound_tx,
-            outbound_tx: outbound_tx.clone(),
+            reading_state: Arc::new(Mutex::new(ReadingState::Open)),
             rx: outbound_rx,
             state: Arc::clone(&state),
             shutdown_waker: shutdown_waker.clone(),
             write_waker: Arc::clone(&write_waker),
-            read_closed: std::sync::atomic::AtomicBool::new(false),
             fin_ack_timeout: None,
             reset_stream_sent: AtomicBool::new(false),
             substream_shutdown: substream_shutdown.clone(),
@@ -153,11 +162,11 @@ impl Substream {
 pub struct SubstreamHandle {
     state: Arc<Mutex<State>>,
 
+    /// The state of the reading half, keeps track if FIN received and FIN_ACK sent.
+    reading_state: Arc<Mutex<ReadingState>>,
+
     /// TX channel for sending inbound messages from `peer` to the associated `Substream`.
     inbound_tx: Sender<Event>,
-
-    /// TX channel for sending outbound messages to `peer` (e.g., FIN_ACK responses).
-    outbound_tx: Sender<Event>,
 
     /// RX channel for receiving outbound messages to `peer` from the associated `Substream`.
     rx: Receiver<Event>,
@@ -167,10 +176,6 @@ pub struct SubstreamHandle {
 
     /// Waker to notify when write state changes (e.g., STOP_SENDING received).
     write_waker: Arc<AtomicWaker>,
-
-    /// Whether we've already sent RecvClosed to the inbound channel.
-    /// Prevents duplicate RecvClosed events if multiple FIN messages are received.
-    read_closed: std::sync::atomic::AtomicBool,
 
     /// Timeout for waiting on FIN_ACK after sending FIN
     /// Boxed to maintain Unpin for Substream while allowing the Sleep to be polled.
@@ -195,6 +200,13 @@ impl SubstreamHandle {
     /// Payload is processed first (if present), then flags are handled. This ensures that
     /// a FIN message containing final data will deliver that data before signaling closure.
     pub async fn on_message(&self, message: WebRtcMessage) -> crate::Result<()> {
+        // If Reset was received then early return discarding messages.
+        // In practice this should never happen because SCTP guarantee the order
+        // of messages, thus no other messages is expected after a Reset.
+        if self.reset_stream_sent.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
         // Process payload first, before handling flags.
         // This ensures that if a FIN message contains data, we deliver it before closing.
         if let Some(payload) = message.payload {
@@ -218,7 +230,10 @@ impl SubstreamHandle {
             match flag {
                 Flag::Fin => {
                     // Guard against duplicate FIN messages - only send RecvClosed once
-                    if self.read_closed.swap(true, Ordering::SeqCst) {
+                    if matches!(
+                        *self.reading_state.lock(),
+                        ReadingState::Fin | ReadingState::FinAck
+                    ) {
                         // Already processed FIN, ignore duplicate
                         tracing::debug!(target: LOG_TARGET, "received duplicate FIN, ignoring");
                         return Ok(());
@@ -231,20 +246,9 @@ impl SubstreamHandle {
                         tracing::debug!(target: LOG_TARGET, "Substream dropped, skipping RecvClosed");
                     }
 
-                    // Send FIN_ACK back to remote using try_send to avoid blocking.
-                    // If the channel is full, the remote will timeout waiting for FIN_ACK
-                    // and handle it gracefully. This prevents deadlock if the outbound
-                    // channel is blocked due to backpressure.
-                    if let Err(e) = self.outbound_tx.try_send(Event::Message {
-                        payload: vec![],
-                        flag: Some(Flag::FinAck),
-                    }) {
-                        tracing::warn!(
-                            target: LOG_TARGET,
-                            ?e,
-                            "failed to send FIN_ACK, remote will timeout"
-                        );
-                    }
+                    // TODO: after this reading_state change there is nothing which wakes the
+                    // Stream thus FinAck will only be sent once something else awake it.
+                    *self.reading_state.lock() = ReadingState::Fin;
                     return Ok(());
                 }
                 Flag::FinAck => {
@@ -367,6 +371,17 @@ impl Stream for SubstreamHandle {
         // in that case the channel is treated as closed.
         if self.reset_stream_sent.load(Ordering::SeqCst) {
             return Poll::Ready(None);
+        }
+
+        {
+            let mut reading_state = self.reading_state.lock();
+            if matches!(*reading_state, ReadingState::Fin) {
+                *reading_state = ReadingState::FinAck;
+                return Poll::Ready(Some(Event::Message {
+                    payload: vec![],
+                    flag: Some(Flag::FinAck),
+                }));
+            }
         }
 
         // First, try to drain any pending outbound messages
