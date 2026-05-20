@@ -24,7 +24,6 @@ use crate::{
     codec::unsigned_varint::UnsignedVarint,
     error::{self, Error, ParseError, SubstreamError},
     multistream_select::{
-        drain_trailing_protocols,
         protocol::{
             webrtc_encode_multistream_message, HeaderLine, Message, MessageIO, Protocol,
             ProtocolError, PROTO_MULTISTREAM_1_0,
@@ -34,7 +33,7 @@ use crate::{
     types::protocol::ProtocolName,
 };
 
-use bytes::{Bytes, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 use futures::prelude::*;
 use std::{
     convert::TryFrom as _,
@@ -300,6 +299,12 @@ pub enum HandshakeResult {
     /// The returned tuple contains the negotiated protocol and response
     /// that must be sent to remote peer.
     Succeeded(ProtocolName),
+
+    /// The proposed protocol was rejected by the remote peer.
+    ///
+    /// The caller should check if there are remaining fallback protocols to try
+    /// via [`WebRtcDialerState::propose_next_fallback()`].
+    Rejected,
 }
 
 /// Handshake state.
@@ -328,20 +333,26 @@ pub struct WebRtcDialerState {
 impl WebRtcDialerState {
     /// Propose protocol to remote peer.
     ///
+    /// `fallback_names` must be in preference order, the first element is the
+    /// next protocol to try.
+    ///
     /// Return [`WebRtcDialerState`] which is used to drive forward the negotiation and an encoded
     /// `multistream-select` message that contains the protocol proposal for the substream.
     pub fn propose(
         protocol: ProtocolName,
-        fallback_names: Vec<ProtocolName>,
+        mut fallback_names: Vec<ProtocolName>,
     ) -> crate::Result<(Self, Vec<u8>)> {
         let message = webrtc_encode_multistream_message(
-            std::iter::once(protocol.clone())
-                .chain(fallback_names.clone())
-                .filter_map(|protocol| Protocol::try_from(protocol.as_ref()).ok())
-                .map(Message::Protocol),
+            Message::Protocol(
+                Protocol::try_from(protocol.as_ref()).map_err(|_| Error::InvalidData)?,
+            ),
+            true,
         )?
         .freeze()
         .to_vec();
+
+        // Reverse fallback_names so that we can pop from it.
+        fallback_names.reverse();
 
         Ok((
             Self {
@@ -353,91 +364,125 @@ impl WebRtcDialerState {
         ))
     }
 
+    /// Propose the next fallback protocol to the remote peer.
+    ///
+    /// Returns `None` if there are no more fallback protocols to try.
+    /// Returns `Some(message)` with the encoded message to send, containing the protocol name.
+    pub fn propose_next_fallback(&mut self) -> crate::Result<Option<Vec<u8>>> {
+        let Some(next) = self.fallback_names.pop() else {
+            return Ok(None);
+        };
+
+        self.protocol = next;
+
+        let message = webrtc_encode_multistream_message(
+            Message::Protocol(
+                Protocol::try_from(self.protocol.as_ref()).map_err(|_| Error::InvalidData)?,
+            ),
+            false,
+        )?
+        .freeze()
+        .to_vec();
+
+        Ok(Some(message))
+    }
+
     /// Register response to [`WebRtcDialerState`].
     pub fn register_response(
         &mut self,
         payload: Vec<u8>,
     ) -> Result<HandshakeResult, crate::error::NegotiationError> {
-        // All multistream-select messages are length-prefixed. Since this code path is not using
-        // multistream_select::protocol::MessageIO, we need to decode and remove the length here.
-        let remaining: &[u8] = &payload;
-        let (len, tail) = unsigned_varint::decode::usize(remaining).map_err(|error| {
-            tracing::debug!(
+        let mut remaining = Bytes::from(payload);
+
+        while !remaining.is_empty() {
+            let (len, tail) = unsigned_varint::decode::usize(&remaining).map_err(|error| {
+                tracing::debug!(
                     target: LOG_TARGET,
                     ?error,
-                    message = ?payload,
-                    "Failed to decode length-prefix in multistream message");
-            error::NegotiationError::ParseError(ParseError::InvalidData)
-        })?;
+                    message = ?remaining,
+                    "Failed to decode length-prefix in multistream message",
+                );
+                error::NegotiationError::ParseError(ParseError::InvalidData)
+            })?;
 
-        let len_size = remaining.len() - tail.len();
-        let bytes = Bytes::from(payload);
-        let payload = bytes.slice(len_size..len_size + len);
-        let remaining = bytes.slice(len_size + len..);
-        let message = Message::decode(payload);
-
-        tracing::trace!(
-            target: LOG_TARGET,
-            ?message,
-            "Decoded message while registering response",
-        );
-
-        let mut protocols = match message {
-            Ok(Message::Header(HeaderLine::V1)) => {
-                vec![PROTO_MULTISTREAM_1_0]
+            if len > tail.len() {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    message = ?tail,
+                    length_prefix = len,
+                    actual_length = tail.len(),
+                    "Truncated multistream message",
+                );
+                return Err(error::NegotiationError::ParseError(ParseError::InvalidData));
             }
-            Ok(Message::Protocol(protocol)) => vec![protocol],
-            Ok(Message::Protocols(protocols)) => protocols,
-            Ok(Message::NotAvailable) =>
-                return match &self.state {
-                    HandshakeState::WaitingProtocol => Err(
-                        error::NegotiationError::MultistreamSelectError(NegotiationError::Failed),
-                    ),
-                    _ => Err(error::NegotiationError::StateMismatch),
-                },
-            Ok(Message::ListProtocols) => return Err(error::NegotiationError::StateMismatch),
-            Err(_) => return Err(error::NegotiationError::ParseError(ParseError::InvalidData)),
-        };
 
-        protocols.extend(drain_trailing_protocols(remaining)?);
+            let len_size = remaining.len() - tail.len();
+            remaining.advance(len_size);
+            let payload = remaining.split_to(len);
+            let message = Message::decode(payload);
 
-        let mut protocol_iter = protocols.into_iter();
-        loop {
-            match (&self.state, protocol_iter.next()) {
-                (HandshakeState::WaitingResponse, None) =>
-                    return Err(crate::error::NegotiationError::StateMismatch),
-                (HandshakeState::WaitingResponse, Some(protocol)) => {
-                    if protocol == PROTO_MULTISTREAM_1_0 {
-                        self.state = HandshakeState::WaitingProtocol;
-                    } else {
-                        return Err(crate::error::NegotiationError::MultistreamSelectError(
-                            NegotiationError::Failed,
-                        ));
-                    }
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?message,
+                "Decoded message while registering response",
+            );
+
+            let check_trailing_bytes = |bytes: &Bytes| {
+                // remote may be optimistically pipelining the first application frame
+                if !bytes.is_empty() {
+                    tracing::warn!(
+                        bytes_len = bytes.len(),
+                        "trailing bytes after multistream-select negotiation were discarded"
+                    );
                 }
-                (HandshakeState::WaitingProtocol, Some(protocol)) => {
+            };
+
+            match (&self.state, message) {
+                (HandshakeState::WaitingResponse, Ok(Message::Header(HeaderLine::V1))) => {
+                    self.state = HandshakeState::WaitingProtocol;
+                }
+                (HandshakeState::WaitingResponse, Ok(msg)) => {
+                    tracing::trace!(
+                      target: LOG_TARGET,
+                      ?msg,
+                      "Expected header response from peer, got different message"
+                    );
+                    return Err(crate::error::NegotiationError::MultistreamSelectError(
+                        NegotiationError::Failed,
+                    ));
+                }
+                (HandshakeState::WaitingProtocol, Ok(Message::NotAvailable)) => {
+                    check_trailing_bytes(&remaining);
+                    return Ok(HandshakeResult::Rejected);
+                }
+                (HandshakeState::WaitingProtocol, Ok(Message::Protocol(protocol))) => {
                     if protocol == PROTO_MULTISTREAM_1_0 {
                         return Err(crate::error::NegotiationError::StateMismatch);
                     }
 
                     if self.protocol.as_bytes() == protocol.as_ref() {
+                        check_trailing_bytes(&remaining);
                         return Ok(HandshakeResult::Succeeded(self.protocol.clone()));
-                    }
-
-                    for fallback in &self.fallback_names {
-                        if fallback.as_bytes() == protocol.as_ref() {
-                            return Ok(HandshakeResult::Succeeded(fallback.clone()));
-                        }
                     }
 
                     return Err(crate::error::NegotiationError::MultistreamSelectError(
                         NegotiationError::Failed,
                     ));
                 }
-                (HandshakeState::WaitingProtocol, None) => {
-                    return Ok(HandshakeResult::NotReady);
+                (HandshakeState::WaitingProtocol, Ok(Message::ListProtocols)) => {
+                    return Err(crate::error::NegotiationError::MultistreamSelectError(
+                        NegotiationError::ProtocolError(ProtocolError::InvalidMessage),
+                    ));
+                }
+                _ => {
+                    return Err(crate::error::NegotiationError::StateMismatch);
                 }
             }
+        }
+
+        match &self.state {
+            HandshakeState::WaitingProtocol => Ok(HandshakeResult::NotReady),
+            HandshakeState::WaitingResponse => Err(crate::error::NegotiationError::StateMismatch),
         }
     }
 }
@@ -813,6 +858,7 @@ mod tests {
         )
         .unwrap();
 
+        // Initial message should only contain the main protocol, not the fallback.
         let mut bytes = BytesMut::with_capacity(32);
         bytes.put_u8(MSG_MULTISTREAM_1_0.len() as u8);
         Message::Header(HeaderLine::V1).encode(&mut bytes).unwrap();
@@ -821,13 +867,71 @@ mod tests {
         bytes.put_u8((proto1.as_ref().len() + 1) as u8); // + 1 for \n
         Message::Protocol(proto1).encode(&mut bytes).unwrap();
 
-        let proto2 = Protocol::try_from(&b"/sup/proto/1"[..]).expect("valid protocol name");
-        bytes.put_u8((proto2.as_ref().len() + 1) as u8); // + 1 for \n
-        Message::Protocol(proto2).encode(&mut bytes).unwrap();
-
         let expected_message = bytes.freeze().to_vec();
 
         assert_eq!(message, expected_message);
+    }
+
+    #[test]
+    fn propose_next_fallback() {
+        let (mut dialer_state, _message) = WebRtcDialerState::propose(
+            ProtocolName::from("/13371338/proto/1"),
+            vec![ProtocolName::from("/sup/proto/1")],
+        )
+        .unwrap();
+
+        // Simulate receiving header-only response, transitioning to WaitingProtocol.
+        let mut header_bytes = BytesMut::with_capacity(32);
+        header_bytes.put_u8(MSG_MULTISTREAM_1_0.len() as u8);
+        Message::Header(HeaderLine::V1).encode(&mut header_bytes).unwrap();
+        // Append "na" to simulate rejection.
+        let na_bytes = b"na\n";
+        header_bytes.put_u8(na_bytes.len() as u8);
+        header_bytes.put_slice(na_bytes);
+
+        match dialer_state.register_response(header_bytes.freeze().to_vec()) {
+            Ok(HandshakeResult::Rejected) => {}
+            event => panic!("expected Rejected, got: {event:?}"),
+        }
+
+        // After having received the header the state stays always at WaitingProtocol.
+        assert!(matches!(
+            dialer_state.state,
+            HandshakeState::WaitingProtocol
+        ));
+
+        // Now propose the next fallback.
+        let fallback_message = dialer_state
+            .propose_next_fallback()
+            .expect("no error")
+            .expect("should have a fallback");
+
+        let mut expected = BytesMut::with_capacity(32);
+        let proto = Protocol::try_from(&b"/sup/proto/1"[..]).expect("valid protocol name");
+        expected.put_u8((proto.as_ref().len() + 1) as u8);
+        Message::Protocol(proto).encode(&mut expected).unwrap();
+        let protocol_message = expected.freeze().to_vec();
+        assert_eq!(fallback_message, protocol_message);
+
+        // No more fallbacks.
+        assert!(dialer_state.propose_next_fallback().unwrap().is_none());
+
+        match dialer_state.register_response(protocol_message) {
+            Ok(HandshakeResult::Succeeded(_)) => {}
+            event => panic!("expected Succeeded, got: {event:?}"),
+        }
+
+        let mut na_response = BytesMut::with_capacity(32);
+        let na_bytes = b"na\n";
+        na_response.put_u8(na_bytes.len() as u8);
+        na_response.put_slice(na_bytes);
+
+        dialer_state.state = HandshakeState::WaitingProtocol;
+
+        match dialer_state.register_response(na_response.to_vec()) {
+            Ok(HandshakeResult::Rejected) => {}
+            event => panic!("expected Rejected, got: {event:?}"),
+        }
     }
 
     #[test]
@@ -872,9 +976,10 @@ mod tests {
 
     #[test]
     fn negotiate_main_protocol() {
-        let message = webrtc_encode_multistream_message(vec![Message::Protocol(
-            Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap(),
-        )])
+        let message = webrtc_encode_multistream_message(
+            Message::Protocol(Protocol::try_from(&b"/13371338/proto/1"[..]).unwrap()),
+            true,
+        )
         .unwrap()
         .freeze();
 
@@ -894,9 +999,10 @@ mod tests {
 
     #[test]
     fn negotiate_fallback_protocol() {
-        let message = webrtc_encode_multistream_message(vec![Message::Protocol(
-            Protocol::try_from(&b"/sup/proto/1"[..]).unwrap(),
-        )])
+        let message = webrtc_encode_multistream_message(
+            Message::Protocol(Protocol::try_from(&b"/sup/proto/1"[..]).unwrap()),
+            true,
+        )
         .unwrap()
         .freeze();
 
@@ -906,11 +1012,37 @@ mod tests {
         )
         .unwrap();
 
+        dialer_state.propose_next_fallback();
+
         match dialer_state.register_response(message.to_vec()) {
             Ok(HandshakeResult::Succeeded(negotiated)) => {
                 assert_eq!(negotiated, ProtocolName::from("/sup/proto/1"))
             }
             _ => panic!("invalid event"),
+        }
+    }
+
+    #[test]
+    fn reject_unproposed_fallback_confirmation() {
+        let (mut dialer_state, _message) = WebRtcDialerState::propose(
+            ProtocolName::from("/13371338/proto/1"),
+            vec![ProtocolName::from("/sup/proto/1")],
+        )
+        .unwrap();
+
+        // The dialer has only proposed the main protocol. The fallback is stored for a
+        // later round and must not be accepted until `propose_next_fallback()` sends it.
+        let mut response = BytesMut::with_capacity(64);
+        response.put_u8(MSG_MULTISTREAM_1_0.len() as u8);
+        Message::Header(HeaderLine::V1).encode(&mut response).unwrap();
+
+        let fallback = Protocol::try_from(&b"/sup/proto/1"[..]).expect("valid protocol name");
+        response.put_u8((fallback.as_ref().len() + 1) as u8);
+        Message::Protocol(fallback).encode(&mut response).unwrap();
+
+        match dialer_state.register_response(response.freeze().to_vec()) {
+            Err(error::NegotiationError::MultistreamSelectError(NegotiationError::Failed)) => {}
+            event => panic!("expected unproposed fallback to be rejected, got: {event:?}"),
         }
     }
 }
