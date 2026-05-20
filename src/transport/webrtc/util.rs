@@ -38,44 +38,27 @@ pub struct WebRtcMessage {
 impl WebRtcMessage {
     /// Encode WebRTC message with optional flag.
     ///
-    /// Uses a single allocation by pre-calculating the total size and encoding
-    /// the varint length prefix and protobuf message directly into the output buffer.
+    /// Interop note: emits a raw protobuf `Message`, with no preceding unsigned-varint
+    /// length prefix. SCTP preserves message boundaries on the data channel, so the
+    /// libp2p webrtc-direct spec does not require one and go-libp2p/rust-libp2p do not
+    /// emit it. This deviates from previous litep2p builds, so litep2p ↔ litep2p WebRTC
+    /// no longer interoperates with peers running the prefix variant.
     pub fn encode(payload: Vec<u8>, flag: Option<Flag>) -> Vec<u8> {
         let protobuf_payload = schema::webrtc::Message {
             message: (!payload.is_empty()).then_some(payload),
             flag: flag.map(|f| f as i32),
         };
 
-        // Calculate sizes upfront for single allocation with exact capacity
-        let protobuf_len = protobuf_payload.encoded_len();
-        // Varint uses 7 bits per byte, so calculate exact length needed
-        // ilog2 gives the position of the highest set bit (0-indexed), divide by 7 for varint bytes
-        let varint_len = if protobuf_len == 0 {
-            1
-        } else {
-            (protobuf_len.ilog2() as usize / 7) + 1
-        };
-
-        // Single allocation for the entire output with exact size
-        let mut out_buf = Vec::with_capacity(varint_len + protobuf_len);
-
-        // Encode varint length prefix directly
-        let mut varint_buf = unsigned_varint::encode::usize_buffer();
-        let varint_slice = unsigned_varint::encode::usize(protobuf_len, &mut varint_buf);
-        out_buf.extend_from_slice(varint_slice);
-
-        // Encode protobuf directly into output buffer
+        let mut out_buf = Vec::with_capacity(protobuf_payload.encoded_len());
         protobuf_payload
             .encode(&mut out_buf)
             .expect("Vec<u8> to provide needed capacity");
-
         out_buf
     }
 
     /// Decode payload into [`WebRtcMessage`].
     ///
-    /// Decodes the varint length prefix directly from the slice without allocations,
-    /// then decodes the protobuf message from the remaining bytes.
+    /// Treats the entire input slice as a protobuf `Message` (no varint length prefix).
     ///
     /// # Flag handling
     ///
@@ -83,15 +66,7 @@ impl WebRtcMessage {
     /// and treated as `None` for forward compatibility. This allows the message payload
     /// to still be processed even if the flag is not recognized.
     pub fn decode(payload: &[u8]) -> Result<Self, ParseError> {
-        // Decode varint length prefix directly from slice (no allocation)
-        // Returns (decoded_length, remaining_bytes_after_varint)
-        let (len, remaining) =
-            unsigned_varint::decode::usize(payload).map_err(|_| ParseError::InvalidData)?;
-
-        // Get exactly `len` bytes of protobuf data (no allocation)
-        let protobuf_data = remaining.get(..len).ok_or(ParseError::InvalidData)?;
-
-        match schema::webrtc::Message::decode(protobuf_data) {
+        match schema::webrtc::Message::decode(payload) {
             Ok(message) => {
                 let flag = message.flag.and_then(|f| match Flag::try_from(f) {
                     Ok(flag) => Some(flag),
