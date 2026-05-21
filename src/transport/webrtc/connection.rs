@@ -210,6 +210,14 @@ pub struct WebRtcConnection {
 
     /// Substream handles.
     handles: SubstreamHandleSet,
+
+    /// Per-channel inbound byte buffers for reassembling pbio-delimited frames.
+    ///
+    /// go-msgio's `uvarintWriter::WriteMsg` fallback path issues two separate `Write` calls
+    /// per logical frame (varint length, then protobuf body), which arrive as two distinct
+    /// SCTP messages over the data channel. We accumulate raw bytes per channel here and
+    /// only invoke the per-channel-state handlers once a complete frame is available.
+    recv_buffers: HashMap<ChannelId, Vec<u8>>,
 }
 
 impl WebRtcConnection {
@@ -236,7 +244,26 @@ impl WebRtcConnection {
             pending_outbound: HashMap::new(),
             channels: HashMap::new(),
             handles: SubstreamHandleSet::new(),
+            recv_buffers: HashMap::new(),
         }
+    }
+
+    /// Try to extract one complete `<varint length><protobuf body>` frame from the head of
+    /// the buffer for `channel_id`. Returns the body bytes when a full frame is available
+    /// (and consumes those bytes from the buffer), or `None` when more bytes are needed.
+    fn try_extract_framed_message(&mut self, channel_id: ChannelId) -> Option<Vec<u8>> {
+        let buffer = self.recv_buffers.get_mut(&channel_id)?;
+        let (len, remaining_after_varint) = match unsigned_varint::decode::usize(buffer) {
+            Ok(parsed) => parsed,
+            Err(_) => return None,
+        };
+        let consumed_for_varint = buffer.len() - remaining_after_varint.len();
+        if remaining_after_varint.len() < len {
+            return None;
+        }
+        let body = remaining_after_varint[..len].to_vec();
+        buffer.drain(..consumed_for_varint + len);
+        Some(body)
     }
 
     /// Handle opened channel.
@@ -310,6 +337,7 @@ impl WebRtcConnection {
         self.pending_outbound.remove(&channel_id);
         self.channels.remove(&channel_id);
         self.handles.remove(&channel_id);
+        self.recv_buffers.remove(&channel_id);
 
         Ok(())
     }
@@ -341,7 +369,7 @@ impl WebRtcConnection {
             "handle opening inbound substream",
         );
 
-        let payload = WebRtcMessage::decode(&data)?.payload.ok_or(Error::InvalidData)?;
+        let payload = WebRtcMessage::decode_protobuf(&data)?.payload.ok_or(Error::InvalidData)?;
         let protocols = self.protocol_set.protocols_with_keep_alives();
         let protocol_names = protocols.keys().cloned().collect();
         let (response, negotiated) =
@@ -431,7 +459,7 @@ impl WebRtcConnection {
             "handle opening outbound substream",
         );
 
-        let rtc_message = WebRtcMessage::decode(&data)
+        let rtc_message = WebRtcMessage::decode_protobuf(&data)
             .map_err(|err| SubstreamError::NegotiationError(err.into()))?;
         let message = rtc_message.payload.ok_or(SubstreamError::NegotiationError(
             ParseError::InvalidData.into(),
@@ -567,7 +595,7 @@ impl WebRtcConnection {
         channel_id: ChannelId,
         data: Vec<u8>,
     ) -> crate::Result<()> {
-        let message = WebRtcMessage::decode(&data)?;
+        let message = WebRtcMessage::decode_protobuf(&data)?;
 
         tracing::debug!(
             target: LOG_TARGET,
@@ -605,6 +633,29 @@ impl WebRtcConnection {
             "received channel data",
         );
 
+        // Accumulate bytes for this channel. go-libp2p's pbio writer emits the varint length
+        // and the protobuf body as two separate SCTP messages on the data channel, so we may
+        // need to reassemble across multiple inbound events before we have a full frame.
+        self.recv_buffers.entry(channel_id).or_default().extend_from_slice(&data);
+
+        loop {
+            let Some(body) = self.try_extract_framed_message(channel_id) else {
+                return Ok(());
+            };
+            self.dispatch_framed_message(channel_id, body).await?;
+            // If the channel was closed/removed during dispatch, stop processing this buffer.
+            if !self.channels.contains_key(&channel_id) {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Dispatch a single reassembled `<protobuf body>` to the appropriate per-state handler.
+    async fn dispatch_framed_message(
+        &mut self,
+        channel_id: ChannelId,
+        data: Vec<u8>,
+    ) -> crate::Result<()> {
         let Some(state) = self.channels.remove(&channel_id) else {
             tracing::warn!(
                 target: LOG_TARGET,
