@@ -213,18 +213,21 @@ impl SubstreamHandle {
         // Process payload first, before handling flags.
         // This ensures that if a FIN message contains data, we deliver it before closing.
         if let Some(payload) = message.payload {
-            if !payload.is_empty() {
-                tracing::trace!(
-                    target: LOG_TARGET,
-                    payload_len = payload.len(),
-                    "forwarding payload to substream",
-                );
-                self.inbound_tx
+            if !payload.is_empty()
+                && self
+                    .inbound_tx
                     .send(Event::Message {
                         payload,
                         flag: None,
                     })
-                    .await?;
+                    .await
+                    .is_err()
+            {
+                // If substream drops do not return err, let the flag be processed.
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    "Substream dropped, skipping payload",
+                );
             }
         }
 
