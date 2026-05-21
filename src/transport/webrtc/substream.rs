@@ -400,7 +400,11 @@ impl Stream for SubstreamHandle {
         match self.rx.poll_recv(cx) {
             Poll::Ready(Some(event)) => return Poll::Ready(Some(event)),
             Poll::Ready(None) => {
-                // Outbound channel closed (all senders dropped)
+                // Outbound channel closed, Substream dropped.
+                // Drive any pending close handshake.
+                if self.substream_shutdown.load(Ordering::SeqCst) {
+                    return self.half_close(cx);
+                }
                 return Poll::Ready(None);
             }
             Poll::Pending => {
