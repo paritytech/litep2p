@@ -38,7 +38,7 @@ use crate::{
     PeerId,
 };
 
-use futures::{Stream, StreamExt};
+use futures::{task::AtomicWaker, Stream, StreamExt};
 use indexmap::IndexMap;
 use str0m::{
     channel::{ChannelConfig, ChannelId},
@@ -94,6 +94,9 @@ struct SubstreamHandleSet {
 
     /// Substream which has pending messages.
     pending: HashSet<ChannelId>,
+
+    /// Waker used to drive the stream when no handle can make progress.
+    waker: AtomicWaker,
 }
 
 impl SubstreamHandleSet {
@@ -103,6 +106,7 @@ impl SubstreamHandleSet {
             index: 0usize,
             handles: IndexMap::new(),
             pending: HashSet::new(),
+            waker: AtomicWaker::new(),
         }
     }
 
@@ -114,6 +118,7 @@ impl SubstreamHandleSet {
     /// Insert new handle to [`SubstreamHandleSet`].
     pub fn insert(&mut self, key: ChannelId, handle: SubstreamHandle) {
         assert!(self.handles.insert(key, handle).is_none());
+        self.waker.wake();
     }
 
     /// Remove handle from [`SubstreamHandleSet`].
@@ -129,7 +134,9 @@ impl SubstreamHandleSet {
 
     /// Remove the channel from the ones with pending messages.
     pub fn clear_pending(&mut self, key: &ChannelId) {
-        self.pending.remove(key);
+        if self.pending.remove(key) {
+            self.waker.wake();
+        }
     }
 }
 
@@ -138,7 +145,10 @@ impl Stream for SubstreamHandleSet {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let len = match self.handles.len() {
-            0 => return Poll::Pending,
+            0 => {
+                self.waker.register(cx.waker());
+                return Poll::Pending;
+            }
             len => len,
         };
         let start_index = self.index;
@@ -159,6 +169,7 @@ impl Stream for SubstreamHandleSet {
             }
 
             if self.index == start_index + len {
+                self.waker.register(cx.waker());
                 break Poll::Pending;
             }
         }
