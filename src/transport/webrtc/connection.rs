@@ -1061,7 +1061,6 @@ impl WebRtcConnection {
                             self.handles.remove(&channel_id);
                         }
                     }
-                    Some((_, Some(SubstreamEvent::RecvClosed))) => {}
                 },
                 command = self.protocol_set.next() => match command {
                     None | Some(ProtocolCommand::ForceClose) => {
