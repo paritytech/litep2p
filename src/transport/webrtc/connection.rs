@@ -303,7 +303,7 @@ impl WebRtcConnection {
             return Ok(());
         };
 
-        if let Some(mut channel) = self.rtc.channel(channel_id.clone()) {
+        if let Some(mut channel) = self.rtc.channel(channel_id) {
             channel.set_buffered_amount_low_threshold(BACKPRESSURE_THRESHOLD);
         }
 
@@ -354,7 +354,7 @@ impl WebRtcConnection {
         };
 
         if !succeeded {
-            self.pending_messages.insert(channel_id.clone(), message);
+            self.pending_messages.insert(channel_id, message);
             self.handles.add_pending(channel_id);
             return Ok(false);
         }
@@ -371,7 +371,7 @@ impl WebRtcConnection {
             // instead of panicking to stay defensive.
             return Ok(true);
         };
-        let succeeded = self.write(channel_id.clone(), message)?;
+        let succeeded = self.write(channel_id, message)?;
         if succeeded {
             self.handles.clear_pending(&channel_id);
         }
@@ -944,8 +944,7 @@ impl WebRtcConnection {
                         continue;
                     }
                     Event::ChannelBufferedAmountLow(_channel_id) => {
-                        let channel_ids: Vec<_> =
-                            self.pending_messages.keys().into_iter().cloned().collect();
+                        let channel_ids: Vec<_> = self.pending_messages.keys().cloned().collect();
                         for channel_id in channel_ids {
                             let _ = self.write_pending(channel_id);
                         }
