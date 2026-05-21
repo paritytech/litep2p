@@ -228,7 +228,7 @@ pub struct WebRtcConnection {
     /// Pending outbound channels.
     pending_outbound: HashMap<ChannelId, ChannelContext>,
 
-    /// Pending outboud messages, at most one per channel.
+    /// Pending outbound messages, at most one per channel.
     pending_messages: HashMap<ChannelId, Vec<u8>>,
 
     /// Open channels.
@@ -286,6 +286,10 @@ impl WebRtcConnection {
             "channel opened",
         );
 
+        if let Some(mut channel) = self.rtc.channel(channel_id) {
+            channel.set_buffered_amount_low_threshold(BACKPRESSURE_THRESHOLD);
+        }
+
         let Some(mut context) = self.pending_outbound.remove(&channel_id) else {
             tracing::trace!(
                 target: LOG_TARGET,
@@ -302,10 +306,6 @@ impl WebRtcConnection {
             );
             return Ok(());
         };
-
-        if let Some(mut channel) = self.rtc.channel(channel_id) {
-            channel.set_buffered_amount_low_threshold(BACKPRESSURE_THRESHOLD);
-        }
 
         let fallback_names = std::mem::take(&mut context.fallback_names);
         let (dialer_state, message) =
@@ -326,7 +326,7 @@ impl WebRtcConnection {
     }
 
     // Attempt to write a message over the specified channel,
-    // save the message as pening if `WebRtcConnection` didn't have
+    // save the message as pending if `WebRtcConnection` didn't have
     // enough space.
     fn write(&mut self, channel_id: ChannelId, message: Vec<u8>) -> Result<bool, Error> {
         let Some(mut channel) = self.rtc.channel(channel_id) else {
@@ -367,7 +367,7 @@ impl WebRtcConnection {
     fn write_pending(&mut self, channel_id: ChannelId) -> Result<bool, Error> {
         let Some(message) = self.pending_messages.remove(&channel_id) else {
             // This should never happen, `write_pending` should be called
-            // for only chennel with pending messages. Treat as a no-op
+            // for only the channel with pending messages. Treat as a no-op
             // instead of panicking to stay defensive.
             return Ok(true);
         };
