@@ -279,7 +279,7 @@ impl OpeningWebRtcConnection {
         let address = Multiaddr::empty()
             .with(Protocol::from(self.peer_address.ip()))
             .with(Protocol::Udp(self.peer_address.port()))
-            .with(Protocol::WebRTC)
+            .with(Protocol::WebRTCDirect)
             .with(Protocol::Certhash(certificate))
             .with(Protocol::P2p(remote_peer_id.into()));
 
