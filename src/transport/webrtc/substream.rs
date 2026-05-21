@@ -273,7 +273,10 @@ impl SubstreamHandle {
                 }
                 Flag::StopSending => {
                     let mut current_state = self.state.lock();
-                    if !matches!(*current_state, State::FinSent | State::FinAcked) {
+                    if !matches!(
+                        *current_state,
+                        State::FinSent | State::FinAcked | State::Reset | State::ForceShutdown
+                    ) {
                         *current_state = State::SendClosed;
                     }
                     // Wake any blocked poll_write so it can see the state change
