@@ -76,6 +76,9 @@ enum State {
 
     /// We received FIN_ACK, write half is closed.
     FinAcked,
+
+    /// Substream was dropped before a graceful close completed.
+    ForceShutdown,
 }
 
 /// State of the reading side of the stream.
@@ -357,6 +360,9 @@ impl SubstreamHandle {
                     flag: Some(Flag::Fin),
                 }))
             }
+            // Unreachable, `ForceShutdown` is only set by SubstreamHandle::Drop,
+            // after which `poll_next` can no longer be called.
+            State::ForceShutdown => Poll::Ready(None),
         }
     }
 }
@@ -461,7 +467,11 @@ impl tokio::io::AsyncWrite for Substream {
 
         // Reject writes if we're closing or closed
         match *self.state.lock() {
-            State::SendClosed | State::FinSent | State::FinAcked | State::Reset => {
+            State::SendClosed
+            | State::FinSent
+            | State::FinAcked
+            | State::Reset
+            | State::ForceShutdown => {
                 return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
             }
             State::Open => {}
@@ -475,7 +485,11 @@ impl tokio::io::AsyncWrite for Substream {
 
         // Re-check state after poll_reserve - it may have changed while we were waiting
         match *self.state.lock() {
-            State::SendClosed | State::FinSent | State::FinAcked | State::Reset => {
+            State::SendClosed
+            | State::FinSent
+            | State::FinAcked
+            | State::Reset
+            | State::ForceShutdown => {
                 return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
             }
             State::Open => {}
@@ -516,11 +530,26 @@ impl tokio::io::AsyncWrite for Substream {
         // has already been handed to the channel, so we just let the SubstreamHandle
         // drive the graceful shutdown (FIN + FIN_ACK) on its side.
 
-        if matches!(*self.state.lock(), State::FinAcked | State::Reset) {
+        if matches!(
+            *self.state.lock(),
+            State::FinAcked | State::Reset | State::ForceShutdown
+        ) {
             Poll::Ready(Ok(()))
         } else {
             Poll::Pending
         }
+    }
+}
+
+impl Drop for SubstreamHandle {
+    fn drop(&mut self) {
+        // Unblock the paired `Substream` when the handle is dropped before a
+        // graceful close. `Reset`/`FinAcked` are already terminal.
+        let mut state = self.state.lock();
+        if !matches!(*state, State::Reset | State::FinAcked) {
+            *state = State::ForceShutdown;
+        }
+        self.shutdown_waker.wake();
     }
 }
 
