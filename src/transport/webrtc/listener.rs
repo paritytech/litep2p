@@ -1,10 +1,14 @@
 use std::{
+    future::Future,
     io,
     net::{IpAddr, SocketAddr},
+    pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+    time::Duration,
 };
 
+use futures_timer::Delay;
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use socket2::{Domain, Socket, Type};
 use tokio::{io::ReadBuf, net::UdpSocket};
@@ -20,6 +24,8 @@ pub(super) struct WebRtcListener {
     listen_addresses: Vec<(SocketAddr, Arc<UdpSocket>)>,
     /// Index of the socket to poll first on the next call (round-robin).
     next_listener: usize,
+    /// Delay used to wake up `WebRtcListener` if all sockets errord out.
+    error_delay: Option<Delay>,
 }
 
 impl WebRtcListener {
@@ -78,6 +84,7 @@ impl WebRtcListener {
             Self {
                 listen_addresses,
                 next_listener: 0,
+                error_delay: None,
             },
             listen_multi_addresses,
         ))
@@ -96,12 +103,19 @@ impl WebRtcListener {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<AddressPair>> {
         let n_listener = self.listen_addresses.len();
+        debug_assert!(n_listener > 0);
 
-        if n_listener == 0 {
-            return Poll::Pending;
+        if let Some(delay) = self.error_delay.as_mut() {
+            if Pin::new(delay).poll(cx).is_ready() {
+                self.error_delay = None;
+            } else {
+                // timer registers cx's waker
+                return Poll::Pending;
+            }
         }
 
         let mut idx = self.next_listener;
+        let mut any_pending = false;
 
         loop {
             let (local, socket) = &self.listen_addresses[idx];
@@ -124,12 +138,17 @@ impl WebRtcListener {
                     ?e,
                     "failed to receive a datagram",
                 ),
-                Poll::Pending => (),
+                Poll::Pending => any_pending = true,
             }
 
             // Each socket that returned Pending registered its waker,
             // Err sockets did not but will re-register on the next poll.
             if idx == self.next_listener {
+                if !any_pending {
+                    let mut delay = Delay::new(Duration::from_millis(10));
+                    let _ = Pin::new(&mut delay).poll(cx);
+                    self.error_delay = Some(delay);
+                }
                 return Poll::Pending;
             }
         }
