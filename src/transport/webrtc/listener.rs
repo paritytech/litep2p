@@ -131,7 +131,7 @@ impl WebRtcListener {
                 // All UdpSocket errors are transient and noone
                 // of them implies a complete shutdown of the socket.
                 // Log the error but do not tear down the WebRtc instance.
-                Poll::Ready(Err(e)) => tracing::warn!(
+                Poll::Ready(Err(e)) => tracing::debug!(
                     target: LOG_TARGET,
                     ?local,
                     ?e,
