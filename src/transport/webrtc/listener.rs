@@ -46,7 +46,6 @@ impl WebRtcListener {
                 socket
             };
 
-            socket.set_reuse_address(true)?;
             socket.bind(&listen_address.into())?;
             socket.set_nonblocking(true)?;
 
