@@ -407,6 +407,13 @@ impl TransportBuilder for WebRtcTransport {
     where
         Self: Sized,
     {
+        if config.listen_addresses.is_empty() {
+            return Err(Error::Other(
+                "WebRTC transport requires at least one listen address but none were configured"
+                    .to_string(),
+            ));
+        }
+
         tracing::info!(
             target: LOG_TARGET,
             listen_addresses = ?config.listen_addresses,

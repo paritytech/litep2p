@@ -62,6 +62,12 @@ impl WebRtcListener {
             );
         }
 
+        if listen_addresses.is_empty() {
+            return Err(Error::Other(
+                "WebRtcListener requires at least one valid listen address ".to_string(),
+            ));
+        }
+
         Ok((
             Self {
                 listen_addresses,
