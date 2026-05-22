@@ -683,45 +683,38 @@ impl Stream for WebRtcTransport {
 
         // go over all pending timeouts to see if any of them have expired
         // and if any of them have, poll the connection until it registers another timeout
-        let pending_events = this
+        let filtered_timeouts: Vec<_> = this
             .timeouts
             .iter_mut()
             .filter_map(|(source, mut delay)| match Pin::new(&mut delay).poll(cx) {
                 Poll::Pending => None,
                 Poll::Ready(_) => Some(*source),
             })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .filter_map(|addrs| {
-                let mut pending_event = None;
+            .collect();
 
-                loop {
-                    match this.poll_connection(&addrs) {
-                        ConnectionEvent::ConnectionEstablished { peer, endpoint } => {
-                            this.connections
-                                .insert(endpoint.connection_id(), (peer, addrs, endpoint.clone()));
-
-                            // keep polling the connection until it registers a timeout
-                            pending_event =
-                                Some(TransportEvent::ConnectionEstablished { peer, endpoint });
-                        }
-                        ConnectionEvent::ConnectionClosed => {
-                            this.opening.remove(&addrs);
-                            return None;
-                        }
-                        ConnectionEvent::Timeout { duration } => {
-                            this.timeouts.insert(addrs, Box::pin(Delay::new(duration)));
-                            break;
-                        }
+        for addrs in filtered_timeouts {
+            loop {
+                match this.poll_connection(&addrs) {
+                    ConnectionEvent::ConnectionEstablished { peer, endpoint } => {
+                        this.connections
+                            .insert(endpoint.connection_id(), (peer, addrs, endpoint.clone()));
+                        this.pending_events
+                            .push_back(TransportEvent::ConnectionEstablished { peer, endpoint });
+                        // keep polling the connection until it registers a timeout
+                    }
+                    ConnectionEvent::ConnectionClosed => {
+                        this.opening.remove(&addrs);
+                        break;
+                    }
+                    ConnectionEvent::Timeout { duration } => {
+                        this.timeouts.insert(addrs, Box::pin(Delay::new(duration)));
+                        break;
                     }
                 }
-
-                pending_event
-            })
-            .collect::<VecDeque<_>>();
+            }
+        }
 
         this.timeouts.retain(|addrs, _| this.opening.contains_key(addrs));
-        this.pending_events.extend(pending_events);
         this.pending_events
             .pop_front()
             .map_or(Poll::Pending, |event| Poll::Ready(Some(event)))
