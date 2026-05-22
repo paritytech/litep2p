@@ -130,6 +130,8 @@ impl WebRtcListener {
     }
 
     /// Extract socket address and `PeerId`, if found, from `address`.
+    ///
+    /// Also verifies that the specified multiaddress is a webrtc address.
     fn get_socket_address(address: &Multiaddr) -> crate::Result<SocketAddr> {
         tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
 
