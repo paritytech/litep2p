@@ -30,7 +30,7 @@ impl WebRtcListener {
         let mut listen_multi_addresses = Vec::with_capacity(multiaddr_listen_addresses.len());
         let mut listen_addresses = Vec::with_capacity(multiaddr_listen_addresses.len());
 
-        for listen_address in multiaddr_listen_addresses {
+        let handle_multiaddr = |listen_address| -> crate::Result<(UdpSocket, SocketAddr)> {
             let listen_address = Self::get_socket_address(&listen_address)?;
             let socket = if listen_address.is_ipv4() {
                 Socket::new(Domain::IPV4, Type::DGRAM, Some(socket2::Protocol::UDP))?
@@ -46,6 +46,17 @@ impl WebRtcListener {
 
             let socket = UdpSocket::from_std(socket.into())?;
             let listen_address = socket.local_addr()?;
+            Ok((socket, listen_address))
+        };
+
+        for listen_address in multiaddr_listen_addresses {
+            let (socket, listen_address) = match handle_multiaddr(listen_address) {
+                Ok(res) => res,
+                Err(err) => {
+                    tracing::warn!(target: LOG_TARGET, ?err, "failed to bind listen address, skipping");
+                    continue;
+                }
+            };
 
             listen_addresses.push((listen_address, Arc::new(socket)));
             listen_multi_addresses.push(
@@ -160,13 +171,13 @@ impl WebRtcListener {
             }
         };
 
-        match iter.next() {
-            Some(Protocol::WebRTCDirect) => {}
+        match (iter.next(), iter.next()) {
+            (Some(Protocol::WebRTCDirect), None) => {}
             protocol => {
                 tracing::error!(
                     target: LOG_TARGET,
                     ?protocol,
-                    "invalid protocol, expected `WebRTCDirect`"
+                    "invalid protocol, expected `WebRTCDirect` with no trailing protocols"
                 );
                 return Err(Error::AddressError(AddressError::InvalidProtocol));
             }
