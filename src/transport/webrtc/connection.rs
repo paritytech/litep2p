@@ -41,14 +41,14 @@ use crate::{
 use futures::{task::AtomicWaker, Stream, StreamExt};
 use indexmap::IndexMap;
 use str0m::{
-    channel::{ChannelConfig, ChannelId},
+    channel::{Channel, ChannelConfig, ChannelId},
     net::{Protocol as Str0mProtocol, Receive},
     Event, IceConnectionState, Input, Output, Rtc,
 };
 use tokio::{net::UdpSocket, sync::mpsc::Receiver};
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
@@ -61,6 +61,9 @@ const LOG_TARGET: &str = "litep2p::webrtc::connection";
 
 /// Threshold under which str0m emits Event::ChannelBufferedAmountLow.
 const BACKPRESSURE_THRESHOLD: usize = 16 * (1 << 10); // 16 KB
+
+/// Maximum number of pending message supported per channel.
+const MAX_PENDING_PER_CHANNEL: usize = 16;
 
 /// Opening channel context.
 #[derive(Debug)]
@@ -240,7 +243,7 @@ pub struct WebRtcConnection {
     pending_outbound: HashMap<ChannelId, ChannelContext>,
 
     /// Pending outbound messages, at most one per channel.
-    pending_messages: HashMap<ChannelId, Vec<u8>>,
+    pending_messages: HashMap<ChannelId, VecDeque<Vec<u8>>>,
 
     /// Open channels.
     channels: HashMap<ChannelId, ChannelState>,
@@ -350,22 +353,27 @@ impl WebRtcConnection {
             return Err(Error::ChannelDoesntExist);
         };
 
-        let succeeded = match channel.write(true, message.as_ref()) {
-            Ok(succeeded) => succeeded,
-            Err(e) => {
-                tracing::trace!(
-                    target: LOG_TARGET,
-                    peer = ?self.peer,
-                    ?channel_id,
-                    ?e,
-                     "failed to write multistream-select fallback proposal",
-                );
-                return Err(Error::WebRtc(e));
+        match self.pending_messages.get_mut(&channel_id) {
+            Some(messages) if !messages.is_empty() => {
+                if messages.len() >= MAX_PENDING_PER_CHANNEL {
+                    return Err(Error::ChannelClogged);
+                }
+
+                messages.push_back(message);
+                return Ok(false);
             }
-        };
+            _ => (),
+        }
+
+        let succeeded = Self::channel_write(&mut channel, channel_id, &message, self.peer)?;
 
         if !succeeded {
-            self.pending_messages.insert(channel_id, message);
+            let pending_messages = self.pending_messages.entry(channel_id).or_default();
+            if pending_messages.len() >= MAX_PENDING_PER_CHANNEL {
+                return Err(Error::ChannelClogged);
+            }
+
+            pending_messages.push_back(message);
             self.handles.add_pending(channel_id);
             return Ok(false);
         }
@@ -373,20 +381,64 @@ impl WebRtcConnection {
         Ok(true)
     }
 
+    fn channel_write(
+        channel: &mut Channel<'_>,
+        channel_id: ChannelId,
+        message: &[u8],
+        peer: PeerId,
+    ) -> Result<bool, Error> {
+        match channel.write(true, message) {
+            Ok(succeeded) => Ok(succeeded),
+            Err(e) => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    peer = ?peer,
+                    ?channel_id,
+                    ?e,
+                     "failed to write multistream-select fallback proposal",
+                );
+                Err(Error::WebRtc(e))
+            }
+        }
+    }
+
     // Attempt to write all pending messages of the specified ChannelId.
     // Returns either all messages has been sent or not.
     fn write_pending(&mut self, channel_id: ChannelId) -> Result<bool, Error> {
-        let Some(message) = self.pending_messages.remove(&channel_id) else {
-            // This should never happen, `write_pending` should be called
-            // for only the channel with pending messages. Treat as a no-op
-            // instead of panicking to stay defensive.
-            return Ok(true);
+        let Some(mut channel) = self.rtc.channel(channel_id) else {
+            tracing::trace!(
+                target: LOG_TARGET,
+                peer = ?self.peer,
+                ?channel_id,
+                "protocol rejected received for non-existing channel",
+            );
+            return Err(Error::ChannelDoesntExist);
         };
-        let succeeded = self.write(channel_id, message)?;
-        if succeeded {
-            self.handles.clear_pending(&channel_id);
+
+        loop {
+            let Some(pending_messages) = self.pending_messages.get_mut(&channel_id) else {
+                // This should never happen, `write_pending` should be called
+                // for only the channel with pending messages. Treat as a no-op
+                // instead of panicking to stay defensive.
+                self.handles.clear_pending(&channel_id);
+                return Ok(true);
+            };
+
+            let Some(message) = pending_messages.front() else {
+                self.pending_messages.remove(&channel_id);
+                self.handles.clear_pending(&channel_id);
+                break Ok(true);
+            };
+
+            let succeeded = Self::channel_write(&mut channel, channel_id, message, self.peer)?;
+
+            match self.pending_messages.get_mut(&channel_id) {
+                Some(messages) if succeeded => {
+                    messages.pop_front();
+                }
+                _ => break Ok(false),
+            }
         }
-        Ok(succeeded)
     }
 
     /// Handle closed channel.
@@ -1027,6 +1079,9 @@ impl WebRtcConnection {
                                 ?error,
                                 "failed to send data to remote peer",
                             );
+
+                            self.channels.insert(channel_id, ChannelState::Closing);
+                            self.rtc.direct_api().close_data_channel(channel_id);
                         }
                     }
                     Some((_, Some(SubstreamEvent::RecvClosed))) => {}
