@@ -24,7 +24,7 @@ pub(super) struct WebRtcListener {
     listen_addresses: Vec<(SocketAddr, Arc<UdpSocket>)>,
     /// Index of the socket to poll first on the next call (round-robin).
     next_listener: usize,
-    /// Delay used to wake up `WebRtcListener` if all sockets errord out.
+    /// Delay used to wake up `WebRtcListener` if all sockets errored out.
     error_delay: Option<Delay>,
 }
 
@@ -75,7 +75,7 @@ impl WebRtcListener {
 
         if listen_addresses.is_empty() {
             return Err(Error::Other(
-                "WebRtcListener requires at least one valid listen address ".to_string(),
+                "WebRtcListener requires at least one valid listen address".to_string(),
             ));
         }
 
@@ -153,7 +153,7 @@ impl WebRtcListener {
         }
     }
 
-    /// Extract socket address and `PeerId`, if found, from `address`.
+    /// Extract socket address, if found, from `address`.
     ///
     /// Also verifies that the specified multiaddress is a webrtc address.
     fn get_socket_address(address: &Multiaddr) -> crate::Result<SocketAddr> {
