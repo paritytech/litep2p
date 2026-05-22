@@ -33,21 +33,16 @@ impl WebRtcListener {
         for listen_address in multiaddr_listen_addresses {
             let listen_address = Self::get_socket_address(&listen_address)?;
             let socket = if listen_address.is_ipv4() {
-                let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(socket2::Protocol::UDP))?;
-                socket.set_reuse_address(true)?;
-                socket.bind(&listen_address.into())?;
-                socket
+                Socket::new(Domain::IPV4, Type::DGRAM, Some(socket2::Protocol::UDP))?
             } else {
                 let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(socket2::Protocol::UDP))?;
                 socket.set_only_v6(true)?;
-                socket.set_reuse_address(true)?;
-                socket.bind(&listen_address.into())?;
                 socket
             };
 
+            socket.set_reuse_address(true)?;
+            socket.bind(&listen_address.into())?;
             socket.set_nonblocking(true)?;
-            #[cfg(unix)]
-            socket.set_reuse_port(true)?;
 
             let socket = UdpSocket::from_std(socket.into())?;
             let listen_address = socket.local_addr()?;
