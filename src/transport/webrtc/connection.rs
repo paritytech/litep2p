@@ -242,7 +242,8 @@ pub struct WebRtcConnection {
     /// Pending outbound channels.
     pending_outbound: HashMap<ChannelId, ChannelContext>,
 
-    /// Pending outbound messages, at most one per channel.
+    /// Pending outbound messages,
+    /// at most [`MAX_PENDING_PER_CHANNEL`] per channel.
     pending_messages: HashMap<ChannelId, VecDeque<Vec<u8>>>,
 
     /// Open channels.
@@ -342,7 +343,7 @@ impl WebRtcConnection {
     // Attempt to write a message over the specified channel,
     // save the message as pending if `WebRtcConnection` didn't have
     // enough space.
-    fn write(&mut self, channel_id: ChannelId, message: Vec<u8>) -> Result<bool, Error> {
+    fn write(&mut self, channel_id: ChannelId, message: Vec<u8>) -> Result<(), Error> {
         let Some(mut channel) = self.rtc.channel(channel_id) else {
             tracing::trace!(
                 target: LOG_TARGET,
@@ -360,7 +361,7 @@ impl WebRtcConnection {
                 }
 
                 messages.push_back(message);
-                return Ok(false);
+                return Ok(());
             }
             _ => (),
         }
@@ -375,10 +376,10 @@ impl WebRtcConnection {
 
             pending_messages.push_back(message);
             self.handles.add_pending(channel_id);
-            return Ok(false);
+            return Ok(());
         }
 
-        Ok(true)
+        Ok(())
     }
 
     fn channel_write(
@@ -873,7 +874,7 @@ impl WebRtcConnection {
         );
 
         let message = WebRtcMessage::encode(data, flag);
-        self.write(channel_id, message).map(|_| ())
+        self.write(channel_id, message)
     }
 
     /// Open outbound substream.
@@ -981,6 +982,8 @@ impl WebRtcConnection {
                         continue;
                     }
                     Event::ChannelClose(channel_id) => {
+                        // This event is emitted once the rtc instance
+                        // completes the call to `close_data_channel(channel_id)`.
                         if let Err(error) = self.on_channel_closed(channel_id).await {
                             tracing::debug!(
                                 target: LOG_TARGET,
