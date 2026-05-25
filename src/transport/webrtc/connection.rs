@@ -38,17 +38,17 @@ use crate::{
     PeerId,
 };
 
-use futures::{Stream, StreamExt};
+use futures::{task::AtomicWaker, Stream, StreamExt};
 use indexmap::IndexMap;
 use str0m::{
-    channel::{ChannelConfig, ChannelId},
+    channel::{Channel, ChannelConfig, ChannelId},
     net::{Protocol as Str0mProtocol, Receive},
     Event, IceConnectionState, Input, Output, Rtc,
 };
 use tokio::{net::UdpSocket, sync::mpsc::Receiver};
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet, VecDeque},
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
@@ -58,6 +58,12 @@ use std::{
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::webrtc::connection";
+
+/// Threshold under which str0m emits Event::ChannelBufferedAmountLow.
+const BACKPRESSURE_THRESHOLD: usize = 16 * (1 << 10); // 16 KB
+
+/// Maximum number of pending message supported per channel.
+const MAX_PENDING_PER_CHANNEL: usize = 16;
 
 /// Opening channel context.
 #[derive(Debug)]
@@ -88,6 +94,12 @@ struct SubstreamHandleSet {
 
     /// Substream handles.
     handles: IndexMap<ChannelId, SubstreamHandle>,
+
+    /// Substream which has pending messages.
+    pending: HashSet<ChannelId>,
+
+    /// Waker used to drive the stream when no handle can make progress.
+    waker: AtomicWaker,
 }
 
 impl SubstreamHandleSet {
@@ -96,6 +108,8 @@ impl SubstreamHandleSet {
         Self {
             index: 0usize,
             handles: IndexMap::new(),
+            pending: HashSet::new(),
+            waker: AtomicWaker::new(),
         }
     }
 
@@ -107,11 +121,25 @@ impl SubstreamHandleSet {
     /// Insert new handle to [`SubstreamHandleSet`].
     pub fn insert(&mut self, key: ChannelId, handle: SubstreamHandle) {
         assert!(self.handles.insert(key, handle).is_none());
+        self.waker.wake();
     }
 
     /// Remove handle from [`SubstreamHandleSet`].
     pub fn remove(&mut self, key: &ChannelId) -> Option<SubstreamHandle> {
+        self.pending.remove(key);
         self.handles.swap_remove(key)
+    }
+
+    /// Add a channel to the ones which has pending messages.
+    pub fn add_pending(&mut self, key: ChannelId) {
+        self.pending.insert(key);
+    }
+
+    /// Remove the channel from the ones with pending messages.
+    pub fn clear_pending(&mut self, key: &ChannelId) {
+        if self.pending.remove(key) {
+            self.waker.wake();
+        }
     }
 }
 
@@ -120,7 +148,10 @@ impl Stream for SubstreamHandleSet {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let len = match self.handles.len() {
-            0 => return Poll::Pending,
+            0 => {
+                self.waker.register(cx.waker());
+                return Poll::Pending;
+            }
             len => len,
         };
         let start_index = self.index;
@@ -129,13 +160,19 @@ impl Stream for SubstreamHandleSet {
             let index = self.index % len;
             self.index += 1;
 
-            let (key, stream) = self.handles.get_index_mut(index).expect("handle to exist");
-            match stream.poll_next_unpin(cx) {
-                Poll::Pending => {}
-                Poll::Ready(event) => return Poll::Ready(Some((*key, event))),
+            let key =
+                self.handles.get_index(index).map(|(k, _)| k).cloned().expect("handle to exist");
+
+            if !self.pending.contains(&key) {
+                let (key, stream) = self.handles.get_index_mut(index).expect("handle to exist");
+                match stream.poll_next_unpin(cx) {
+                    Poll::Pending => {}
+                    Poll::Ready(event) => return Poll::Ready(Some((*key, event))),
+                }
             }
 
             if self.index == start_index + len {
+                self.waker.register(cx.waker());
                 break Poll::Pending;
             }
         }
@@ -205,6 +242,10 @@ pub struct WebRtcConnection {
     /// Pending outbound channels.
     pending_outbound: HashMap<ChannelId, ChannelContext>,
 
+    /// Pending outbound messages,
+    /// at most [`MAX_PENDING_PER_CHANNEL`] per channel.
+    pending_messages: HashMap<ChannelId, VecDeque<Vec<u8>>>,
+
     /// Open channels.
     channels: HashMap<ChannelId, ChannelState>,
 
@@ -246,6 +287,7 @@ impl WebRtcConnection {
             endpoint,
             dgram_rx,
             pending_outbound: HashMap::new(),
+            pending_messages: HashMap::new(),
             channels: HashMap::new(),
             handles: SubstreamHandleSet::new(),
             recv_buffers: HashMap::new(),
@@ -290,6 +332,10 @@ impl WebRtcConnection {
             "channel opened",
         );
 
+        if let Some(mut channel) = self.rtc.channel(channel_id) {
+            channel.set_buffered_amount_low_threshold(BACKPRESSURE_THRESHOLD);
+        }
+
         let Some(mut context) = self.pending_outbound.remove(&channel_id) else {
             tracing::trace!(
                 target: LOG_TARGET,
@@ -312,11 +358,7 @@ impl WebRtcConnection {
             WebRtcDialerState::propose(context.protocol.clone(), fallback_names)?;
         let message = WebRtcMessage::encode(message, None);
 
-        self.rtc
-            .channel(channel_id)
-            .ok_or(Error::ChannelDoesntExist)?
-            .write(true, message.as_ref())
-            .map_err(Error::WebRtc)?;
+        self.write(channel_id, message)?;
 
         self.channels.insert(
             channel_id,
@@ -327,6 +369,108 @@ impl WebRtcConnection {
         );
 
         Ok(())
+    }
+
+    // Attempt to write a message over the specified channel,
+    // save the message as pending if `WebRtcConnection` didn't have
+    // enough space.
+    fn write(&mut self, channel_id: ChannelId, message: Vec<u8>) -> Result<(), Error> {
+        let Some(mut channel) = self.rtc.channel(channel_id) else {
+            tracing::trace!(
+                target: LOG_TARGET,
+                peer = ?self.peer,
+                ?channel_id,
+                "protocol rejected received for non-existing channel",
+            );
+            return Err(Error::ChannelDoesntExist);
+        };
+
+        match self.pending_messages.get_mut(&channel_id) {
+            Some(messages) if !messages.is_empty() => {
+                if messages.len() >= MAX_PENDING_PER_CHANNEL {
+                    return Err(Error::ChannelClogged);
+                }
+
+                messages.push_back(message);
+                return Ok(());
+            }
+            _ => (),
+        }
+
+        let succeeded = Self::channel_write(&mut channel, channel_id, &message, self.peer)?;
+
+        if !succeeded {
+            let pending_messages = self.pending_messages.entry(channel_id).or_default();
+            if pending_messages.len() >= MAX_PENDING_PER_CHANNEL {
+                return Err(Error::ChannelClogged);
+            }
+
+            pending_messages.push_back(message);
+            self.handles.add_pending(channel_id);
+            return Ok(());
+        }
+
+        Ok(())
+    }
+
+    fn channel_write(
+        channel: &mut Channel<'_>,
+        channel_id: ChannelId,
+        message: &[u8],
+        peer: PeerId,
+    ) -> Result<bool, Error> {
+        match channel.write(true, message) {
+            Ok(succeeded) => Ok(succeeded),
+            Err(e) => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    peer = ?peer,
+                    ?channel_id,
+                    ?e,
+                     "failed to write multistream-select fallback proposal",
+                );
+                Err(Error::WebRtc(e))
+            }
+        }
+    }
+
+    // Attempt to write all pending messages of the specified ChannelId.
+    // Returns either all messages has been sent or not.
+    fn write_pending(&mut self, channel_id: ChannelId) -> Result<bool, Error> {
+        let Some(mut channel) = self.rtc.channel(channel_id) else {
+            tracing::trace!(
+                target: LOG_TARGET,
+                peer = ?self.peer,
+                ?channel_id,
+                "protocol rejected received for non-existing channel",
+            );
+            return Err(Error::ChannelDoesntExist);
+        };
+
+        loop {
+            let Some(pending_messages) = self.pending_messages.get_mut(&channel_id) else {
+                // This should never happen, `write_pending` should be called
+                // for only the channel with pending messages. Treat as a no-op
+                // instead of panicking to stay defensive.
+                self.handles.clear_pending(&channel_id);
+                return Ok(true);
+            };
+
+            let Some(message) = pending_messages.front() else {
+                self.pending_messages.remove(&channel_id);
+                self.handles.clear_pending(&channel_id);
+                break Ok(true);
+            };
+
+            let succeeded = Self::channel_write(&mut channel, channel_id, message, self.peer)?;
+
+            match self.pending_messages.get_mut(&channel_id) {
+                Some(messages) if succeeded => {
+                    messages.pop_front();
+                }
+                _ => break Ok(false),
+            }
+        }
     }
 
     /// Handle closed channel.
@@ -382,6 +526,7 @@ impl WebRtcConnection {
                 .await;
         }
 
+        self.pending_messages.remove(&channel_id);
         self.handles.remove(&channel_id);
         self.recv_buffers.remove(&channel_id);
 
@@ -425,14 +570,8 @@ impl WebRtcConnection {
                 | ListenerSelectResult::PendingProtocol { message } => (message, None),
             };
 
-        self.rtc
-            .channel(channel_id)
-            .ok_or(Error::ChannelDoesntExist)?
-            .write(
-                true,
-                WebRtcMessage::encode(response.to_vec(), None).as_ref(),
-            )
-            .map_err(Error::WebRtc)?;
+        let message = WebRtcMessage::encode(response.to_vec(), None);
+        self.write(channel_id, message)?;
 
         let Some(protocol) = negotiated else {
             tracing::trace!(
@@ -542,30 +681,9 @@ impl WebRtcConnection {
 
                     let message = WebRtcMessage::encode(message, None);
 
-                    let Some(mut channel) = self.rtc.channel(channel_id) else {
-                        tracing::trace!(
-                            target: LOG_TARGET,
-                            peer = ?self.peer,
-                            ?channel_id,
-                            "protocol rejected received for non-existing channel",
-                        );
-                        return Err(SubstreamError::NegotiationError(
-                            NegotiationError::Failed.into(),
-                        ));
-                    };
-
-                    if let Err(err) = channel.write(true, message.as_ref()) {
-                        tracing::trace!(
-                            target: LOG_TARGET,
-                            peer = ?self.peer,
-                            ?channel_id,
-                            ?err,
-                             "failed to write multistream-select fallback proposal",
-                        );
-                        return Err(SubstreamError::NegotiationError(
-                            NegotiationError::Failed.into(),
-                        ));
-                    };
+                    self.write(channel_id, message).map_err(|_| {
+                        SubstreamError::NegotiationError(NegotiationError::Failed.into())
+                    })?;
 
                     self.channels.insert(
                         channel_id,
@@ -859,12 +977,8 @@ impl WebRtcConnection {
             "send data",
         );
 
-        self.rtc
-            .channel(channel_id)
-            .ok_or(Error::ChannelDoesntExist)?
-            .write(true, WebRtcMessage::encode(data, flag).as_ref())
-            .map_err(Error::WebRtc)
-            .map(|_| ())
+        let message = WebRtcMessage::encode(data, flag);
+        self.write(channel_id, message)
     }
 
     /// Open outbound substream.
@@ -1014,6 +1128,8 @@ impl WebRtcConnection {
                         continue;
                     }
                     Event::ChannelClose(channel_id) => {
+                        // This event is emitted once the rtc instance
+                        // completes the call to `close_data_channel(channel_id)`.
                         if let Err(error) = self.on_channel_closed(channel_id).await {
                             tracing::debug!(
                                 target: LOG_TARGET,
@@ -1037,6 +1153,13 @@ impl WebRtcConnection {
                             );
                         }
 
+                        continue;
+                    }
+                    Event::ChannelBufferedAmountLow(_channel_id) => {
+                        let channel_ids: Vec<_> = self.pending_messages.keys().cloned().collect();
+                        for channel_id in channel_ids {
+                            let _ = self.write_pending(channel_id);
+                        }
                         continue;
                     }
                     event => {
@@ -1137,8 +1260,8 @@ impl WebRtcConnection {
                                 "failed to send data to remote peer",
                             );
 
-                            self.rtc.direct_api().close_data_channel(channel_id);
                             self.channels.insert(channel_id, ChannelState::Closing);
+                            self.rtc.direct_api().close_data_channel(channel_id);
                             self.handles.remove(&channel_id);
                         }
                     }
