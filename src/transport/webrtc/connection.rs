@@ -60,14 +60,6 @@ use std::{
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::webrtc::connection";
 
-/// Per-connection cap on the total bytes held across all per-channel inbound buffers.
-///
-/// Each per-channel buffer is already bounded by `MAX_FRAME_SIZE` (the frame-extractor
-/// rejects any varint declaring a larger body). This constant adds a global ceiling so a
-/// peer cannot multiply that bound across many channels (at 1 MiB it caps around ~60
-/// in-flight `MAX_FRAME_SIZE` frames before the connection is closed).
-const MAX_TOTAL_RECV_BUFFER_BYTES: usize = 1024 * 1024;
-
 /// Opening channel context.
 #[derive(Debug)]
 struct ChannelContext {
@@ -185,75 +177,6 @@ enum ChannelState {
     },
 }
 
-/// Per-channel inbound byte buffers with a per-connection total cap.
-///
-/// Each channel's buffer accumulates raw SCTP bytes until [`extract_framed_message`]
-/// can produce a complete frame. This wrapper layers two defenses on top of the
-/// per-frame cap that the extractor enforces:
-///
-/// 1. Global cap on buffered data: Without it, a peer can open many channels and dribble bytes into
-///    each, multiplying the per-channel bound (`MAX_FRAME_SIZE`) across the connection.
-///
-/// 2. Accurate accounting on close:  When a channel is removed, the bytes it was holding are
-///    subtracted from the total.
-struct InboundFrameBuffers<K = ChannelId> {
-    buffers: HashMap<K, BytesMut>,
-    /// Total bytes across all channels.
-    total_bytes: usize,
-}
-
-impl<K: Eq + std::hash::Hash + Copy> InboundFrameBuffers<K> {
-    fn new() -> Self {
-        Self {
-            buffers: HashMap::new(),
-            total_bytes: 0,
-        }
-    }
-
-    /// Append `data` to the buffer for `channel_id`, allocating one if needed.
-    ///
-    /// Returns `Err(ParseError::InvalidData)` if the per-connection cap would be
-    /// exceeded.
-    fn append(&mut self, channel_id: K, data: &[u8]) -> Result<(), ParseError> {
-        if self.total_bytes.saturating_add(data.len()) > MAX_TOTAL_RECV_BUFFER_BYTES {
-            return Err(ParseError::InvalidData);
-        }
-
-        self.buffers.entry(channel_id).or_default().extend_from_slice(data);
-
-        self.total_bytes = self.total_bytes.saturating_add(data.len());
-        Ok(())
-    }
-
-    /// Try to extract one complete frame from the buffer for `channel_id`.
-    ///
-    /// Returns `Ok(None)` when the channel has no buffer or the frame is incomplete.
-    /// On success the consumed bytes are subtracted from the running total.
-    fn extract(&mut self, channel_id: K) -> Result<Option<Bytes>, ParseError> {
-        let Some(buffer) = self.buffers.get_mut(&channel_id) else {
-            return Ok(None);
-        };
-
-        let before = buffer.len();
-        match extract_framed_message(buffer)? {
-            Some(body) => {
-                let consumed = before - buffer.len();
-
-                self.total_bytes = self.total_bytes.saturating_sub(consumed);
-                Ok(Some(body))
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// Drop the buffer for `channel_id`.
-    fn remove(&mut self, channel_id: &K) {
-        if let Some(buffer) = self.buffers.remove(channel_id) {
-            self.total_bytes = self.total_bytes.saturating_sub(buffer.len());
-        }
-    }
-}
-
 /// WebRTC connection.
 pub struct WebRtcConnection {
     /// `str0m` WebRTC object.
@@ -299,7 +222,7 @@ pub struct WebRtcConnection {
     ///
     /// Accumulate raw bytes here and only attempt protobuf decode once a
     /// full `varint length ++ body` frame is available.
-    recv_buffers: InboundFrameBuffers,
+    recv_buffers: HashMap<ChannelId, BytesMut>,
 }
 
 impl WebRtcConnection {
@@ -326,7 +249,7 @@ impl WebRtcConnection {
             pending_outbound: HashMap::new(),
             channels: HashMap::new(),
             handles: SubstreamHandleSet::new(),
-            recv_buffers: InboundFrameBuffers::new(),
+            recv_buffers: HashMap::new(),
         }
     }
 
@@ -705,33 +628,14 @@ impl WebRtcConnection {
             "received channel data",
         );
 
-        // Don't allocate (or grow) a receive buffer for a channel that's unknown or
-        // already closing — the data has nowhere to go, and accepting it lets a peer
-        // amplify memory use against channels we're tearing down.
-        let acceptable = matches!(
-            self.channels.get(&channel_id),
-            Some(ChannelState::InboundOpening { .. })
-                | Some(ChannelState::OutboundOpening { .. })
-                | Some(ChannelState::Open { .. })
-        );
-        if !acceptable {
-            tracing::debug!(
-                target: LOG_TARGET,
-                peer = ?self.peer,
-                ?channel_id,
-                data_len = data.len(),
-                "dropping inbound data for unknown or closing channel",
-            );
-            return Ok(());
-        }
-
-        // `append` enforces the per-connection total cap and propagates an
-        // `InvalidData` error if exceeded — that closes the connection rather than
-        // letting buffer growth amplify across channels.
-        self.recv_buffers.append(channel_id, &data)?;
+        self.recv_buffers.entry(channel_id).or_default().extend_from_slice(&data);
 
         loop {
-            let Some(body) = self.recv_buffers.extract(channel_id)? else {
+            let Some(buffer) = self.recv_buffers.get_mut(&channel_id) else {
+                return Ok(());
+            };
+
+            let Some(body) = extract_framed_message(buffer)? else {
                 return Ok(());
             };
 
@@ -1153,114 +1057,5 @@ impl WebRtcConnection {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::transport::webrtc::util::MAX_FRAME_SIZE;
-
-    // `str0m::ChannelId` deliberately exposes no constructor, so these tests
-    // instantiate `InboundFrameBuffers` over `u16` keys instead — the bookkeeping
-    // is generic and behaves identically for both key types.
-
-    /// Build one fully-encoded `varint(len) ++ body` frame for use in extract tests.
-    fn frame(body: &[u8]) -> Vec<u8> {
-        let mut out = Vec::new();
-        let mut vb = unsigned_varint::encode::usize_buffer();
-        out.extend_from_slice(unsigned_varint::encode::usize(body.len(), &mut vb));
-        out.extend_from_slice(body);
-        out
-    }
-
-    #[test]
-    fn append_and_extract_roundtrip() {
-        let mut buffers = InboundFrameBuffers::<u16>::new();
-        let body = b"hello";
-        let f = frame(body);
-
-        buffers.append(1, &f).unwrap();
-        assert_eq!(buffers.total_bytes, f.len());
-
-        let extracted = buffers.extract(1).unwrap().expect("complete frame");
-        assert_eq!(&extracted[..], body);
-        assert_eq!(buffers.total_bytes, 0, "total reset after full drain");
-    }
-
-    #[test]
-    fn append_rejects_when_global_cap_exceeded() {
-        let mut buffers = InboundFrameBuffers::<u16>::new();
-
-        // Fill exactly to the cap with one channel — must succeed.
-        let big = vec![0u8; MAX_TOTAL_RECV_BUFFER_BYTES];
-        buffers.append(1, &big).unwrap();
-        assert_eq!(buffers.total_bytes, MAX_TOTAL_RECV_BUFFER_BYTES);
-
-        // A single extra byte on any channel must be rejected.
-        let err = buffers.append(2, &[0u8]).expect_err("cap must be enforced");
-        assert!(matches!(err, ParseError::InvalidData));
-        // The rejection must not have mutated state.
-        assert_eq!(buffers.total_bytes, MAX_TOTAL_RECV_BUFFER_BYTES);
-        assert!(!buffers.buffers.contains_key(&2));
-    }
-
-    #[test]
-    fn remove_subtracts_from_total() {
-        let mut buffers = InboundFrameBuffers::<u16>::new();
-        buffers.append(7, &vec![0u8; 1000]).unwrap();
-        assert_eq!(buffers.total_bytes, 1000);
-
-        buffers.remove(&7);
-        assert_eq!(buffers.total_bytes, 0);
-        assert!(!buffers.buffers.contains_key(&7));
-
-        // After remove the budget is freed for other channels.
-        buffers.append(8, &vec![0u8; MAX_TOTAL_RECV_BUFFER_BYTES]).unwrap();
-        assert_eq!(buffers.total_bytes, MAX_TOTAL_RECV_BUFFER_BYTES);
-    }
-
-    #[test]
-    fn extract_propagates_frame_errors() {
-        // An oversized frame is rejected by `extract_framed_message` — that error must
-        // bubble out (the connection will be torn down).
-        let mut buffers = InboundFrameBuffers::<u16>::new();
-
-        let mut over = Vec::new();
-        let mut vb = unsigned_varint::encode::usize_buffer();
-        over.extend_from_slice(unsigned_varint::encode::usize(MAX_FRAME_SIZE + 1, &mut vb));
-        buffers.append(3, &over).unwrap();
-
-        let err = buffers.extract(3).expect_err("oversized frame must error");
-        assert!(matches!(err, ParseError::InvalidData));
-    }
-
-    #[test]
-    fn extract_on_missing_channel_returns_none() {
-        // A buffer that was never created — extract is a no-op, not an error.
-        let mut buffers = InboundFrameBuffers::<u16>::new();
-        assert!(buffers.extract(99).unwrap().is_none());
-        assert_eq!(buffers.total_bytes, 0);
-    }
-
-    #[test]
-    fn many_channels_drained_independently() {
-        // Each channel maintains its own buffer; extracting from one must not touch
-        // another's accounting.
-        let mut buffers = InboundFrameBuffers::<u16>::new();
-        let f_a = frame(b"a-body");
-        let f_b = frame(b"b-body");
-
-        buffers.append(1, &f_a).unwrap();
-        buffers.append(2, &f_b).unwrap();
-        assert_eq!(buffers.total_bytes, f_a.len() + f_b.len());
-
-        let a = buffers.extract(1).unwrap().expect("a complete");
-        assert_eq!(&a[..], b"a-body");
-        assert_eq!(buffers.total_bytes, f_b.len(), "only channel 1 drained");
-
-        let b = buffers.extract(2).unwrap().expect("b complete");
-        assert_eq!(&b[..], b"b-body");
-        assert_eq!(buffers.total_bytes, 0);
     }
 }
