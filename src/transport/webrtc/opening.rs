@@ -270,7 +270,7 @@ impl OpeningWebRtcConnection {
 
         self.noise_recv_buffer.extend_from_slice(&data);
 
-        let body = match extract_framed_message(&mut self.noise_recv_buffer) {
+        let body = match extract_framed_message(&mut self.noise_recv_buffer)? {
             Some(body) => body,
             None => {
                 tracing::trace!(

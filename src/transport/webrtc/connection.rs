@@ -633,7 +633,8 @@ impl WebRtcConnection {
             let Some(buffer) = self.recv_buffers.get_mut(&channel_id) else {
                 return Ok(());
             };
-            let Some(body) = extract_framed_message(buffer) else {
+
+            let Some(body) = extract_framed_message(buffer)? else {
                 return Ok(());
             };
 

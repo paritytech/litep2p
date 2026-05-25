@@ -107,28 +107,23 @@ impl WebRtcMessage {
 }
 
 /// Try to extract one complete `varint length ++ body` frame from the front of `buffer`.
-///
-/// On success, returns `Some(body)` and removes the consumed bytes (varint + body)
-/// from `buffer`. On failure, leaves `buffer` untouched and returns `None`.
-///
-/// `None` is returned when either:
-/// - the varint length prefix is not fully buffered yet, or
-/// - fewer than `len` body bytes follow the varint.
-///
-/// This is the building block used by the WebRTC inbound path to reassemble
-/// pbio-delimited frames that go-libp2p splits across two SCTP messages
-/// (varint in one message, body in the next).
-pub fn extract_framed_message(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
-    let (len, remaining) = unsigned_varint::decode::usize(buffer).ok()?;
+pub fn extract_framed_message(buffer: &mut Vec<u8>) -> Result<Option<Vec<u8>>, ParseError> {
+    let (len, remaining) = match unsigned_varint::decode::usize(buffer) {
+        Ok(decoded) => decoded,
+        // More bytes may arrive and complete the varint.
+        Err(unsigned_varint::decode::Error::Insufficient) => return Ok(None),
+        // Permanent failures.
+        Err(_) => return Err(ParseError::InvalidData),
+    };
 
     if remaining.len() < len {
-        return None;
+        return Ok(None);
     }
 
     let varint_len = buffer.len() - remaining.len();
     let body = remaining[..len].to_vec();
     buffer.drain(..varint_len + len);
-    Some(body)
+    Ok(Some(body))
 }
 
 #[cfg(test)]
@@ -177,7 +172,7 @@ mod tests {
         let frame = WebRtcMessage::encode(b"hello".to_vec(), None);
         let mut buffer = frame.clone();
 
-        let body = extract_framed_message(&mut buffer).expect("complete frame");
+        let body = extract_framed_message(&mut buffer).unwrap().expect("complete frame");
         assert_eq!(body, protobuf_body(&frame));
         assert!(buffer.is_empty(), "buffer fully drained");
     }
@@ -187,7 +182,7 @@ mod tests {
         // A zero-length body is a legal frame: `0x00` varint, no body bytes.
         let mut buffer = vec![0x00];
 
-        let body = extract_framed_message(&mut buffer).expect("zero-length frame");
+        let body = extract_framed_message(&mut buffer).unwrap().expect("zero-length frame");
         assert!(body.is_empty());
         assert!(buffer.is_empty());
     }
@@ -205,12 +200,12 @@ mod tests {
 
         // SCTP message #1: just the varint. No complete frame yet.
         buffer.extend_from_slice(varint_bytes);
-        assert!(extract_framed_message(&mut buffer).is_none());
+        assert!(extract_framed_message(&mut buffer).unwrap().is_none());
         assert_eq!(buffer, varint_bytes, "varint preserved for next attempt");
 
         // SCTP message #2: the body arrives. Extraction now succeeds.
         buffer.extend_from_slice(body_bytes);
-        let body = extract_framed_message(&mut buffer).expect("frame now complete");
+        let body = extract_framed_message(&mut buffer).unwrap().expect("frame now complete");
         assert_eq!(body, body_bytes);
         assert!(buffer.is_empty());
     }
@@ -228,10 +223,10 @@ mod tests {
 
         let mut buffer = Vec::new();
         buffer.extend_from_slice(varint_bytes);
-        assert!(extract_framed_message(&mut buffer).is_none());
+        assert!(extract_framed_message(&mut buffer).unwrap().is_none());
 
         buffer.extend_from_slice(body_bytes);
-        let body = extract_framed_message(&mut buffer).expect("complete frame");
+        let body = extract_framed_message(&mut buffer).unwrap().expect("complete frame");
         assert_eq!(body.len(), len);
         assert_eq!(body, body_bytes);
         assert!(buffer.is_empty());
@@ -241,6 +236,8 @@ mod tests {
     fn extract_frame_with_partial_varint() {
         // Even more adversarial: the varint itself is split across SCTP messages.
         // First byte alone has the high bit set, so the varint isn't decodable yet.
+        // This must be classified as "incomplete" (Ok(None)), not "malformed" (Err) —
+        // more bytes will fix it.
         let payload = vec![0xcd; 300];
         let frame = WebRtcMessage::encode(payload, None);
         let (len, rest) = unsigned_varint::decode::usize(&frame).unwrap();
@@ -251,15 +248,15 @@ mod tests {
 
         // First byte of the varint only — undecodable.
         buffer.extend_from_slice(&varint_bytes[..1]);
-        assert!(extract_framed_message(&mut buffer).is_none());
+        assert!(extract_framed_message(&mut buffer).unwrap().is_none());
 
         // Remainder of varint arrives, body still missing.
         buffer.extend_from_slice(&varint_bytes[1..]);
-        assert!(extract_framed_message(&mut buffer).is_none());
+        assert!(extract_framed_message(&mut buffer).unwrap().is_none());
 
         // Body arrives — frame now complete.
         buffer.extend_from_slice(&rest[..len]);
-        let body = extract_framed_message(&mut buffer).expect("complete frame");
+        let body = extract_framed_message(&mut buffer).unwrap().expect("complete frame");
         assert_eq!(body.len(), len);
         assert!(buffer.is_empty());
     }
@@ -267,7 +264,7 @@ mod tests {
     #[test]
     fn extract_from_empty_buffer() {
         let mut buffer: Vec<u8> = Vec::new();
-        assert!(extract_framed_message(&mut buffer).is_none());
+        assert!(extract_framed_message(&mut buffer).unwrap().is_none());
         assert!(buffer.is_empty());
     }
 
@@ -284,14 +281,14 @@ mod tests {
         buffer.extend_from_slice(&frame_a);
         buffer.extend_from_slice(&frame_b);
 
-        let extracted_a = extract_framed_message(&mut buffer).expect("first frame");
+        let extracted_a = extract_framed_message(&mut buffer).unwrap().expect("first frame");
         assert_eq!(extracted_a, body_a);
 
-        let extracted_b = extract_framed_message(&mut buffer).expect("second frame");
+        let extracted_b = extract_framed_message(&mut buffer).unwrap().expect("second frame");
         assert_eq!(extracted_b, body_b);
 
         assert!(buffer.is_empty());
-        assert!(extract_framed_message(&mut buffer).is_none());
+        assert!(extract_framed_message(&mut buffer).unwrap().is_none());
     }
 
     #[test]
@@ -306,15 +303,16 @@ mod tests {
         buffer.extend_from_slice(&frame_a);
         buffer.extend_from_slice(&frame_b[..2]); // partial second frame
 
-        let extracted = extract_framed_message(&mut buffer).expect("first frame");
+        let extracted = extract_framed_message(&mut buffer).unwrap().expect("first frame");
         assert_eq!(extracted, body_a);
         assert_eq!(buffer, frame_b[..2], "partial second frame preserved");
 
         // Second extraction is a no-op until the rest of frame_b arrives.
-        assert!(extract_framed_message(&mut buffer).is_none());
+        assert!(extract_framed_message(&mut buffer).unwrap().is_none());
         buffer.extend_from_slice(&frame_b[2..]);
 
-        let extracted_b = extract_framed_message(&mut buffer).expect("second frame complete");
+        let extracted_b =
+            extract_framed_message(&mut buffer).unwrap().expect("second frame complete");
         assert_eq!(extracted_b, protobuf_body(&frame_b));
         assert!(buffer.is_empty());
     }
@@ -330,26 +328,26 @@ mod tests {
 
         let mut buffer = Vec::new();
         buffer.extend_from_slice(varint_bytes);
-        assert!(extract_framed_message(&mut buffer).is_none());
+        assert!(extract_framed_message(&mut buffer).unwrap().is_none());
 
         for (i, byte) in body_bytes.iter().enumerate() {
             buffer.push(*byte);
             if i + 1 < body_bytes.len() {
                 assert!(
-                    extract_framed_message(&mut buffer).is_none(),
+                    extract_framed_message(&mut buffer).unwrap().is_none(),
                     "should still be waiting at byte {i}",
                 );
             }
         }
 
-        let extracted = extract_framed_message(&mut buffer).expect("complete frame");
+        let extracted = extract_framed_message(&mut buffer).unwrap().expect("complete frame");
         assert_eq!(extracted, body_bytes);
         assert!(buffer.is_empty());
     }
 
     #[test]
     fn extract_does_not_consume_on_failure() {
-        // On `None`, the buffer must be left exactly as-is so the caller can
+        // On `Ok(None)`, the buffer must be left exactly as-is so the caller can
         // append more bytes and retry. Verify both for the partial-varint and
         // partial-body cases.
         let frame = WebRtcMessage::encode(vec![0u8; 200], None);
@@ -359,14 +357,36 @@ mod tests {
         // Partial varint.
         let mut buffer = varint_bytes[..1].to_vec();
         let snapshot = buffer.clone();
-        assert!(extract_framed_message(&mut buffer).is_none());
+        assert!(extract_framed_message(&mut buffer).unwrap().is_none());
         assert_eq!(buffer, snapshot);
 
         // Complete varint, partial body.
         let mut buffer = varint_bytes.to_vec();
         buffer.extend_from_slice(&rest[..len / 2]);
         let snapshot = buffer.clone();
-        assert!(extract_framed_message(&mut buffer).is_none());
+        assert!(extract_framed_message(&mut buffer).unwrap().is_none());
         assert_eq!(buffer, snapshot);
+    }
+
+    #[test]
+    fn extract_rejects_overlong_varint() {
+        // A malicious peer sends a varint whose length prefix exceeds usize. With
+        // a string of all-`0x80` bytes (every continuation byte present, value zero),
+        // the accumulated value eventually overflows usize. This must surface as
+        // `Err(InvalidData)` — not `Ok(None)`, otherwise the buffer would grow
+        // unboundedly while waiting for "more bytes" that can never help.
+        let mut buffer = vec![0x80; 11];
+        let err = extract_framed_message(&mut buffer).expect_err("overlong varint must error");
+        assert!(matches!(err, ParseError::InvalidData));
+    }
+
+    #[test]
+    fn extract_rejects_non_minimal_varint() {
+        // `0x80 0x00` decodes to value 0 but is non-minimal — a single `0x00` byte
+        // is the canonical encoding. The decoder rejects this with `NotMinimal`,
+        // which we propagate as `Err` to avoid wedging the inbound buffer.
+        let mut buffer = vec![0x80, 0x00];
+        let err = extract_framed_message(&mut buffer).expect_err("non-minimal varint must error");
+        assert!(matches!(err, ParseError::InvalidData));
     }
 }
