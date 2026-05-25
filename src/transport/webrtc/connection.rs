@@ -111,7 +111,7 @@ impl SubstreamHandleSet {
 
     /// Remove handle from [`SubstreamHandleSet`].
     pub fn remove(&mut self, key: &ChannelId) -> Option<SubstreamHandle> {
-        self.handles.shift_remove(key)
+        self.handles.swap_remove(key)
     }
 }
 
@@ -338,8 +338,50 @@ impl WebRtcConnection {
             "channel closed",
         );
 
-        self.pending_outbound.remove(&channel_id);
-        self.channels.remove(&channel_id);
+        // If this was a pending outbound channel (waiting for DCEP ACK from remote),
+        // report the failure so the protocol handler can retry.
+        if let Some(context) = self.pending_outbound.remove(&channel_id) {
+            tracing::debug!(
+                target: LOG_TARGET,
+                peer = ?self.peer,
+                ?channel_id,
+                protocol = %context.protocol,
+                substream_id = ?context.substream_id,
+                "outbound channel closed before opening, reporting failure",
+            );
+
+            let _ = self
+                .protocol_set
+                .report_substream_open_failure(
+                    context.protocol,
+                    context.substream_id,
+                    SubstreamError::ConnectionClosed,
+                )
+                .await;
+        }
+
+        if let Some(ChannelState::OutboundOpening { context, .. }) =
+            self.channels.remove(&channel_id)
+        {
+            tracing::debug!(
+                target: LOG_TARGET,
+                peer = ?self.peer,
+                ?channel_id,
+                protocol = %context.protocol,
+                substream_id = ?context.substream_id,
+                "outbound channel closed during negotiation, reporting failure",
+            );
+
+            let _ = self
+                .protocol_set
+                .report_substream_open_failure(
+                    context.protocol,
+                    context.substream_id,
+                    SubstreamError::ConnectionClosed,
+                )
+                .await;
+        }
+
         self.handles.remove(&channel_id);
         self.recv_buffers.remove(&channel_id);
 
@@ -599,6 +641,7 @@ impl WebRtcConnection {
         channel_id: ChannelId,
         data: Vec<u8>,
     ) -> crate::Result<()> {
+        // Decode errors are not recoverable.
         let message = WebRtcMessage::decode_protobuf(&data)?;
 
         tracing::debug!(
@@ -783,6 +826,7 @@ impl WebRtcConnection {
 
                     self.rtc.direct_api().close_data_channel(channel_id);
                     self.channels.insert(channel_id, ChannelState::Closing);
+                    self.handles.remove(&channel_id);
                 }
             },
             ChannelState::Closing => {
@@ -870,6 +914,29 @@ impl WebRtcConnection {
             "connection closed",
         );
 
+        let mut report_failure = async |context: &ChannelContext| {
+            let _ = self
+                .protocol_set
+                .report_substream_open_failure(
+                    context.protocol.clone(),
+                    context.substream_id,
+                    SubstreamError::ConnectionClosed,
+                )
+                .await;
+        };
+
+        // Drain pending outbound opens (data channel not yet acked).
+        for (_, context) in self.pending_outbound.drain() {
+            report_failure(&context).await;
+        }
+
+        // Drain channels still in OutboundOpening (multistream-select in flight).
+        for (_, state) in self.channels.drain() {
+            if let ChannelState::OutboundOpening { context, .. } = state {
+                report_failure(&context).await;
+            }
+        }
+
         let _ = self
             .protocol_set
             .report_connection_closed(self.peer, self.endpoint.connection_id())
@@ -902,7 +969,26 @@ impl WebRtcConnection {
                         "transmit data",
                     );
 
-                    self.socket.try_send_to(&v.contents, v.destination).unwrap();
+                    if let Err(error) = self.socket.try_send_to(&v.contents, v.destination) {
+                        if error.kind() == std::io::ErrorKind::WouldBlock {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                peer = ?self.peer,
+                                destination = ?v.destination,
+                                "UDP send buffer full, dropping datagram (str0m will retransmit)",
+                            );
+                        } else {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                peer = ?self.peer,
+                                destination = ?v.destination,
+                                ?error,
+                                "failed to send datagram, closing connection",
+                            );
+                            return self.on_connection_closed().await;
+                        }
+                    }
+
                     continue;
                 }
                 Output::Event(v) => match v {
@@ -967,7 +1053,15 @@ impl WebRtcConnection {
 
             let duration = timeout - Instant::now();
             if duration.is_zero() {
-                self.rtc.handle_input(Input::Timeout(Instant::now())).unwrap();
+                if let Err(error) = self.rtc.handle_input(Input::Timeout(Instant::now())) {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        peer = ?self.peer,
+                        ?error,
+                        "str0m rejected timeout input, closing connection",
+                    );
+                    return self.on_connection_closed().await;
+                }
                 continue;
             }
 
@@ -975,17 +1069,40 @@ impl WebRtcConnection {
                 biased;
                 datagram = self.dgram_rx.recv() => match datagram {
                     Some(datagram) => {
+                        let contents = match datagram.as_slice().try_into() {
+                            Ok(contents) => contents,
+                            Err(error) => {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    peer = ?self.peer,
+                                    ?error,
+                                    datagram_len = datagram.len(),
+                                    "failed to parse inbound datagram, closing connection",
+                                );
+
+                                return self.on_connection_closed().await;
+                            }
+                        };
+
                         let input = Input::Receive(
                             Instant::now(),
                             Receive {
                                 proto: Str0mProtocol::Udp,
                                 source: self.peer_address,
                                 destination: self.local_address,
-                                contents: datagram.as_slice().try_into().unwrap(),
+                                contents,
                             },
                         );
 
-                        self.rtc.handle_input(input).unwrap();
+                        if let Err(error) = self.rtc.handle_input(input) {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                peer = ?self.peer,
+                                ?error,
+                                "str0m rejected inbound datagram, closing connection",
+                            );
+                            return self.on_connection_closed().await;
+                        }
                     }
                     None => {
                         tracing::trace!(
@@ -1019,6 +1136,10 @@ impl WebRtcConnection {
                                 ?error,
                                 "failed to send data to remote peer",
                             );
+
+                            self.rtc.direct_api().close_data_channel(channel_id);
+                            self.channels.insert(channel_id, ChannelState::Closing);
+                            self.handles.remove(&channel_id);
                         }
                     }
                     Some((_, Some(SubstreamEvent::RecvClosed))) => {}
@@ -1065,7 +1186,16 @@ impl WebRtcConnection {
                     }
                 },
                 _ = tokio::time::sleep(duration) => {
-                    self.rtc.handle_input(Input::Timeout(Instant::now())).unwrap();
+                    if let Err(error) = self.rtc.handle_input(Input::Timeout(Instant::now())) {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            peer = ?self.peer,
+                            ?error,
+                            "str0m rejected timeout input, closing connection",
+                        );
+
+                        return self.on_connection_closed().await;
+                    }
                 }
             }
         }
