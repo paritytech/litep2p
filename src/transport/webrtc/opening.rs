@@ -111,6 +111,17 @@ pub struct OpeningWebRtcConnection {
 
     /// Local address.
     local_address: SocketAddr,
+
+    /// Inbound noise-channel byte buffer for reassembling pbio-delimited frames.
+    ///
+    /// The libp2p-go msgio implementation issues two separate `Write` calls:
+    ///  - variant length
+    ///  - protobuf body
+    /// These will become two distinct SCTP messages on the data channel.
+    ///
+    /// Accumulate raw bytes here and only attempt protobuf decode once a
+    /// full `varint length ++ body` frame is available.
+    noise_recv_buffer: Vec<u8>,
 }
 
 /// Connection state.
@@ -168,7 +179,27 @@ impl OpeningWebRtcConnection {
             id_keypair,
             peer_address,
             local_address,
+            noise_recv_buffer: Vec::new(),
         }
+    }
+
+    /// Try to extract one complete `varint length ++ protobuf body` frame from the
+    /// head of `noise_recv_buffer`.
+    ///
+    /// Returns some if a complete frame is available.
+    fn try_extract_framed_message(&mut self) -> Option<Vec<u8>> {
+        let (len, remaining) = unsigned_varint::decode::usize(&self.noise_recv_buffer).ok()?;
+
+        if remaining.len() < len {
+            return None;
+        }
+
+        let header_len = self.noise_recv_buffer.len() - remaining.len();
+
+        let body = remaining[..len].to_vec();
+        self.noise_recv_buffer.drain(..header_len + len);
+
+        Some(body)
     }
 
     /// Get remote fingerprint to bytes.
@@ -244,7 +275,28 @@ impl OpeningWebRtcConnection {
     ///
     /// If the peer is accepted, [`OpeningWebRtcConnection::on_accept()`] is called which creates
     /// the final Noise message and sends it to the remote peer, concluding the handshake.
-    fn on_noise_channel_data(&mut self, data: Vec<u8>) -> crate::Result<WebRtcEvent> {
+    fn on_noise_channel_data(&mut self, data: Vec<u8>) -> crate::Result<Option<WebRtcEvent>> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            len = data.len(),
+            buffered = self.noise_recv_buffer.len(),
+            "noise channel data received",
+        );
+
+        self.noise_recv_buffer.extend_from_slice(&data);
+
+        let body = match self.try_extract_framed_message() {
+            Some(body) => body,
+            None => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    buffered = self.noise_recv_buffer.len(),
+                    "incomplete noise frame, waiting for more bytes",
+                );
+                return Ok(None);
+            }
+        };
+
         tracing::trace!(target: LOG_TARGET, "handle noise handshake reply");
 
         let State::HandshakeSent { mut context } =
@@ -253,7 +305,7 @@ impl OpeningWebRtcConnection {
             return Err(Error::InvalidState);
         };
 
-        let message = WebRtcMessage::decode(&data)?.payload.ok_or(Error::InvalidData)?;
+        let message = WebRtcMessage::decode_protobuf(&body)?.payload.ok_or(Error::InvalidData)?;
         let remote_peer_id = context.get_remote_peer_id(&message)?;
 
         tracing::trace!(
@@ -283,10 +335,10 @@ impl OpeningWebRtcConnection {
             .with(Protocol::Certhash(certificate))
             .with(Protocol::P2p(remote_peer_id.into()));
 
-        Ok(WebRtcEvent::ConnectionOpened {
+        Ok(Some(WebRtcEvent::ConnectionOpened {
             peer: remote_peer_id,
             endpoint: Endpoint::listener(address, self.connection_id),
-        })
+        }))
     }
 
     /// Accept connection by sending the final Noise handshake message
@@ -436,7 +488,8 @@ impl OpeningWebRtcConnection {
                         }
 
                         match self.on_noise_channel_data(data.data) {
-                            Ok(event) => return event,
+                            Ok(Some(event)) => return event,
+                            Ok(None) => continue,
                             Err(error) => {
                                 tracing::debug!(
                                     target: LOG_TARGET,

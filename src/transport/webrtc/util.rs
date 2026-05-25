@@ -25,6 +25,9 @@ use crate::{
 
 use prost::Message;
 
+/// Logging target for the file.
+const LOG_TARGET: &str = "litep2p::webrtc";
+
 /// WebRTC message.
 #[derive(Debug)]
 pub struct WebRtcMessage {
@@ -86,18 +89,23 @@ impl WebRtcMessage {
         // Decode varint length prefix directly from slice (no allocation)
         // Returns (decoded_length, remaining_bytes_after_varint)
         let (len, remaining) =
-            unsigned_varint::decode::usize(payload).map_err(|_| ParseError::InvalidData)?;
+            unsigned_varint::decode::usize(payload).map_err(|_| Pa`rseError::InvalidData)?;
 
         // Get exactly `len` bytes of protobuf data (no allocation)
         let protobuf_data = remaining.get(..len).ok_or(ParseError::InvalidData)?;
 
+        Self::decode_protobuf(protobuf_data)
+    }
+
+    /// Decode a protobuf-encoded [`schema::webrtc::Message`] body with no varint length prefix.
+    pub fn decode_protobuf(protobuf_data: &[u8]) -> Result<Self, ParseError> {
         match schema::webrtc::Message::decode(protobuf_data) {
             Ok(message) => {
                 let flag = message.flag.and_then(|f| match Flag::try_from(f) {
                     Ok(flag) => Some(flag),
                     Err(_) => {
                         tracing::warn!(
-                            target: "litep2p::webrtc",
+                            target: LOG_TARGET,
                             ?f,
                             "received message with unknown flag value, ignoring flag"
                         );
