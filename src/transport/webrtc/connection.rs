@@ -38,6 +38,7 @@ use crate::{
     PeerId,
 };
 
+use bytes::{Bytes, BytesMut};
 use futures::{Stream, StreamExt};
 use indexmap::IndexMap;
 use str0m::{
@@ -221,7 +222,7 @@ pub struct WebRtcConnection {
     ///
     /// Accumulate raw bytes here and only attempt protobuf decode once a
     /// full `varint length ++ body` frame is available.
-    recv_buffers: HashMap<ChannelId, Vec<u8>>,
+    recv_buffers: HashMap<ChannelId, BytesMut>,
 }
 
 impl WebRtcConnection {
@@ -345,7 +346,7 @@ impl WebRtcConnection {
     async fn on_inbound_opening_channel_data(
         &mut self,
         channel_id: ChannelId,
-        data: Vec<u8>,
+        data: Bytes,
         header_received: bool,
     ) -> crate::Result<Option<(SubstreamId, SubstreamHandle, Option<Permit>)>> {
         tracing::trace!(
@@ -433,7 +434,7 @@ impl WebRtcConnection {
     async fn on_outbound_opening_channel_data(
         &mut self,
         channel_id: ChannelId,
-        data: Vec<u8>,
+        data: Bytes,
         mut dialer_state: WebRtcDialerState,
         context: ChannelContext,
     ) -> Result<Option<(SubstreamId, SubstreamHandle)>, SubstreamError> {
@@ -579,7 +580,7 @@ impl WebRtcConnection {
     async fn on_open_channel_data(
         &mut self,
         channel_id: ChannelId,
-        data: Vec<u8>,
+        data: Bytes,
     ) -> crate::Result<()> {
         // Decode errors are not recoverable.
         let message = WebRtcMessage::decode(&data)?;
@@ -650,7 +651,7 @@ impl WebRtcConnection {
     async fn dispatch_framed_message(
         &mut self,
         channel_id: ChannelId,
-        data: Vec<u8>,
+        data: Bytes,
     ) -> crate::Result<()> {
         let Some(state) = self.channels.remove(&channel_id) else {
             tracing::warn!(

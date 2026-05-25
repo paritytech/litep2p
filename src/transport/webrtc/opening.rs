@@ -31,6 +31,7 @@ use crate::{
     Error, PeerId,
 };
 
+use bytes::BytesMut;
 use multiaddr::{Multiaddr, Protocol};
 use multihash_codetable::Code;
 use str0m::{
@@ -125,7 +126,7 @@ pub struct OpeningWebRtcConnection {
     ///
     /// Accumulate raw bytes here and only attempt protobuf decode once a
     /// full `varint length ++ body` frame is available.
-    noise_recv_buffer: Vec<u8>,
+    noise_recv_buffer: BytesMut,
 }
 
 /// Connection state.
@@ -183,7 +184,7 @@ impl OpeningWebRtcConnection {
             id_keypair,
             peer_address,
             local_address,
-            noise_recv_buffer: Vec::new(),
+            noise_recv_buffer: BytesMut::new(),
         }
     }
 
