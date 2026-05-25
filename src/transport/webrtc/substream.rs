@@ -19,7 +19,10 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    transport::webrtc::{schema::webrtc::message::Flag, util::WebRtcMessage},
+    transport::webrtc::{
+        schema::webrtc::message::Flag,
+        util::{WebRtcMessage, MAX_FRAME_SIZE},
+    },
     Error,
 };
 
@@ -35,9 +38,6 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-
-/// Maximum frame size.
-const MAX_FRAME_SIZE: usize = 16384;
 
 /// Timeout for waiting on FIN_ACK after sending FIN.
 /// Matches go-libp2p's 5 second stream close timeout.

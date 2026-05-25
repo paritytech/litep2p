@@ -29,6 +29,9 @@ use prost::Message;
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::webrtc";
 
+/// Maximum size of a single framed WebRTC body in bytes.
+pub const MAX_FRAME_SIZE: usize = 16 * 1024;
+
 /// WebRTC message.
 #[derive(Debug)]
 pub struct WebRtcMessage {
@@ -131,6 +134,17 @@ pub fn extract_framed_message(buffer: &mut BytesMut) -> Result<Option<Bytes>, Pa
             return Err(ParseError::InvalidData);
         }
     };
+
+    // Reject oversized frames before waiting for the body.
+    if len > MAX_FRAME_SIZE {
+        tracing::debug!(
+            target: LOG_TARGET,
+            declared_len = len,
+            max = MAX_FRAME_SIZE,
+            "Rejecting oversized SCTP frame"
+        );
+        return Err(ParseError::InvalidData);
+    }
 
     if remaining.len() < len {
         tracing::trace!(
@@ -417,6 +431,46 @@ mod tests {
         let mut buffer = buf(&[0x80u8; 11]);
         let err = extract_framed_message(&mut buffer).expect_err("overlong varint must error");
         assert!(matches!(err, ParseError::InvalidData));
+    }
+
+    #[test]
+    fn extract_rejects_oversized_frame() {
+        // A malicious peer declares a body just over `MAX_FRAME_SIZE` and then dribbles
+        // bytes in. Without this cap, the buffer would grow without bound waiting for
+        // the body to complete. With the cap, the oversized varint is rejected the
+        // moment it decodes — regardless of how many body bytes have actually arrived.
+        let oversized = MAX_FRAME_SIZE + 1;
+        let mut varint_buf = unsigned_varint::encode::usize_buffer();
+        let varint = unsigned_varint::encode::usize(oversized, &mut varint_buf);
+
+        // Just the varint, no body — would otherwise be `Ok(None)` (incomplete body).
+        let mut buffer = buf(varint);
+        let err = extract_framed_message(&mut buffer).expect_err("oversized frame must error");
+        assert!(matches!(err, ParseError::InvalidData));
+
+        // Even with a partial body, the result is still `Err` — the check happens
+        // before the body-length check.
+        let mut buffer = buf(varint);
+        buffer.extend_from_slice(&[0u8; 100]);
+        let err = extract_framed_message(&mut buffer).expect_err("oversized frame must error");
+        assert!(matches!(err, ParseError::InvalidData));
+    }
+
+    #[test]
+    fn extract_accepts_max_frame_size() {
+        // A body of exactly `MAX_FRAME_SIZE` bytes is the largest legal frame and must
+        // still extract — the cap is "≤ MAX_FRAME_SIZE", not "< MAX_FRAME_SIZE".
+        let body = vec![0xa5u8; MAX_FRAME_SIZE];
+        let mut buffer = BytesMut::new();
+        let mut varint_buf = unsigned_varint::encode::usize_buffer();
+        buffer.extend_from_slice(unsigned_varint::encode::usize(body.len(), &mut varint_buf));
+        buffer.extend_from_slice(&body);
+
+        let extracted =
+            extract_framed_message(&mut buffer).unwrap().expect("max-size frame extracts");
+        assert_eq!(extracted.len(), MAX_FRAME_SIZE);
+        assert_eq!(&extracted[..], &body[..]);
+        assert!(buffer.is_empty());
     }
 
     #[test]
