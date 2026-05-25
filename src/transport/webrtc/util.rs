@@ -92,7 +92,7 @@ impl WebRtcMessage {
                         tracing::warn!(
                             target: LOG_TARGET,
                             ?f,
-                            "received message with unknown flag value, ignoring flag"
+                            "Received message with unknown flag value, ignoring flag"
                         );
                         None
                     }
@@ -112,12 +112,33 @@ pub fn extract_framed_message(buffer: &mut BytesMut) -> Result<Option<Bytes>, Pa
     let (len, remaining) = match unsigned_varint::decode::usize(buffer) {
         Ok(decoded) => decoded,
         // More bytes may arrive and complete the varint.
-        Err(unsigned_varint::decode::Error::Insufficient) => return Ok(None),
+        Err(unsigned_varint::decode::Error::Insufficient) => {
+            tracing::trace!(
+                target: LOG_TARGET,
+                buffer_len = buffer.len(),
+                "Received incomplete SCTP varint header, waiting for more data"
+            );
+            return Ok(None);
+        }
         // Permanent failures.
-        Err(_) => return Err(ParseError::InvalidData),
+        Err(err) => {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?err,
+                buffer_len = buffer.len(),
+                "Permanent error encountered during SCTP varint framing"
+            );
+            return Err(ParseError::InvalidData);
+        }
     };
 
     if remaining.len() < len {
+        tracing::trace!(
+            target: LOG_TARGET,
+            expected_body_len = len,
+            available_body_len = remaining.len(),
+            "Received incomplete SCTP payload, waiting for more data"
+        );
         return Ok(None);
     }
 
@@ -125,6 +146,14 @@ pub fn extract_framed_message(buffer: &mut BytesMut) -> Result<Option<Bytes>, Pa
     // Slice off the whole frame, then drop the varint header and freeze the body.
     let mut frame = buffer.split_to(varint_len + len);
     let _ = frame.split_to(varint_len);
+
+    tracing::trace!(
+        target: LOG_TARGET,
+        message_len = len,
+        varint_len,
+        "Successfully extracted SCTP framed message"
+    );
+
     Ok(Some(frame.freeze()))
 }
 
