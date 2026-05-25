@@ -89,7 +89,7 @@ impl WebRtcMessage {
         // Decode varint length prefix directly from slice (no allocation)
         // Returns (decoded_length, remaining_bytes_after_varint)
         let (len, remaining) =
-            unsigned_varint::decode::usize(payload).map_err(|_| Pa`rseError::InvalidData)?;
+            unsigned_varint::decode::usize(payload).map_err(|_| ParseError::InvalidData)?;
 
         // Get exactly `len` bytes of protobuf data (no allocation)
         let protobuf_data = remaining.get(..len).ok_or(ParseError::InvalidData)?;
