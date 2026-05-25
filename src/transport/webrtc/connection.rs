@@ -216,6 +216,7 @@ pub struct WebRtcConnection {
     /// The libp2p-go msgio implementation issues two separate `Write` calls:
     ///  - variant length
     ///  - protobuf body
+    ///
     /// These will become two distinct SCTP messages on the data channel.
     ///
     /// Accumulate raw bytes here and only attempt protobuf decode once a
