@@ -23,7 +23,10 @@
 use crate::{
     config::Role,
     crypto::{ed25519::Keypair, noise::NoiseContext},
-    transport::{webrtc::util::WebRtcMessage, Endpoint},
+    transport::{
+        webrtc::util::{extract_framed_message, WebRtcMessage},
+        Endpoint,
+    },
     types::ConnectionId,
     Error, PeerId,
 };
@@ -184,25 +187,6 @@ impl OpeningWebRtcConnection {
         }
     }
 
-    /// Try to extract one complete `varint length ++ protobuf body` frame from the
-    /// head of `noise_recv_buffer`.
-    ///
-    /// Returns some if a complete frame is available.
-    fn try_extract_framed_message(&mut self) -> Option<Vec<u8>> {
-        let (len, remaining) = unsigned_varint::decode::usize(&self.noise_recv_buffer).ok()?;
-
-        if remaining.len() < len {
-            return None;
-        }
-
-        let header_len = self.noise_recv_buffer.len() - remaining.len();
-
-        let body = remaining[..len].to_vec();
-        self.noise_recv_buffer.drain(..header_len + len);
-
-        Some(body)
-    }
-
     /// Get remote fingerprint to bytes.
     fn remote_fingerprint(&mut self) -> Vec<u8> {
         let fingerprint = self
@@ -286,7 +270,7 @@ impl OpeningWebRtcConnection {
 
         self.noise_recv_buffer.extend_from_slice(&data);
 
-        let body = match self.try_extract_framed_message() {
+        let body = match extract_framed_message(&mut self.noise_recv_buffer) {
             Some(body) => body,
             None => {
                 tracing::trace!(

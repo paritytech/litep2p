@@ -30,7 +30,7 @@ use crate::{
         webrtc::{
             schema::webrtc::message::Flag,
             substream::{Event as SubstreamEvent, Substream as WebRtcSubstream, SubstreamHandle},
-            util::WebRtcMessage,
+            util::{extract_framed_message, WebRtcMessage},
         },
         Endpoint,
     },
@@ -250,24 +250,6 @@ impl WebRtcConnection {
             handles: SubstreamHandleSet::new(),
             recv_buffers: HashMap::new(),
         }
-    }
-
-    /// Try to extract one complete `varint length ++ protobuf body` frame from the head of
-    /// the buffer for `channel_id`. Returns the body bytes when a full frame is available
-    /// (and consumes those bytes from the buffer), or `None` when more bytes are needed.
-    fn try_extract_framed_message(&mut self, channel_id: ChannelId) -> Option<Vec<u8>> {
-        let buffer = self.recv_buffers.get_mut(&channel_id)?;
-
-        let (len, remaining_after_varint) = unsigned_varint::decode::usize(buffer).ok()?;
-
-        let consumed_for_varint = buffer.len() - remaining_after_varint.len();
-        if remaining_after_varint.len() < len {
-            return None;
-        }
-
-        let body = remaining_after_varint[..len].to_vec();
-        buffer.drain(..consumed_for_varint + len);
-        Some(body)
     }
 
     /// Handle opened channel.
@@ -648,7 +630,10 @@ impl WebRtcConnection {
         self.recv_buffers.entry(channel_id).or_default().extend_from_slice(&data);
 
         loop {
-            let Some(body) = self.try_extract_framed_message(channel_id) else {
+            let Some(buffer) = self.recv_buffers.get_mut(&channel_id) else {
+                return Ok(());
+            };
+            let Some(body) = extract_framed_message(buffer) else {
                 return Ok(());
             };
 
