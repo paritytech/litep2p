@@ -75,30 +75,14 @@ impl WebRtcMessage {
         out_buf
     }
 
-    /// Decode payload into [`WebRtcMessage`].
-    ///
-    /// Decodes the varint length prefix directly from the slice without allocations,
-    /// then decodes the protobuf message from the remaining bytes.
+    /// Decode a protobuf-encoded [`schema::webrtc::Message`] body with no varint length prefix.
     ///
     /// # Flag handling
     ///
     /// Unknown flag values (e.g., from a newer protocol version) are logged as warnings
     /// and treated as `None` for forward compatibility. This allows the message payload
     /// to still be processed even if the flag is not recognized.
-    pub fn decode(payload: &[u8]) -> Result<Self, ParseError> {
-        // Decode varint length prefix directly from slice (no allocation)
-        // Returns (decoded_length, remaining_bytes_after_varint)
-        let (len, remaining) =
-            unsigned_varint::decode::usize(payload).map_err(|_| ParseError::InvalidData)?;
-
-        // Get exactly `len` bytes of protobuf data (no allocation)
-        let protobuf_data = remaining.get(..len).ok_or(ParseError::InvalidData)?;
-
-        Self::decode_protobuf(protobuf_data)
-    }
-
-    /// Decode a protobuf-encoded [`schema::webrtc::Message`] body with no varint length prefix.
-    pub fn decode_protobuf(protobuf_data: &[u8]) -> Result<Self, ParseError> {
+    pub fn decode(protobuf_data: &[u8]) -> Result<Self, ParseError> {
         match schema::webrtc::Message::decode(protobuf_data) {
             Ok(message) => {
                 let flag = message.flag.and_then(|f| match Flag::try_from(f) {
@@ -126,10 +110,17 @@ impl WebRtcMessage {
 mod tests {
     use super::*;
 
+    /// Strip the unsigned-varint length prefix that [`WebRtcMessage::encode`] prepends,
+    /// returning the bare protobuf body that [`WebRtcMessage::decode`] expects.
+    fn protobuf_body(encoded: &[u8]) -> &[u8] {
+        let (len, rest) = unsigned_varint::decode::usize(encoded).unwrap();
+        &rest[..len]
+    }
+
     #[test]
     fn with_payload_no_flag() {
         let message = WebRtcMessage::encode("Hello, world!".as_bytes().to_vec(), None);
-        let decoded = WebRtcMessage::decode(&message).unwrap();
+        let decoded = WebRtcMessage::decode(protobuf_body(&message)).unwrap();
 
         assert_eq!(decoded.payload, Some("Hello, world!".as_bytes().to_vec()));
         assert_eq!(decoded.flag, None);
@@ -139,7 +130,7 @@ mod tests {
     fn with_payload_and_flag() {
         let message =
             WebRtcMessage::encode("Hello, world!".as_bytes().to_vec(), Some(Flag::StopSending));
-        let decoded = WebRtcMessage::decode(&message).unwrap();
+        let decoded = WebRtcMessage::decode(protobuf_body(&message)).unwrap();
 
         assert_eq!(decoded.payload, Some("Hello, world!".as_bytes().to_vec()));
         assert_eq!(decoded.flag, Some(Flag::StopSending));
@@ -148,7 +139,7 @@ mod tests {
     #[test]
     fn no_payload_with_flag() {
         let message = WebRtcMessage::encode(vec![], Some(Flag::ResetStream));
-        let decoded = WebRtcMessage::decode(&message).unwrap();
+        let decoded = WebRtcMessage::decode(protobuf_body(&message)).unwrap();
 
         assert_eq!(decoded.payload, None);
         assert_eq!(decoded.flag, Some(Flag::ResetStream));

@@ -373,7 +373,7 @@ impl WebRtcConnection {
             "handle opening inbound substream",
         );
 
-        let payload = WebRtcMessage::decode_protobuf(&data)?.payload.ok_or(Error::InvalidData)?;
+        let payload = WebRtcMessage::decode(&data)?.payload.ok_or(Error::InvalidData)?;
         let protocols = self.protocol_set.protocols_with_keep_alives();
         let protocol_names = protocols.keys().cloned().collect();
         let (response, negotiated) =
@@ -463,7 +463,7 @@ impl WebRtcConnection {
             "handle opening outbound substream",
         );
 
-        let rtc_message = WebRtcMessage::decode_protobuf(&data)
+        let rtc_message = WebRtcMessage::decode(&data)
             .map_err(|err| SubstreamError::NegotiationError(err.into()))?;
         let message = rtc_message.payload.ok_or(SubstreamError::NegotiationError(
             ParseError::InvalidData.into(),
@@ -599,7 +599,8 @@ impl WebRtcConnection {
         channel_id: ChannelId,
         data: Vec<u8>,
     ) -> crate::Result<()> {
-        let message = WebRtcMessage::decode_protobuf(&data)?;
+        // Decode errors are not recoverable.
+        let message = WebRtcMessage::decode(&data)?;
 
         tracing::debug!(
             target: LOG_TARGET,

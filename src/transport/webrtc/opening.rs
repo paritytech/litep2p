@@ -306,7 +306,7 @@ impl OpeningWebRtcConnection {
             return Err(Error::InvalidState);
         };
 
-        let message = WebRtcMessage::decode_protobuf(&body)?.payload.ok_or(Error::InvalidData)?;
+        let message = WebRtcMessage::decode(&body)?.payload.ok_or(Error::InvalidData)?;
         let remote_peer_id = context.get_remote_peer_id(&message)?;
 
         tracing::trace!(
