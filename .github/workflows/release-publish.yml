@@ -1,0 +1,110 @@
+# Publishes litep2p to crates.io when a `v*` tag is pushed to the repository.
+#
+# One-time setup (must be done by a crate owner on crates.io before this
+# workflow can succeed):
+#   1. Visit https://crates.io/crates/litep2p/settings/tokens and add a
+#      "Trusted Publisher" entry pointing at this repository, this workflow
+#      file (`release-publish.yml`), and the `release` environment.
+#   2. In repo Settings -> Environments, create an environment named `release`
+#      with required reviewers configured. The `publish` job below targets
+#      that environment, so a reviewer must approve every publish.
+#
+# Flow:
+#   - `verify` runs on the same container + runner + Rust version as the CI
+#     test job, so the reviewer can see real test results before approving.
+#   - `publish` is gated by the `release` environment and only runs if
+#     `verify` succeeds. It authenticates to crates.io via OIDC (no
+#     long-lived token in repo secrets), publishes, and creates a GitHub
+#     Release with notes extracted from CHANGELOG.md.
+
+name: Release Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify release
+    runs-on: parity-default
+    timeout-minutes: 30
+    container:
+      image: paritytech/ci-unified:bullseye-1.93.0-2026-01-27-v202605151311
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          CRATE_VERSION="$(grep -m1 -E '^version = "' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+          echo "Tag version:   $TAG_VERSION"
+          echo "Crate version: $CRATE_VERSION"
+          if [ "$TAG_VERSION" != "$CRATE_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match Cargo.toml version ($CRATE_VERSION). Refusing to publish."
+            exit 1
+          fi
+
+      - name: Run tests
+        run: cargo test --all-features --all-targets
+
+  publish:
+    name: Publish to crates.io
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: paritytech/ci-unified:bullseye-1.93.0-2026-01-27-v202605151311
+    environment:
+      name: release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish
+
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\["ver"\\]" { p=1; next }
+            p && /^## \[/ { exit }
+            p { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::warning::No CHANGELOG section found for $VERSION; release notes will be empty."
+            echo "Release v$VERSION" > release-notes.md
+          fi
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file release-notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file release-notes.md \
+              --verify-tag
+          fi
