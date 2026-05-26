@@ -1,14 +1,5 @@
 # Publishes litep2p to crates.io when a `v*` tag is pushed to the repository.
 #
-# One-time setup (must be done by a crate owner on crates.io before this
-# workflow can succeed):
-#   1. Visit https://crates.io/crates/litep2p/settings/tokens and add a
-#      "Trusted Publisher" entry pointing at this repository, this workflow
-#      file (`release-publish.yml`), and the `release` environment.
-#   2. In repo Settings -> Environments, create an environment named `release`
-#      with required reviewers configured. The `publish` job below targets
-#      that environment, so a reviewer must approve every publish.
-#
 # Flow:
 #   - `verify` runs on the same container + runner + Rust version as the CI
 #     test job, so the reviewer can see real test results before approving.
@@ -38,6 +29,7 @@ jobs:
     timeout-minutes: 30
     container:
       image: paritytech/ci-unified:bullseye-1.93.0-2026-01-27-v202605151311
+      options: --sysctl net.ipv6.conf.all.disable_ipv6=0
     steps:
       - name: Checkout sources
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
