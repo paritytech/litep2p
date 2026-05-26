@@ -1,0 +1,207 @@
+# Opens a release PR with a version bump, a regenerated Cargo.lock, and a
+# CHANGELOG draft. Triggered manually by a maintainer from the Actions tab.
+#
+# After this workflow runs:
+#   1. Review the auto-drafted CHANGELOG entry and re-bucket items under the
+#      Added / Changed / Fixed headings.
+#   2. Merge the PR.
+#   3. Tag the merge commit and push the tag (see RELEASING.md).
+#
+# Known limitation: GitHub does not trigger `pull_request` workflows on PRs
+# opened by GITHUB_TOKEN. If you need CI to run on the release PR, push an
+# empty commit to the branch after this workflow finishes, or replace
+# GITHUB_TOKEN below with a PAT / GitHub App token stored as a secret.
+
+name: Release Prep
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "New version (e.g. 0.15.0, no leading 'v')"
+        required: true
+        type: string
+
+concurrency:
+  group: release-prep
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare release PR
+    runs-on: parity-default
+    timeout-minutes: 20
+    container:
+      image: paritytech/ci-unified:bullseye-1.93.0-2026-01-27-v202605151311
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate version input
+        id: validate
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version '$VERSION' is not a valid semver X.Y.Z"
+            exit 1
+          fi
+          CURRENT="$(grep -m1 -E '^version = "' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+          echo "Current version: $CURRENT"
+          echo "New version:     $VERSION"
+          if [ "$VERSION" = "$CURRENT" ]; then
+            echo "::error::New version equals current version ($CURRENT)"
+            exit 1
+          fi
+          higher=$(printf '%s\n%s\n' "$CURRENT" "$VERSION" | sort -V | tail -1)
+          if [ "$higher" != "$VERSION" ]; then
+            echo "::error::New version ($VERSION) is not greater than current ($CURRENT)"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "branch=release-v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Configure git identity
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version in Cargo.toml
+        env:
+          NEW_VERSION: ${{ steps.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          awk -v new="$NEW_VERSION" '
+            !done && /^version = "/ { sub(/"[^"]+"/, "\""new"\""); done=1 }
+            { print }
+          ' Cargo.toml > Cargo.toml.new
+          mv Cargo.toml.new Cargo.toml
+          echo "Updated package version line:"
+          grep -m1 '^version = ' Cargo.toml
+
+      - name: Regenerate Cargo.lock
+        run: cargo generate-lockfile
+
+      - name: Draft CHANGELOG entry
+        env:
+          NEW_VERSION: ${{ steps.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          TODAY=$(date -u +%Y-%m-%d)
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          {
+            echo "## [$NEW_VERSION] - $TODAY"
+            echo
+            echo "_TODO: add a summary paragraph here, or remove this line._"
+            echo
+            echo "### Changes"
+            echo
+            if [ -n "$PREV_TAG" ]; then
+              echo "_Auto-generated from squash-merge commit subjects since \`$PREV_TAG\`. Re-bucket into Added / Changed / Fixed before merging._"
+              echo
+              git log "$PREV_TAG..HEAD" --pretty=format:'- %s' --no-merges \
+                | sed -E 's,\(#([0-9]+)\),([#\1](https://github.com/paritytech/litep2p/pull/\1)),g'
+              echo
+            else
+              echo "_Could not determine previous tag. List PRs manually._"
+            fi
+            echo
+          } > new-section.md
+
+          FIRST_HEADING_LINE=$(grep -nE '^## \[' CHANGELOG.md | head -1 | cut -d: -f1)
+          if [ -z "$FIRST_HEADING_LINE" ]; then
+            echo "::error::No existing '## [...]' heading found in CHANGELOG.md; cannot determine insertion point."
+            exit 1
+          fi
+
+          head -n $((FIRST_HEADING_LINE - 1)) CHANGELOG.md  > CHANGELOG.new
+          cat new-section.md                                >> CHANGELOG.new
+          tail -n +"$FIRST_HEADING_LINE" CHANGELOG.md       >> CHANGELOG.new
+          mv CHANGELOG.new CHANGELOG.md
+          rm new-section.md
+
+      - name: Commit release changes
+        env:
+          BRANCH:  ${{ steps.validate.outputs.branch }}
+          VERSION: ${{ steps.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git rev-parse --verify -q "$BRANCH" >/dev/null 2>&1; then
+            git checkout -q "$BRANCH"
+          else
+            git checkout -b "$BRANCH"
+          fi
+          git add Cargo.toml Cargo.lock CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit; branch is already up to date."
+          else
+            git commit -m "Prepare release v$VERSION"
+          fi
+
+      - name: Verify crate publishes cleanly (cargo publish --dry-run)
+        run: cargo publish --dry-run
+
+      - name: Push release branch
+        env:
+          BRANCH: ${{ steps.validate.outputs.branch }}
+        run: git push origin "$BRANCH"
+
+      - name: Open release PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION:  ${{ steps.validate.outputs.version }}
+          BRANCH:   ${{ steps.validate.outputs.branch }}
+        run: |
+          set -euo pipefail
+          cat > pr-body.md <<EOF
+          Automated release prep for **v$VERSION**.
+
+          ## Reviewer checklist
+
+          - [ ] CHANGELOG entry under \`## [$VERSION]\` is accurate:
+            - Add a summary paragraph (or delete the TODO placeholder).
+            - Re-bucket items from \`### Changes\` into \`### Added\` / \`### Changed\` / \`### Fixed\`.
+          - [ ] \`Cargo.toml\` bumped to \`$VERSION\`.
+          - [ ] \`Cargo.lock\` regenerated.
+          - [ ] CI is green (see note below if it didn't start).
+
+          ## After merging
+
+          1. Pull \`master\`.
+          2. Tag the merge commit: \`git tag -s v$VERSION && git push --tags\`.
+          3. Approve the **Release Publish** workflow run in the Actions tab.
+
+          See \`RELEASING.md\` for the full flow.
+
+          ---
+
+          > **Heads-up:** GitHub does not run \`pull_request\` workflows on PRs opened by \`GITHUB_TOKEN\`. If CI hasn't started on this PR, push an empty commit to trigger it:
+          > \`\`\`bash
+          > git fetch origin && git checkout $BRANCH
+          > git commit --allow-empty -m "trigger ci" && git push
+          > \`\`\`
+          EOF
+
+          PR_URL=$(gh pr create \
+            --base master \
+            --head "$BRANCH" \
+            --title "Prepare release v$VERSION" \
+            --body-file pr-body.md)
+
+          echo "Opened PR: $PR_URL"
+          echo "## Release PR opened" >> "$GITHUB_STEP_SUMMARY"
+          echo "$PR_URL" >> "$GITHUB_STEP_SUMMARY"
