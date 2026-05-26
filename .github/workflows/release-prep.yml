@@ -50,6 +50,7 @@ jobs:
 
       - name: Validate version input
         id: validate
+        shell: bash
         env:
           VERSION: ${{ inputs.version }}
         run: |
@@ -75,6 +76,7 @@ jobs:
           echo "branch=release-v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Configure git identity
+        shell: bash
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config user.name "github-actions[bot]"
@@ -83,6 +85,7 @@ jobs:
       - name: Bump version in Cargo.toml
         env:
           NEW_VERSION: ${{ steps.validate.outputs.version }}
+        shell: bash
         run: |
           set -euo pipefail
           awk -v new="$NEW_VERSION" '
@@ -99,6 +102,7 @@ jobs:
       - name: Draft CHANGELOG entry
         env:
           NEW_VERSION: ${{ steps.validate.outputs.version }}
+        shell: bash
         run: |
           set -euo pipefail
           TODAY=$(date -u +%Y-%m-%d)
@@ -139,6 +143,7 @@ jobs:
         env:
           BRANCH:  ${{ steps.validate.outputs.branch }}
           VERSION: ${{ steps.validate.outputs.version }}
+        shell: bash
         run: |
           set -euo pipefail
           if git rev-parse --verify -q "$BRANCH" >/dev/null 2>&1; then
@@ -159,6 +164,7 @@ jobs:
       - name: Push release branch
         env:
           BRANCH: ${{ steps.validate.outputs.branch }}
+        shell: bash
         run: git push origin "$BRANCH"
 
       - name: Open release PR
@@ -166,6 +172,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION:  ${{ steps.validate.outputs.version }}
           BRANCH:   ${{ steps.validate.outputs.branch }}
+        shell: bash
         run: |
           set -euo pipefail
           cat > pr-body.md <<EOF
