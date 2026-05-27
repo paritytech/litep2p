@@ -1,11 +1,15 @@
-# Opens a release PR with a version bump, a regenerated Cargo.lock, and a
-# CHANGELOG draft. Triggered manually by a maintainer from the Actions tab.
+# Opens a release PR: bumps the version in Cargo.toml, regenerates Cargo.lock,
+# and drafts a CHANGELOG entry from the PRs merged since the last release tag
+# (via .github/scripts/generate-litep2p-changelog.sh). Triggered manually from
+# the Actions tab.
 #
 # After this workflow runs:
-#   1. Review the auto-drafted CHANGELOG entry and re-bucket items under the
-#      Added / Changed / Fixed headings.
+#   1. Edit CHANGELOG.md on the release branch: sort the auto-generated entries
+#      into Added / Changed / Fixed and add a summary paragraph, then commit the
+#      result to the PR.
 #   2. Merge the PR.
-#   3. Tag the merge commit and push the tag (see RELEASING.md).
+#   3. Run the Release Publish workflow with the same version to tag master and
+#      publish (see RELEASING.md).
 #
 # Re-running: this workflow only CREATES the release branch. If the branch
 # already exists on origin it fails fast, because someone may have pushed
@@ -53,6 +57,7 @@ jobs:
         with:
           ref: master
           fetch-depth: 0
+          fetch-tags: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Validate version input
@@ -125,27 +130,26 @@ jobs:
         run: |
           set -euo pipefail
           TODAY=$(date -u +%Y-%m-%d)
-          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 
+          # Make sure origin/master and tags are present for the changelog script.
+          git fetch --tags --force origin master >/dev/null 2>&1 || true
+
+          # Generate the PR list with the shared script (strip its "[+]" log lines).
+          CHANGELOG_LIST=$(bash .github/scripts/generate-litep2p-changelog.sh 2>/dev/null | grep '^- ' || true)
+          if [ -z "$CHANGELOG_LIST" ]; then
+            CHANGELOG_LIST="_No merged PRs found since the last release tag; add entries manually._"
+          fi
+
+          # Build the new section (flat list; the reviewer sorts it into categories).
+          # Saved to release-section.md so the PR-body step can reuse it verbatim.
           {
             echo "## [$NEW_VERSION] - $TODAY"
             echo
-            echo "_TODO: add a summary paragraph here, or remove this line._"
+            echo "$CHANGELOG_LIST"
             echo
-            echo "### Changes"
-            echo
-            if [ -n "$PREV_TAG" ]; then
-              echo "_Auto-generated from squash-merge commit subjects since \`$PREV_TAG\`. Re-bucket into Added / Changed / Fixed before merging._"
-              echo
-              git log "$PREV_TAG..HEAD" --pretty=format:'- %s' --no-merges \
-                | sed -E 's,\(#([0-9]+)\),([#\1](https://github.com/paritytech/litep2p/pull/\1)),g'
-              echo
-            else
-              echo "_Could not determine previous tag. List PRs manually._"
-            fi
-            echo
-          } > new-section.md
+          } > release-section.md
 
+          # Prepend it before the first existing version heading in CHANGELOG.md.
           FIRST_HEADING_LINE=$(grep -nE '^## \[' CHANGELOG.md | head -1 | cut -d: -f1)
           if [ -z "$FIRST_HEADING_LINE" ]; then
             echo "::error::No existing '## [...]' heading found in CHANGELOG.md; cannot determine insertion point."
@@ -153,10 +157,9 @@ jobs:
           fi
 
           head -n $((FIRST_HEADING_LINE - 1)) CHANGELOG.md  > CHANGELOG.new
-          cat new-section.md                                >> CHANGELOG.new
-          tail -n +"$FIRST_HEADING_LINE" CHANGELOG.md       >> CHANGELOG.new
+          cat release-section.md                            >> CHANGELOG.new
+          tail -n +"$FIRST_HEADING_LINE" CHANGELOG.md        >> CHANGELOG.new
           mv CHANGELOG.new CHANGELOG.md
-          rm new-section.md
 
       - name: Commit release changes
         env:
@@ -167,7 +170,7 @@ jobs:
           set -euo pipefail
           git checkout -b "$BRANCH"
           git add Cargo.toml Cargo.lock CHANGELOG.md
-          git commit -m "Prepare release v$VERSION"
+          git commit -m "chore: Release litep2p v$VERSION"
 
       - name: Verify crate publishes cleanly (cargo publish --dry-run)
         run: cargo publish --dry-run
@@ -186,29 +189,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat > pr-body.md <<EOF
-          Automated release prep for **v$VERSION**.
 
-          ## Reviewer checklist
-
-          - [ ] CHANGELOG entry under \`## [$VERSION]\` is accurate:
-            - Add a summary paragraph (or delete the TODO placeholder).
-            - Re-bucket items from \`### Changes\` into \`### Added\` / \`### Changed\` / \`### Fixed\`.
-          - [ ] \`Cargo.toml\` bumped to \`$VERSION\`.
-          - [ ] \`Cargo.lock\` regenerated.
-          - [ ] CI is green (see note below if it didn't start).
-
-          ## After merging
-
-          1. Pull \`master\`.
-          2. Tag the merge commit: \`git tag -s v$VERSION && git push --tags\`.
-          3. Approve the **Release Publish** workflow run in the Actions tab.
-
-          See \`RELEASING.md\` for the full flow.
+          # Start the body with the generated changelog section, then append guidance.
+          cp release-section.md pr-body.md
+          cat >> pr-body.md <<EOF
 
           ---
 
-          > **Heads-up:** GitHub does not run \`pull_request\` workflows on PRs opened by \`GITHUB_TOKEN\`. If CI hasn't started on this PR, push an empty commit to trigger it:
+          > **Reviewer action required:** the changelog entries above are auto-generated from merged PRs and are **unsorted**. Please edit \`CHANGELOG.md\` on this branch to:
+          > - Group the entries under \`### Added\` / \`### Changed\` / \`### Fixed\`.
+          > - Add a short summary paragraph at the top of the \`## [$VERSION]\` section.
+          >
+          > Then **commit the adjusted \`CHANGELOG.md\` to this PR**.
+
+          **After merging:** run the **Release Publish** workflow from the Actions tab with version \`$VERSION\` to tag \`master\` and publish to crates.io. See \`RELEASING.md\`.
+
+          ---
+
+          > _CI note: GitHub does not run \`pull_request\` workflows on PRs opened by \`GITHUB_TOKEN\`. If CI hasn't started on this PR, push an empty commit to trigger it:_
           > \`\`\`bash
           > git fetch origin && git checkout $BRANCH
           > git commit --allow-empty -m "trigger ci" && git push
@@ -218,7 +216,7 @@ jobs:
           PR_URL=$(gh pr create \
             --base master \
             --head "$BRANCH" \
-            --title "Prepare release v$VERSION" \
+            --title "chore: Release litep2p v$VERSION" \
             --body-file pr-body.md)
 
           echo "Opened PR: $PR_URL"

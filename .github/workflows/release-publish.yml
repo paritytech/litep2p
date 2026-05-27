@@ -1,22 +1,27 @@
-# Publishes litep2p to crates.io when a `v*` tag is pushed to the repository.
+# Tags master and publishes litep2p to crates.io. Triggered manually from the
+# Actions tab once the release-prep PR (version bump + CHANGELOG) is merged.
 #
 # Flow:
-#   - `verify` runs on the same container + runner + Rust version as the CI
-#     test job, so the reviewer can see real test results before approving.
-#   - `publish` is gated by the `release` environment and only runs if
-#     `verify` succeeds. It authenticates to crates.io via OIDC (no
-#     long-lived token in repo secrets), publishes, and creates a GitHub
-#     Release with notes extracted from CHANGELOG.md.
+#   - `verify` checks that the requested version matches Cargo.toml on master
+#     and runs the full test suite, so the reviewer sees real results before
+#     approving.
+#   - `publish` is gated by the `release` environment and only runs after
+#     `verify` succeeds and a reviewer approves. It creates and pushes the
+#     `vX.Y.Z` tag, publishes to crates.io, and creates a GitHub Release with
+#     notes extracted from CHANGELOG.md.
 
 name: Release Publish
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release; must match Cargo.toml on master (e.g. 0.15.0, no leading 'v')"
+        required: true
+        type: string
 
 concurrency:
-  group: release-publish-${{ github.ref }}
+  group: release-publish
   cancel-in-progress: false
 
 permissions:
@@ -32,19 +37,22 @@ jobs:
       image: paritytech/ci-unified:bullseye-1.93.0-2026-01-27-v202605151311
       options: --sysctl net.ipv6.conf.all.disable_ipv6=0
     steps:
-      - name: Checkout sources
+      - name: Checkout master
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: master
 
-      - name: Verify tag matches Cargo.toml version
+      - name: Verify requested version matches Cargo.toml
         shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
           CRATE_VERSION="$(grep -m1 -E '^version = "' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
-          echo "Tag version:   $TAG_VERSION"
-          echo "Crate version: $CRATE_VERSION"
-          if [ "$TAG_VERSION" != "$CRATE_VERSION" ]; then
-            echo "::error::Tag version ($TAG_VERSION) does not match Cargo.toml version ($CRATE_VERSION). Refusing to publish."
+          echo "Requested version: $VERSION"
+          echo "Cargo.toml version: $CRATE_VERSION"
+          if [ "$VERSION" != "$CRATE_VERSION" ]; then
+            echo "::error::Requested version ($VERSION) does not match Cargo.toml on master ($CRATE_VERSION). Merge the release-prep PR first, or pass the correct version."
             exit 1
           fi
 
@@ -62,10 +70,35 @@ jobs:
       name: release
     permissions:
       contents: write
-      id-token: write
     steps:
-      - name: Checkout sources
+      - name: Checkout master
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: master
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Configure git identity
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create and push tag
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v$VERSION"
+          if git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists on origin; skipping tag creation."
+          else
+            git tag -a "$TAG" -m "Release litep2p $TAG"
+            git push origin "$TAG"
+            echo "Created and pushed tag $TAG."
+          fi
 
       - name: Publish to crates.io
         env:
@@ -75,9 +108,10 @@ jobs:
       - name: Extract release notes from CHANGELOG.md
         id: notes
         shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
           awk -v ver="$VERSION" '
             $0 ~ "^## \\["ver"\\]" { p=1; next }
             p && /^## \[/ { exit }
@@ -92,15 +126,17 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION:  ${{ inputs.version }}
         run: |
           set -euo pipefail
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release edit "$GITHUB_REF_NAME" \
-              --title "$GITHUB_REF_NAME" \
+          TAG="v$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" \
+              --title "$TAG" \
               --notes-file release-notes.md
           else
-            gh release create "$GITHUB_REF_NAME" \
-              --title "$GITHUB_REF_NAME" \
+            gh release create "$TAG" \
+              --title "$TAG" \
               --notes-file release-notes.md \
               --verify-tag
           fi
