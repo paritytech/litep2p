@@ -54,7 +54,7 @@ use crate::transport::webrtc::WebRtcTransport;
 #[cfg(feature = "websocket")]
 use crate::transport::websocket::WebSocketTransport;
 
-use hickory_resolver::{name_server::TokioConnectionProvider, TokioResolver};
+use hickory_resolver::{net::runtime::TokioRuntimeProvider, TokioResolver};
 use multiaddr::{Multiaddr, Protocol};
 use transport::Endpoint;
 use types::ConnectionId;
@@ -160,14 +160,15 @@ impl Litep2p {
 
         let (resolver_config, resolver_opts) = if litep2p_config.use_system_dns_config {
             hickory_resolver::system_conf::read_system_conf()
-                .map_err(Error::CannotReadSystemDnsConfig)?
+                .map_err(|error| Error::CannotReadSystemDnsConfig(error.into()))?
         } else {
             (Default::default(), Default::default())
         };
         let resolver = Arc::new(
-            TokioResolver::builder_with_config(resolver_config, TokioConnectionProvider::default())
+            TokioResolver::builder_with_config(resolver_config, TokioRuntimeProvider::default())
                 .with_options(resolver_opts)
-                .build(),
+                .build()
+                .map_err(|error| Error::Other(format!("failed to build DNS resolver: {error}")))?,
         );
 
         let supported_transports = Self::supported_transports(&litep2p_config);
