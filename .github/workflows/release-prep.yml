@@ -141,13 +141,15 @@ jobs:
           fi
 
           # Build the new section (flat list; the reviewer sorts it into categories).
-          # Saved to release-section.md so the PR-body step can reuse it verbatim.
+          # Saved under $RUNNER_TEMP (outside the repo) so the PR-body step can
+          # reuse it without leaving an untracked file that would make
+          # `cargo publish --dry-run` see a dirty working tree.
           {
             echo "## [$NEW_VERSION] - $TODAY"
             echo
             echo "$CHANGELOG_LIST"
             echo
-          } > release-section.md
+          } > "$RUNNER_TEMP/release-section.md"
 
           # Prepend it before the first existing version heading in CHANGELOG.md.
           FIRST_HEADING_LINE=$(grep -nE '^## \[' CHANGELOG.md | head -1 | cut -d: -f1)
@@ -157,7 +159,7 @@ jobs:
           fi
 
           head -n $((FIRST_HEADING_LINE - 1)) CHANGELOG.md  > CHANGELOG.new
-          cat release-section.md                            >> CHANGELOG.new
+          cat "$RUNNER_TEMP/release-section.md"             >> CHANGELOG.new
           tail -n +"$FIRST_HEADING_LINE" CHANGELOG.md        >> CHANGELOG.new
           mv CHANGELOG.new CHANGELOG.md
 
@@ -191,8 +193,9 @@ jobs:
           set -euo pipefail
 
           # Start the body with the generated changelog section, then append guidance.
-          cp release-section.md pr-body.md
-          cat >> pr-body.md <<EOF
+          # Kept under $RUNNER_TEMP (outside the repo) to avoid dirtying the tree.
+          cp "$RUNNER_TEMP/release-section.md" "$RUNNER_TEMP/pr-body.md"
+          cat >> "$RUNNER_TEMP/pr-body.md" <<EOF
 
           ---
 
@@ -217,7 +220,7 @@ jobs:
             --base master \
             --head "$BRANCH" \
             --title "chore: Release litep2p v$VERSION" \
-            --body-file pr-body.md)
+            --body-file "$RUNNER_TEMP/pr-body.md")
 
           echo "Opened PR: $PR_URL"
           echo "## Release PR opened" >> "$GITHUB_STEP_SUMMARY"
