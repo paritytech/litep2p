@@ -7,6 +7,13 @@
 #   2. Merge the PR.
 #   3. Tag the merge commit and push the tag (see RELEASING.md).
 #
+# Re-running: this workflow only CREATES the release branch. If the branch
+# already exists on origin it fails fast, because someone may have pushed
+# manual edits to it (reviewer CHANGELOG fixes, etc.). To iterate on a pending
+# release, edit that branch / its PR directly rather than re-running. To
+# regenerate from master, delete the branch first
+# (git push --delete origin release-vX.Y.Z) and re-run.
+#
 # Known limitation: GitHub does not trigger `pull_request` workflows on PRs
 # opened by GITHUB_TOKEN. If you need CI to run on the release PR, push an
 # empty commit to the branch after this workflow finishes, or replace
@@ -82,6 +89,18 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Check release branch does not already exist
+        shell: bash
+        env:
+          BRANCH: ${{ steps.validate.outputs.branch }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "::error::Branch $BRANCH already exists on origin. To iterate on the pending release, push to that branch or edit its PR directly. To regenerate from master, delete the branch first: git push --delete origin $BRANCH"
+            exit 1
+          fi
+          echo "Branch $BRANCH does not exist on origin; it will be created."
+
       - name: Bump version in Cargo.toml
         env:
           NEW_VERSION: ${{ steps.validate.outputs.version }}
@@ -146,17 +165,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git rev-parse --verify -q "$BRANCH" >/dev/null 2>&1; then
-            git checkout -q "$BRANCH"
-          else
-            git checkout -b "$BRANCH"
-          fi
+          git checkout -b "$BRANCH"
           git add Cargo.toml Cargo.lock CHANGELOG.md
-          if git diff --cached --quiet; then
-            echo "No changes to commit; branch is already up to date."
-          else
-            git commit -m "Prepare release v$VERSION"
-          fi
+          git commit -m "Prepare release v$VERSION"
 
       - name: Verify crate publishes cleanly (cargo publish --dry-run)
         run: cargo publish --dry-run
