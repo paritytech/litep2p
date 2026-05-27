@@ -43,8 +43,7 @@ permissions:
 jobs:
   prepare:
     name: Prepare release PR
-    # runs-on: parity-default
-    runs-on: ubuntu-latest
+    runs-on: parity-default
     timeout-minutes: 20
     container:
       image: paritytech/ci-unified:bullseye-1.93.0-2026-01-27-v202605151311

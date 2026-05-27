@@ -7,13 +7,6 @@ Both stages of a litep2p release are automated:
 
 The steps below assume those workflows are healthy. A manual fallback is documented at the bottom.
 
-## One-time setup
-
-Before the first automated release can succeed, a crate owner must:
-
-1. Create a `release` GitHub Environment under repo Settings → Environments with required reviewers configured. The publish job will not start until a reviewer approves it.
-2. Generate a crates.io API token scoped to `publish-update` on the `litep2p` crate and add it as `CRATES_IO_TOKEN` to the `release` environment's secrets.
-
 These do not need to be repeated for subsequent releases.
 
 ## Release steps

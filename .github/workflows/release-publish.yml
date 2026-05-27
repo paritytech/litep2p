@@ -30,8 +30,7 @@ permissions:
 jobs:
   verify:
     name: Verify release
-    # runs-on: parity-default
-    runs-on: ubuntu-latest
+    runs-on: parity-default
     timeout-minutes: 30
     container:
       image: paritytech/ci-unified:bullseye-1.93.0-2026-01-27-v202605151311
@@ -103,7 +102,7 @@ jobs:
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: cargo publish --dry-run
+        run: cargo publish
 
       - name: Extract release notes from CHANGELOG.md
         id: notes
