@@ -1027,7 +1027,7 @@ mod tests {
             // Substream should receive RecvClosed
             let mut buf = vec![0u8; 1024];
             match substream.read(&mut buf).await {
-                Ok(res) if res == 0 => {
+                Ok(0) => {
                     // Expected - read half closed
                 }
                 other => panic!("Unexpected result: {:?}", other),
@@ -1196,7 +1196,7 @@ mod tests {
 
         let mut buf = vec![0u8; 1024];
         match substream.read(&mut buf).await {
-            Ok(read) if read == 0 => (),
+            Ok(0) => (),
             other => panic!("Unexpected result: {:?}", other),
         }
         assert!(substream.shutdown().await.is_ok());
@@ -1597,7 +1597,7 @@ mod tests {
             let mut buf = vec![0u8; 1024];
             // This should fail because we receive RecvClosed
             match substream.read(&mut buf).await {
-                Ok(read) if read == 0 => (),
+                Ok(0) => (),
                 other => panic!("Unexpected result: {:?}", other),
             }
             // Substream dropped here (server closes after receiving FIN)
@@ -1736,7 +1736,7 @@ mod tests {
 
         // Then, subsequent read should fail with BrokenPipe (RecvClosed)
         match substream.read(&mut buf).await {
-            Ok(read) if read == 0 => (),
+            Ok(0) => (),
             other => panic!("Expected BrokenPipe error, got: {:?}", other),
         }
     }
