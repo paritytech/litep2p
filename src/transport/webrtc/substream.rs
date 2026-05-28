@@ -80,9 +80,9 @@ impl<T: Clone> SharedState<T> {
         self.inner.state.lock().clone()
     }
 
-    // NOTE: this method should only be called from one single place
+    // NOTE: this method should only be called from a single place,
     // otherwise the waker is re-registered for another context
-    // and thus stealing the waker itself.
+    // and thus steals the previously registered waker.
     fn register_and_get(&self, cx: &mut Context<'_>) -> T {
         self.inner.waker.register(cx.waker());
         self.get()
@@ -133,9 +133,9 @@ pub struct Substream {
     /// TX channel for sending messages to `peer`, wrapped in a [`PollSender`]
     /// so that backpressure is driven by the caller's waker.
     tx: Option<PollSender<Message>>,
-    /// Watcher of the state of the channel.
+    /// State of the channel.
     channel_state: SharedState<ChannelState>,
-    /// Watcher of the State of the writing half.
+    /// State of the writing half.
     writer_state: SharedState<WriterState>,
 }
 
@@ -511,11 +511,11 @@ impl tokio::io::AsyncWrite for Substream {
         // sending messages in order.
         let _ = self.tx.take();
 
-        // Shutdown process is complete if either the channel entered in a Reset
+        // Shutdown process is complete if either the channel entered a Reset
         // state or the writer has received a FinAck or StopSending.
         //
-        // NOTE: short-circuit of the waker registration here is fine becaue
-        // the channel_state preempt over any writing state.
+        // NOTE: short-circuiting the waker registration here is fine because
+        // channel_state takes precedence over any writing state.
         let shutdown = matches!(self.channel_state.register_and_get(cx), ChannelState::Reset)
             || matches!(
                 self.writer_state.register_and_get(cx),
@@ -1542,7 +1542,7 @@ mod tests {
             *handle.writer_state.inner.state.lock(),
             WriterState::FinAck
         ));
-        // If also reader_state.inner.inner.state is closed then we can expecte a None.
+        // If reader_state.inner.state is also closed, then we can expect a None.
         *handle.reader_state.inner.state.lock() = ReaderState::FinAck;
         // Verify handle signals closure (returns None)
         assert_eq!(
