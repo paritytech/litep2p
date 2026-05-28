@@ -29,7 +29,7 @@ use crate::{
     transport::{
         webrtc::{
             schema::webrtc::message::Flag,
-            substream::{Event as SubstreamEvent, Substream as WebRtcSubstream, SubstreamHandle},
+            substream::{Message, Substream as WebRtcSubstream, SubstreamHandle},
             util::WebRtcMessage,
         },
         Endpoint,
@@ -116,7 +116,7 @@ impl SubstreamHandleSet {
 }
 
 impl Stream for SubstreamHandleSet {
-    type Item = (ChannelId, Option<SubstreamEvent>);
+    type Item = (ChannelId, Option<Message>);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let len = match self.handles.len() {
@@ -1068,7 +1068,7 @@ impl WebRtcConnection {
                         self.channels.insert(channel_id, ChannelState::Closing);
                         self.handles.remove(&channel_id);
                     }
-                    Some((channel_id, Some(SubstreamEvent::Message { payload, flag }))) => {
+                    Some((channel_id, Some(Message { payload, flag }))) => {
                         if let Err(error) = self.on_outbound_data(channel_id, payload, flag) {
                             tracing::debug!(
                                 target: LOG_TARGET,
@@ -1083,7 +1083,6 @@ impl WebRtcConnection {
                             self.handles.remove(&channel_id);
                         }
                     }
-                    Some((_, Some(SubstreamEvent::RecvClosed))) => {}
                 },
                 command = self.protocol_set.next() => match command {
                     None | Some(ProtocolCommand::ForceClose) => {

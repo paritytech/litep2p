@@ -31,10 +31,7 @@ use tokio_util::sync::PollSender;
 
 use std::{
     pin::Pin,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -46,43 +43,66 @@ const MAX_FRAME_SIZE: usize = 16384;
 /// Matches go-libp2p and js-libp2p's 10-second stream close timeout.
 const FIN_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Substream event.
-#[derive(Debug, PartialEq, Eq)]
-pub enum Event {
-    /// Receiver closed.
-    RecvClosed,
+/// Substream Message.
+#[derive(PartialEq, Eq, Debug)]
+pub struct Message {
+    pub payload: Vec<u8>,
+    pub flag: Option<Flag>,
+}
 
-    /// Send/receive message with optional flag.
-    Message {
-        payload: Vec<u8>,
-        flag: Option<Flag>,
-    },
+/// Shared state used to sync `Substream` and `SubstreamHandle`.
+#[derive(Clone)]
+struct SharedState<T: Clone> {
+    inner: Arc<Inner<T>>,
+}
+
+struct Inner<T> {
+    state: Mutex<T>,
+    waker: AtomicWaker,
+}
+
+impl<T: Clone> SharedState<T> {
+    fn new(val: T) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                state: Mutex::new(val),
+                waker: AtomicWaker::new(),
+            }),
+        }
+    }
+
+    fn set(&self, new_value: T) {
+        *self.inner.state.lock() = new_value;
+        self.inner.waker.wake();
+    }
+
+    fn get(&self) -> T {
+        self.inner.state.lock().clone()
+    }
+
+    // NOTE: this method should only be called from a single place,
+    // otherwise the waker is re-registered for another context
+    // and thus steals the previously registered waker.
+    fn register_and_get(&self, cx: &mut Context<'_>) -> T {
+        self.inner.waker.register(cx.waker());
+        self.get()
+    }
 }
 
 /// Substream stream.
 #[derive(Debug, Clone, Copy)]
-enum State {
+enum ChannelState {
     /// Substream is fully open.
     Open,
-
-    /// Remote is no longer interested in receiving anything.
-    SendClosed,
-
     /// ResetStream has been received.
+    ///
+    /// This preempts both writer and reader state.
     Reset,
-
-    /// We sent FIN, waiting for FIN_ACK.
-    FinSent,
-
-    /// We received FIN_ACK, write half is closed.
-    FinAcked,
-
-    /// Substream was dropped before a graceful close completed.
-    ForceShutdown,
 }
 
 /// State of the reading side of the stream.
-enum ReadingState {
+#[derive(Clone)]
+enum ReaderState {
     /// The reading stream is open.
     Open,
     /// A Fin flag was received.
@@ -91,32 +111,32 @@ enum ReadingState {
     FinAck,
 }
 
+/// State of the writing side of the stream.
+#[derive(Debug, Clone, Copy)]
+enum WriterState {
+    /// The writing stream is open.
+    Open,
+    /// A Fin flag was sent.
+    Fin,
+    /// FinAck was received.
+    FinAck,
+    /// StopSending was received.
+    StopSending,
+}
+
 /// Channel-backed substream. Must be owned and polled by exactly one task at a time.
 pub struct Substream {
-    /// Substream state.
-    state: Arc<Mutex<State>>,
-
     /// Read buffer.
     read_buffer: BytesMut,
-
+    /// RX channel for receiving messages from `peer`.
+    rx: Receiver<Message>,
     /// TX channel for sending messages to `peer`, wrapped in a [`PollSender`]
     /// so that backpressure is driven by the caller's waker.
-    tx: PollSender<Event>,
-
-    /// RX channel for receiving messages from `peer`.
-    rx: Receiver<Event>,
-
-    /// Waker to notify when write state changes (e.g., STOP_SENDING received).
-    write_waker: Arc<AtomicWaker>,
-
-    /// Waker to notify when shutdown completes (FIN_ACK received).
-    shutdown_waker: Arc<AtomicWaker>,
-
-    /// Whether the substream has been shut down.
-    substream_shutdown: Arc<AtomicBool>,
-
-    /// Waker to notify the [`SubstreamHandle`] that the [`Substream`] has signalled shutdown.
-    substream_shutdown_waker: Arc<AtomicWaker>,
+    tx: Option<PollSender<Message>>,
+    /// State of the channel.
+    channel_state: SharedState<ChannelState>,
+    /// State of the writing half.
+    writer_state: SharedState<WriterState>,
 }
 
 impl Substream {
@@ -124,37 +144,29 @@ impl Substream {
     pub fn new() -> (Self, SubstreamHandle) {
         // Tokio channels implement their own backpressure,
         // which solves the Substream <-> SubstreamHandle backpressure problem.
-        let (outbound_tx, outbound_rx) = channel(256);
-        let (inbound_tx, inbound_rx) = channel(256);
-        let state = Arc::new(Mutex::new(State::Open));
-        let shutdown_waker = Arc::new(AtomicWaker::new());
-        let write_waker = Arc::new(AtomicWaker::new());
-        let substream_shutdown = Arc::new(AtomicBool::new(false));
-        let substream_shutdown_waker = Arc::new(AtomicWaker::new());
+        let (outbound_message_tx, outbound_message_rx) = channel(256);
+        let (inbound_message_tx, inbound_message_rx) = channel(256);
+
+        let channel_state = SharedState::new(ChannelState::Open);
+        let writer_state = SharedState::new(WriterState::Open);
+        let reader_state = SharedState::new(ReaderState::Open);
 
         let handle = SubstreamHandle {
-            inbound_tx,
-            reading_state: Arc::new(Mutex::new(ReadingState::Open)),
-            rx: outbound_rx,
-            state: Arc::clone(&state),
-            shutdown_waker: shutdown_waker.clone(),
-            write_waker: Arc::clone(&write_waker),
+            channel_state: channel_state.clone(),
+            writer_state: writer_state.clone(),
+            reader_state: reader_state.clone(),
+            message_tx: Some(inbound_message_tx),
+            message_rx: outbound_message_rx,
             fin_ack_timeout: None,
-            reset_stream_sent: AtomicBool::new(false),
-            substream_shutdown: substream_shutdown.clone(),
-            substream_shutdown_waker: substream_shutdown_waker.clone(),
         };
 
         (
             Self {
-                state,
-                tx: PollSender::new(outbound_tx),
-                rx: inbound_rx,
                 read_buffer: BytesMut::new(),
-                write_waker,
-                substream_shutdown,
-                substream_shutdown_waker,
-                shutdown_waker,
+                tx: Some(PollSender::new(outbound_message_tx)),
+                rx: inbound_message_rx,
+                channel_state,
+                writer_state,
             },
             handle,
         )
@@ -163,36 +175,23 @@ impl Substream {
 
 /// Substream handle that is given to the WebRTC transport backend.
 pub struct SubstreamHandle {
-    state: Arc<Mutex<State>>,
-
-    /// The state of the reading half, keeps track if FIN received and FIN_ACK sent.
-    reading_state: Arc<Mutex<ReadingState>>,
-
+    /// State of the channel.
+    channel_state: SharedState<ChannelState>,
+    /// State of the writing half.
+    writer_state: SharedState<WriterState>,
+    /// State of the reading half.
+    reader_state: SharedState<ReaderState>,
     /// TX channel for sending inbound messages from `peer` to the associated `Substream`.
-    inbound_tx: Sender<Event>,
-
+    ///
+    /// The sender is taken (dropped) when a FIN flag is received from the remote:
+    /// closing it signals to the `Substream` reader that no further inbound
+    /// payloads will arrive.
+    message_tx: Option<Sender<Message>>,
     /// RX channel for receiving outbound messages to `peer` from the associated `Substream`.
-    rx: Receiver<Event>,
-
-    /// Waker to notify when shutdown completes (FIN_ACK received).
-    shutdown_waker: Arc<AtomicWaker>,
-
-    /// Waker to notify when write state changes (e.g., STOP_SENDING received).
-    write_waker: Arc<AtomicWaker>,
-
+    message_rx: Receiver<Message>,
     /// Timeout for waiting on FIN_ACK after sending FIN
     /// Boxed to maintain Unpin for Substream while allowing the Sleep to be polled.
     fin_ack_timeout: Option<Pin<Box<tokio::time::Sleep>>>,
-
-    /// Whether the ResetStream flag has been sent.
-    reset_stream_sent: AtomicBool,
-
-    /// Whether the substream has been shut down.
-    substream_shutdown: Arc<AtomicBool>,
-
-    /// Waker registered by the handle's `poll_next`, woken when the [`Substream`] signals
-    /// shutdown.
-    substream_shutdown_waker: Arc<AtomicWaker>,
 }
 
 impl SubstreamHandle {
@@ -202,33 +201,46 @@ impl SubstreamHandle {
     ///
     /// Payload is processed first (if present), then flags are handled. This ensures that
     /// a FIN message containing final data will deliver that data before signaling closure.
-    pub async fn on_message(&self, message: WebRtcMessage) -> crate::Result<()> {
+    pub async fn on_message(&mut self, message: WebRtcMessage) -> crate::Result<()> {
         // If Reset was received then early return discarding messages.
-        // In practice this should never happen because SCTP guarantee the order
-        // of messages, thus no other messages is expected after a Reset.
-        if self.reset_stream_sent.load(Ordering::SeqCst) {
+        // In practice this should never happen because SCTP guarantees the order
+        // of messages, thus no other message is expected after a Reset.
+        if matches!(self.channel_state.get(), ChannelState::Reset) {
             return Ok(());
         }
 
         // Process payload first, before handling flags.
-        // This ensures that if a FIN message contains data, we deliver it before closing.
-        if let Some(payload) = message.payload {
-            if !payload.is_empty()
-                && self
-                    .inbound_tx
-                    .send(Event::Message {
+        match (self.message_tx.as_ref(), message.payload) {
+            (None, Some(payload)) if !payload.is_empty() => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    payload_len = payload.len(),
+                    "peer sent payload after FIN flag, spec violation"
+                );
+            }
+            (Some(message_tx), Some(payload)) if !payload.is_empty() => {
+                // TODO: awaiting here makes the entire connection
+                // rely on the readers to be fast enough, a slow reader
+                // could cause this method to wait and thus stall the entire webrtc
+                // connection. Solution would be to implement reading
+                // backpressure, keeping track of pending incoming messages.
+                // https://github.com/paritytech/litep2p/issues/604
+                let send_result = message_tx
+                    .send(Message {
                         payload,
                         flag: None,
                     })
-                    .await
-                    .is_err()
-            {
-                // If substream drops do not return err, let the flag be processed.
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    "Substream dropped, skipping payload",
-                );
+                    .await;
+
+                if let Err(err) = send_result {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?err,
+                        "failed to propagate message to Substream"
+                    );
+                }
             }
+            _ => (),
         }
 
         // Now handle flags
@@ -237,67 +249,59 @@ impl SubstreamHandle {
                 Flag::Fin => {
                     // Guard against duplicate FIN messages - only send RecvClosed once
                     if matches!(
-                        *self.reading_state.lock(),
-                        ReadingState::Fin | ReadingState::FinAck
+                        self.reader_state.get(),
+                        ReaderState::Fin | ReaderState::FinAck
                     ) {
                         // Already processed FIN, ignore duplicate
                         tracing::debug!(target: LOG_TARGET, "received duplicate FIN, ignoring");
                         return Ok(());
                     }
-
-                    // Received FIN from remote, close our read half. Substream may already have
-                    // been dropped.
-                    let recv_closed_sent = self.inbound_tx.send(Event::RecvClosed).await.is_ok();
-                    if !recv_closed_sent {
-                        tracing::debug!(target: LOG_TARGET, "Substream dropped, skipping RecvClosed");
+                    self.reader_state.set(ReaderState::Fin);
+                    if self.message_tx.take().is_none() {
+                        tracing::warn!(target: LOG_TARGET, "message channel was already dropped");
                     }
-
-                    // TODO: after this reading_state change there is nothing which wakes the
-                    // Stream thus FinAck will only be sent once something else awake it.
-                    *self.reading_state.lock() = ReadingState::Fin;
                     return Ok(());
                 }
                 Flag::FinAck => {
                     // Received FIN_ACK, we can now fully close our write half
-                    let mut state = self.state.lock();
-                    if matches!(*state, State::FinSent) {
-                        *state = State::FinAcked;
-                        // Wake up any task waiting on shutdown
-                        self.substream_shutdown_waker.wake();
-                        self.shutdown_waker.wake();
+                    let writer_state = self.writer_state.get();
+                    if matches!(writer_state, WriterState::Fin) {
+                        self.writer_state.set(WriterState::FinAck);
                     } else {
-                        tracing::warn!(
+                        // If FIN_ACK is received upon an unexpected writer_state
+                        // tear down the connection.
+                        tracing::debug!(
                             target: LOG_TARGET,
-                            ?state,
-                            "received FIN_ACK in unexpected state, ignoring"
+                            ?writer_state,
+                            "received FIN_ACK in unexpected writer state, tearing down channel"
                         );
+                        self.channel_state.set(ChannelState::Reset);
+                        self.message_rx.close();
+                        let _ = self.message_tx.take();
+                        return Err(Error::ConnectionClosed);
                     }
                     return Ok(());
                 }
                 Flag::StopSending => {
-                    let mut current_state = self.state.lock();
-                    if !matches!(
-                        *current_state,
-                        State::FinSent | State::FinAcked | State::Reset | State::ForceShutdown
-                    ) {
-                        *current_state = State::SendClosed;
+                    // Discard flag if already closed/closing.
+                    if !matches!(self.channel_state.get(), ChannelState::Reset)
+                        && !matches!(
+                            self.writer_state.get(),
+                            WriterState::Fin | WriterState::FinAck
+                        )
+                    {
+                        self.writer_state.set(WriterState::StopSending);
+                        self.message_rx.close();
                     }
-                    // Wake any blocked poll_write so it can see the state change
-                    self.write_waker.wake();
+
                     return Ok(());
                 }
                 Flag::ResetStream => {
                     // RESET_STREAM abruptly terminates both sides of the stream
                     // (matching go-libp2p behavior)
-                    // Close the read side
-                    let _ = self.inbound_tx.try_send(Event::RecvClosed);
-                    // Close the write side.
-                    *self.state.lock() = State::Reset;
-                    // Wake any blocked poll_write so it can see the state change,
-                    // and the shutdown task waiting on FIN_ACK.
-                    self.write_waker.wake();
-                    self.shutdown_waker.wake();
-                    self.reset_stream_sent.store(true, Ordering::SeqCst);
+                    self.channel_state.set(ChannelState::Reset);
+                    self.message_rx.close();
+                    let _ = self.message_tx.take();
                     return Err(Error::ConnectionClosed);
                 }
             }
@@ -306,120 +310,145 @@ impl SubstreamHandle {
         Ok(())
     }
 
-    fn half_close(&mut self, cx: &mut Context<'_>) -> Poll<Option<Event>> {
-        // State machine for proper shutdown:
-        // 1. Flush pending data
-        // 2. Send FIN flag
-        // 3. Transition to FinSent
-        // 4. Wait for FIN_ACK
-        // 5. Transition to FinAcked and complete
-
-        let current_state = *self.state.lock();
-
-        match current_state {
-            // Already received FIN_ACK, shutdown complete
-            State::FinAcked | State::Reset => Poll::Ready(None),
-            // Sent FIN, waiting for FIN_ACK - poll timeout and return Pending
-            State::FinSent => {
-                // Re-check state after waker registration in case FIN_ACK arrived
-                // between the initial state check and waker registration
-                if matches!(*self.state.lock(), State::FinAcked) {
-                    return Poll::Ready(None);
-                }
-
-                // Poll the timeout - if it fires, force shutdown completion
-                if let Some(timeout) = self.fin_ack_timeout.as_mut() {
-                    if timeout.as_mut().poll(cx).is_ready() {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            "FIN_ACK timeout exceeded, forcing shutdown completion"
-                        );
-                        *self.state.lock() = State::Reset;
-                        // Wake up any task waiting on shutdown
-                        self.shutdown_waker.wake();
-
-                        self.reset_stream_sent.store(true, Ordering::SeqCst);
-                        return Poll::Ready(Some(Event::Message {
-                            payload: vec![],
-                            flag: Some(Flag::ResetStream),
-                        }));
-                    }
-                }
-
-                Poll::Pending
-            }
+    // This function carries forward the writer half close process.
+    //
+    // The following behaviors are expected on:
+    // WriterState::Open|StopSending state
+    // - flush any pending message
+    // - send FIN flag
+    // - start timeout_fin_ack
+    // - transition to WriterState::Fin
+    // WriterState::Fin state
+    // - wait for FIN_ACK
+    // - handle timeout
+    // - transition to WriterState::FinAck
+    // WriterState::FinAck state:
+    // - do nothing, shutdown complete
+    fn poll_half_close(&mut self, cx: &mut Context<'_>) -> Poll<Option<Message>> {
+        match self.writer_state.get() {
             // First call to shutdown, if peer sent StopSending we are still
             // free to send Fin to make sure this half closes properly.
-            State::Open | State::SendClosed => {
+            WriterState::Open | WriterState::StopSending => {
                 // Initialize the timeout for FIN_ACK
                 let mut timeout = Box::pin(tokio::time::sleep(FIN_ACK_TIMEOUT));
                 // Poll the timeout once to register it with tokio's timer
                 // This ensures we'll be woken when it expires
-                let _ = timeout.as_mut().poll(cx);
+                if timeout.as_mut().poll(cx).is_ready() {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        "misconfigured timer is not supposed to be ready"
+                    );
+                }
                 self.fin_ack_timeout = Some(timeout);
-
-                *self.state.lock() = State::FinSent;
-
+                self.writer_state.set(WriterState::Fin);
                 // Send message with FIN flag
-                Poll::Ready(Some(Event::Message {
+                Poll::Ready(Some(Message {
                     payload: vec![],
                     flag: Some(Flag::Fin),
                 }))
             }
-            // Unreachable, `ForceShutdown` is only set by SubstreamHandle::Drop,
-            // after which `poll_next` can no longer be called.
-            State::ForceShutdown => Poll::Ready(None),
+            // Sent FIN, waiting for FIN_ACK - poll timeout and return Pending
+            WriterState::Fin => {
+                // Poll the timeout - if it fires, force shutdown completion
+                match self.fin_ack_timeout.as_mut() {
+                    Some(timeout) =>
+                        if timeout.as_mut().poll(cx).is_ready() {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                "FIN_ACK timeout exceeded, forcing shutdown completion"
+                            );
+                        } else {
+                            return Poll::Pending;
+                        },
+                    None => {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            "unexpected writer state, forcing shutdown completion"
+                        );
+                    }
+                }
+
+                // If the timeout is reached we treat it as having received the
+                // acknowledge but the channel is reset anyway.
+                self.channel_state.set(ChannelState::Reset);
+
+                self.fin_ack_timeout = None;
+                Poll::Ready(Some(Message {
+                    payload: vec![],
+                    flag: Some(Flag::ResetStream),
+                }))
+            }
+            // Already received FIN_ACK, shutdown complete
+            WriterState::FinAck => Poll::Ready(None),
         }
     }
 }
 
 impl Stream for SubstreamHandle {
-    type Item = Event;
+    type Item = Message;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.substream_shutdown_waker.register(cx.waker());
-
-        // If something went wrong, RESET_STREAM should have been sent,
-        // in that case the channel is treated as closed.
-        if self.reset_stream_sent.load(Ordering::SeqCst) {
+        // There are three states which need to be taken into consideration to poll the stream:
+        // - channel_state: it preempts any other state if Reset has been entered
+        //
+        // NOTE: channel_state's waker is already registered from Substream's writing
+        // half (poll_shutdown), so we don't register it again here. That's fine
+        // because every transition to ChannelState::Reset is driven from this same
+        // task. This match is just an early-out when the channel has already been reset.
+        if matches!(self.channel_state.get(), ChannelState::Reset) {
+            // If something went wrong, RESET_STREAM should have been sent,
+            // in that case the channel is treated as closed.
             return Poll::Ready(None);
         }
 
-        {
-            let mut reading_state = self.reading_state.lock();
-            if matches!(*reading_state, ReadingState::Fin) {
-                *reading_state = ReadingState::FinAck;
-                return Poll::Ready(Some(Event::Message {
-                    payload: vec![],
-                    flag: Some(Flag::FinAck),
-                }));
-            }
+        // - reader_state: this is mainly driven by the `on_message` function which reacts to
+        //   incoming messages, there are 2 side effects which connects the two streams:
+        //   1. If FIN arrived then FIN_ACK is expected to be sent back.
+        //   2. If FIN_ACK arrived the writer_state is updated.
+        if matches!(self.reader_state.register_and_get(cx), ReaderState::Fin) {
+            self.reader_state.set(ReaderState::FinAck);
+            return Poll::Ready(Some(Message {
+                payload: vec![],
+                flag: Some(Flag::FinAck),
+            }));
         }
 
-        // First, try to drain any pending outbound messages
-        match self.rx.poll_recv(cx) {
-            Poll::Ready(Some(event)) => return Poll::Ready(Some(event)),
-            Poll::Ready(None) => {
-                // Outbound channel closed, Substream dropped.
-                // Drive any pending close handshake.
-                if self.substream_shutdown.load(Ordering::SeqCst) {
-                    return self.half_close(cx);
+        // - writer_state: here messages sent from the `Substream` needs to be forwarded wrapped by
+        //   the right flags. Based on the state the close procedure can be carried or messages can
+        //   simply be forwarded.
+        let writer_state_stream_result = match self.writer_state.get() {
+            WriterState::Open => {
+                match self.message_rx.poll_recv(cx) {
+                    Poll::Ready(None) => {
+                        // Writes are finished, start half close procedure.
+                        if matches!(self.writer_state.get(), WriterState::Open) {
+                            self.poll_half_close(cx)
+                        } else {
+                            // Do not handle duplicates. If within the first call to half_close
+                            // something went wrong and the state didn't transition from Open to
+                            // Fin then just tear down the connection.
+                            self.channel_state.set(ChannelState::Reset);
+                            Poll::Ready(Some(Message {
+                                payload: vec![],
+                                flag: Some(Flag::ResetStream),
+                            }))
+                        }
+                    }
+                    res => res,
                 }
-                return Poll::Ready(None);
             }
-            Poll::Pending => {
-                // No messages available, check if we should signal closure
-                //
-                // Check if Substream has been dropped (inbound channel closed),
-                // if it is we are sure the other half has been gracefully closed.
-                //
-                // When Substream is dropped, there will be no more outbound messages,
-                // since we've already tried to recv above and got Pending,
-                // we know the queue is empty, therefore, it's safe to signal closure.
-                if self.substream_shutdown.load(Ordering::SeqCst) {
-                    return self.half_close(cx);
-                }
-            }
+            WriterState::Fin | WriterState::StopSending => self.poll_half_close(cx),
+            WriterState::FinAck => Poll::Ready(None),
+        };
+
+        if !matches!(writer_state_stream_result, Poll::Ready(None)) {
+            return writer_state_stream_result;
+        }
+
+        // The writer state has reached conclusion, if the same applies to the reader
+        // state then graceful shutdown has been carried, close the Stream.
+        if matches!(self.reader_state.get(), ReaderState::FinAck) {
+            return Poll::Ready(None);
         }
 
         Poll::Pending
@@ -444,9 +473,8 @@ impl tokio::io::AsyncRead for Substream {
         }
 
         match futures::ready!(self.rx.poll_recv(cx)) {
-            None | Some(Event::RecvClosed) =>
-                Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
-            Some(Event::Message { payload, flag: _ }) => {
+            None => Poll::Ready(Ok(())),
+            Some(Message { payload, flag: _ }) => {
                 if payload.len() > MAX_FRAME_SIZE {
                     return Poll::Ready(Err(std::io::ErrorKind::PermissionDenied.into()));
                 }
@@ -472,43 +500,20 @@ impl tokio::io::AsyncWrite for Substream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
-        // Register waker so we get notified on state changes (e.g., STOP_SENDING)
-        self.write_waker.register(cx.waker());
-
-        // Reject writes if we're closing or closed
-        match *self.state.lock() {
-            State::SendClosed
-            | State::FinSent
-            | State::FinAcked
-            | State::Reset
-            | State::ForceShutdown => {
-                return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
-            }
-            State::Open => {}
-        }
+        let Some(tx) = self.tx.as_mut() else {
+            return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
+        };
 
         // Backpressure delegated to tokio channel.
-        match futures::ready!(self.tx.poll_reserve(cx)) {
+        match futures::ready!(tx.poll_reserve(cx)) {
             Ok(()) => {}
             Err(_) => return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into())),
         };
 
-        // Re-check state after poll_reserve - it may have changed while we were waiting
-        match *self.state.lock() {
-            State::SendClosed
-            | State::FinSent
-            | State::FinAcked
-            | State::Reset
-            | State::ForceShutdown => {
-                return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
-            }
-            State::Open => {}
-        }
-
         let num_bytes = std::cmp::min(MAX_FRAME_SIZE, buf.len());
         let frame = buf[..num_bytes].to_vec();
 
-        match self.tx.send_item(Event::Message {
+        match tx.send_item(Message {
             payload: frame,
             flag: None,
         }) {
@@ -518,32 +523,40 @@ impl tokio::io::AsyncWrite for Substream {
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
-        // `poll_write` already waits for channel capacity before returning,
+        let Some(tx) = self.tx.as_ref() else {
+            // shutdown already ran
+            return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
+        };
+        if tx.is_closed() {
+            // StopSending or ResetStream closed the receiver. Anything we've
+            // enqueued past this point will not be delivered to the peer.
+            return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
+        }
+        // Channel still open. `poll_write` already waits for channel capacity before returning,
         //  so by the time we get here the channel has accepted every byte we acknowledged.
         Poll::Ready(Ok(()))
     }
 
     fn poll_shutdown(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        self.shutdown_waker.register(cx.waker());
-        self.write_waker.wake();
+        // Backpressure is delegated, based on tokio channel and str0m reliably
+        // sending messages in order.
+        let _ = self.tx.take();
 
-        // No need to flush or wait for pending messages,
-        // which poll write waits until there is space on the channel.
+        // Shutdown process is complete if either the channel entered a Reset
+        // state or the writer has received a FinAck or StopSending.
+        //
+        // NOTE: short-circuiting the waker registration here is fine because
+        // channel_state takes precedence over any writing state.
+        let shutdown = matches!(self.channel_state.register_and_get(cx), ChannelState::Reset)
+            || matches!(
+                self.writer_state.register_and_get(cx),
+                WriterState::FinAck | WriterState::StopSending
+            );
 
-        self.substream_shutdown.store(true, Ordering::SeqCst);
-        self.substream_shutdown_waker.wake();
-
-        // Shutdown is a no-op from the Substream's perspective: every queued message
-        // has already been handed to the channel, so we just let the SubstreamHandle
-        // drive the graceful shutdown (FIN + FIN_ACK) on its side.
-
-        if matches!(
-            *self.state.lock(),
-            State::FinAcked | State::Reset | State::ForceShutdown
-        ) {
+        if shutdown {
             Poll::Ready(Ok(()))
         } else {
             Poll::Pending
@@ -553,20 +566,9 @@ impl tokio::io::AsyncWrite for Substream {
 
 impl Drop for SubstreamHandle {
     fn drop(&mut self) {
-        // Unblock the paired `Substream` when the handle is dropped before a
-        // graceful close. `Reset`/`FinAcked` are already terminal.
-        let mut state = self.state.lock();
-        if !matches!(*state, State::Reset | State::FinAcked) {
-            *state = State::ForceShutdown;
-        }
-        self.shutdown_waker.wake();
-    }
-}
-
-impl Drop for Substream {
-    fn drop(&mut self) {
-        self.substream_shutdown.store(true, Ordering::SeqCst);
-        self.substream_shutdown_waker.wake();
+        // This allows to close all the pending channels if the SubstreamHandle
+        // has been dropped, if graceful shutdown already happened this is a no-op.
+        self.channel_state.set(ChannelState::Reset);
     }
 }
 
@@ -584,7 +586,7 @@ mod tests {
 
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![0u8; 1337],
                 flag: None
             })
@@ -604,22 +606,22 @@ mod tests {
         substream.write_all(&vec![0u8; (2 * MAX_FRAME_SIZE) + 1]).await.unwrap();
 
         assert_eq!(
-            handle.rx.recv().await,
-            Some(Event::Message {
+            handle.message_rx.recv().await,
+            Some(Message {
                 payload: vec![0u8; MAX_FRAME_SIZE],
                 flag: None,
             })
         );
         assert_eq!(
-            handle.rx.recv().await,
-            Some(Event::Message {
+            handle.message_rx.recv().await,
+            Some(Message {
                 payload: vec![0u8; MAX_FRAME_SIZE],
                 flag: None,
             })
         );
         assert_eq!(
-            handle.rx.recv().await,
-            Some(Event::Message {
+            handle.message_rx.recv().await,
+            Some(Message {
                 payload: vec![0u8; 1],
                 flag: None,
             })
@@ -633,14 +635,73 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn try_to_write_to_closed_substream() {
-        let (mut substream, handle) = Substream::new();
-        *handle.state.lock() = State::SendClosed;
+    async fn handle_stop_sending_with_graceful_shutdown() {
+        let (_substream, mut handle) = Substream::new();
 
-        match substream.write_all(&vec![0u8; 1337]).await {
-            Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe),
-            _ => panic!("invalid event"),
-        }
+        // Receiving StopSending
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::StopSending),
+            })
+            .await
+            .unwrap();
+
+        // Expecting FIN to be sent immediately
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::Fin),
+            })
+        );
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::Fin
+        ));
+
+        // Receiving FIN_ACK
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::FinAck),
+            })
+            .await
+            .unwrap();
+
+        // Write side is closed now, not the read side.
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::FinAck
+        ));
+
+        // Receiving FIN
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::Fin),
+            })
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            *handle.reader_state.inner.state.lock(),
+            ReaderState::Fin
+        ));
+        // Expecing FIN_ACK to be sent immediately
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::FinAck),
+            })
+        );
+        assert!(matches!(
+            *handle.reader_state.inner.state.lock(),
+            ReaderState::FinAck
+        ));
+
+        assert_eq!(handle.next().await, None);
     }
 
     #[tokio::test]
@@ -656,7 +717,7 @@ mod tests {
 
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![1u8; 1337],
                 flag: None,
             })
@@ -664,7 +725,7 @@ mod tests {
         // After shutdown, should send FIN flag
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![],
                 flag: Some(Flag::Fin)
             })
@@ -684,7 +745,7 @@ mod tests {
 
     #[tokio::test]
     async fn try_to_read_from_closed_substream() {
-        let (mut substream, handle) = Substream::new();
+        let (mut substream, mut handle) = Substream::new();
         handle
             .on_message(WebRtcMessage {
                 payload: None,
@@ -694,7 +755,9 @@ mod tests {
             .unwrap();
 
         match substream.read(&mut vec![0u8; 256]).await {
-            Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe),
+            Ok(read_bytes) => {
+                assert_eq!(read_bytes, 0)
+            }
             _ => panic!("invalid event"),
         }
     }
@@ -703,8 +766,10 @@ mod tests {
     async fn read_small_frame() {
         let (mut substream, handle) = Substream::new();
         handle
-            .inbound_tx
-            .send(Event::Message {
+            .message_tx
+            .as_ref()
+            .unwrap()
+            .send(Message {
                 payload: vec![1u8; 256],
                 flag: None,
             })
@@ -738,8 +803,10 @@ mod tests {
         first.extend_from_slice(&vec![2u8; 256]);
 
         handle
-            .inbound_tx
-            .send(Event::Message {
+            .message_tx
+            .as_ref()
+            .unwrap()
+            .send(Message {
                 payload: first,
                 flag: None,
             })
@@ -781,16 +848,20 @@ mod tests {
         first.extend_from_slice(&vec![2u8; 256]);
 
         handle
-            .inbound_tx
-            .send(Event::Message {
+            .message_tx
+            .as_ref()
+            .unwrap()
+            .send(Message {
                 payload: first,
                 flag: None,
             })
             .await
             .unwrap();
         handle
-            .inbound_tx
-            .send(Event::Message {
+            .message_tx
+            .as_ref()
+            .unwrap()
+            .send(Message {
                 payload: vec![4u8; 2048],
                 flag: None,
             })
@@ -922,14 +993,17 @@ mod tests {
         // Should receive FIN flag
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![],
                 flag: Some(Flag::Fin)
             })
         );
 
-        // Verify state is FinSent
-        assert!(matches!(*handle.state.lock(), State::FinSent));
+        // Verify state is Fin
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::Fin
+        ));
 
         // Send FIN_ACK to complete shutdown cleanly (avoids waiting for timeout)
         handle
@@ -953,7 +1027,7 @@ mod tests {
             // Substream should receive RecvClosed
             let mut buf = vec![0u8; 1024];
             match substream.read(&mut buf).await {
-                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                Ok(res) if res == 0 => {
                     // Expected - read half closed
                 }
                 other => panic!("Unexpected result: {:?}", other),
@@ -975,7 +1049,7 @@ mod tests {
         // Verify FIN_ACK was sent outbound to network
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![],
                 flag: Some(Flag::FinAck)
             })
@@ -993,13 +1067,17 @@ mod tests {
 
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![],
                 flag: Some(Flag::Fin)
             }),
         );
-        // Verify we're in FinSent state
-        assert!(matches!(*handle.state.lock(), State::FinSent));
+
+        // Verify we're in Fin state
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::Fin
+        ));
 
         // Simulate receiving FIN_ACK from remote
         handle
@@ -1011,7 +1089,10 @@ mod tests {
             .unwrap();
 
         // Should transition to FinAcked
-        assert!(matches!(*handle.state.lock(), State::FinAcked));
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::FinAck
+        ));
 
         // Shutdown should now complete
         shutdown_task.await.unwrap();
@@ -1032,7 +1113,7 @@ mod tests {
         // Verify data was sent
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![1u8; 100],
                 flag: None,
             })
@@ -1041,7 +1122,7 @@ mod tests {
         // Verify FIN was sent
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![],
                 flag: Some(Flag::Fin)
             })
@@ -1057,7 +1138,10 @@ mod tests {
             .unwrap();
 
         // Should be in FinAcked state
-        assert!(matches!(*handle.state.lock(), State::FinAcked));
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::FinAck
+        ));
 
         // Shutdown should now complete
         shutdown_task.await.unwrap();
@@ -1065,7 +1149,7 @@ mod tests {
 
     #[tokio::test]
     async fn stop_sending_flag_closes_send_half() {
-        let (mut substream, handle) = Substream::new();
+        let (mut substream, mut handle) = Substream::new();
 
         // Simulate receiving STOP_SENDING
         handle
@@ -1077,7 +1161,10 @@ mod tests {
             .unwrap();
 
         // Should transition to SendClosed
-        assert!(matches!(*handle.state.lock(), State::SendClosed));
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::StopSending
+        ));
 
         // Attempting to write should fail
         match substream.write_all(&[0u8; 100]).await {
@@ -1088,8 +1175,7 @@ mod tests {
 
     #[tokio::test]
     async fn reset_stream_flag_closes_both_sides() {
-        use tokio::io::AsyncWriteExt;
-        let (mut substream, handle) = Substream::new();
+        let (mut substream, mut handle) = Substream::new();
 
         // Simulate receiving RESET_STREAM
         let result = handle
@@ -1103,17 +1189,17 @@ mod tests {
         assert!(matches!(result, Err(Error::ConnectionClosed)));
 
         // Write side should be closed (state = SendClosed)
-        assert!(matches!(*handle.state.lock(), State::Reset));
+        assert!(matches!(
+            *handle.channel_state.inner.state.lock(),
+            ChannelState::Reset
+        ));
 
-        // Attempting to write should fail
-        match substream.write_all(&[0u8; 100]).await {
-            Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe),
-            _ => panic!("write should have failed"),
+        let mut buf = vec![0u8; 1024];
+        match substream.read(&mut buf).await {
+            Ok(read) if read == 0 => (),
+            other => panic!("Unexpected result: {:?}", other),
         }
-
-        // Read side should also be closed (RecvClosed event was sent)
-        // The substream's rx channel should have RecvClosed
-        assert!(matches!(substream.rx.try_recv(), Ok(Event::RecvClosed)));
+        assert!(substream.shutdown().await.is_ok());
     }
 
     #[tokio::test]
@@ -1127,13 +1213,16 @@ mod tests {
 
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![],
                 flag: Some(Flag::Fin)
             }),
         );
-        // Verify we're in FinSent state
-        assert!(matches!(*handle.state.lock(), State::FinSent));
+        // Verify we're in Fin state
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::Fin
+        ));
 
         // Now simulate receiving FIN_ACK (value = 3)
         // This should NOT trigger STOP_SENDING (value = 1) or RESET_STREAM (value = 2)
@@ -1147,7 +1236,10 @@ mod tests {
             .unwrap();
 
         // Should transition to FinAcked, not SendClosed
-        assert!(matches!(*handle.state.lock(), State::FinAcked));
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::FinAck
+        ));
 
         // Shutdown should complete
         shutdown_task.await.unwrap();
@@ -1159,7 +1251,7 @@ mod tests {
 
     #[tokio::test]
     async fn flags_are_mutually_exclusive() {
-        let (_substream, handle) = Substream::new();
+        let (_substream, mut handle) = Substream::new();
 
         // Test that STOP_SENDING (1) is handled correctly
         handle
@@ -1170,10 +1262,13 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(matches!(*handle.state.lock(), State::SendClosed));
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::StopSending
+        ));
 
         // Create a new substream for RESET_STREAM test
-        let (_substream2, handle2) = Substream::new();
+        let (_substream2, mut handle2) = Substream::new();
 
         // Test that RESET_STREAM (2) is handled correctly
         let result = handle2
@@ -1184,7 +1279,10 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(Error::ConnectionClosed)));
-        assert!(matches!(*handle2.state.lock(), State::Reset));
+        assert!(matches!(
+            *handle2.channel_state.inner.state.lock(),
+            ChannelState::Reset
+        ));
 
         // Create a new substream for FIN test
         let (mut substream3, mut handle3) = Substream::new();
@@ -1196,13 +1294,16 @@ mod tests {
 
         assert_eq!(
             handle3.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![],
                 flag: Some(Flag::Fin)
             }),
         );
-        // Verify we're in FinSent state
-        assert!(matches!(*handle3.state.lock(), State::FinSent));
+        // Verify we're in Fin state
+        assert!(matches!(
+            *handle3.writer_state.inner.state.lock(),
+            WriterState::Fin
+        ));
 
         // Test that FIN_ACK (3) is handled correctly
         handle3
@@ -1213,7 +1314,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(matches!(*handle3.state.lock(), State::FinAcked));
+        assert!(matches!(
+            *handle3.writer_state.inner.state.lock(),
+            WriterState::FinAck
+        ));
 
         // Shutdown should complete
         shutdown_task3.await.unwrap();
@@ -1222,7 +1326,7 @@ mod tests {
     #[tokio::test]
     async fn stop_sending_wakes_blocked_writer() {
         use tokio::io::AsyncWriteExt;
-        let (mut substream, handle) = Substream::new();
+        let (mut substream, mut handle) = Substream::new();
 
         // Fill up the channel to cause poll_write to return Pending
         // Channel capacity is 256
@@ -1261,7 +1365,7 @@ mod tests {
     #[tokio::test]
     async fn reset_stream_wakes_blocked_writer() {
         use tokio::io::AsyncWriteExt;
-        let (mut substream, handle) = Substream::new();
+        let (mut substream, mut handle) = Substream::new();
 
         // Fill up the channel to cause poll_write to return Pending
         // Channel capacity is 256
@@ -1314,21 +1418,24 @@ mod tests {
         // Wait for data and FIN to be sent
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![1u8; 100],
                 flag: None,
             })
         );
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![],
                 flag: Some(Flag::Fin)
             })
         );
 
-        // Verify we transitioned through Closing to FinSent
-        assert!(matches!(*handle.state.lock(), State::FinSent));
+        // Verify we transitioned through Closing to Fin
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::Fin
+        ));
 
         // Send FIN_ACK to complete shutdown
         handle
@@ -1357,12 +1464,15 @@ mod tests {
         // Wait for FIN to be sent
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![],
                 flag: Some(Flag::Fin)
             })
         );
-        assert!(matches!(*handle.state.lock(), State::FinSent));
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::Fin
+        ));
 
         // Send FIN_ACK to complete first shutdown
         handle
@@ -1378,7 +1488,10 @@ mod tests {
 
         // Second shutdown should succeed without error (already in FinAcked state)
         substream.shutdown().await.unwrap();
-        assert!(matches!(*handle.state.lock(), State::FinAcked));
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::FinAck
+        ));
     }
 
     #[tokio::test]
@@ -1395,29 +1508,35 @@ mod tests {
         // Wait for FIN to be sent
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![],
                 flag: Some(Flag::Fin)
             })
         );
 
-        // Verify we're in FinSent state
-        assert!(matches!(*handle.state.lock(), State::FinSent));
+        // Verify we're in Fin state
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::Fin
+        ));
 
         // DON'T send FIN_ACK - let it timeout
-        // The shutdown should complete after FIN_ACK_TIMEOUT (5 seconds)
+        // The shutdown should complete after FIN_ACK_TIMEOUT (10 seconds)
         // Add a bit of buffer to the timeout
         let _ = timeout(Duration::from_secs(11), shutdown_task).await;
 
         // The timeout branch surfaces a RESET_STREAM event before signalling closure.
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![],
                 flag: Some(Flag::ResetStream)
             }),
         );
-        assert!(matches!(*handle.state.lock(), State::Reset));
+        assert!(matches!(
+            *handle.channel_state.inner.state.lock(),
+            ChannelState::Reset
+        ));
     }
 
     #[tokio::test]
@@ -1435,7 +1554,7 @@ mod tests {
         // Receive FIN
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![],
                 flag: Some(Flag::Fin)
             })
@@ -1453,6 +1572,12 @@ mod tests {
         // Wait for shutdown to complete and Substream to drop
         shutdown_task.await.unwrap();
 
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::FinAck
+        ));
+        // If reader_state.inner.state is also closed, then we can expect a None.
+        *handle.reader_state.inner.state.lock() = ReaderState::FinAck;
         // Verify handle signals closure (returns None)
         assert_eq!(
             handle.next().await,
@@ -1472,9 +1597,7 @@ mod tests {
             let mut buf = vec![0u8; 1024];
             // This should fail because we receive RecvClosed
             match substream.read(&mut buf).await {
-                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
-                    // Expected - read half closed by FIN
-                }
+                Ok(read) if read == 0 => (),
                 other => panic!("Unexpected result: {:?}", other),
             }
             // Substream dropped here (server closes after receiving FIN)
@@ -1492,7 +1615,7 @@ mod tests {
         // Verify FIN_ACK was sent back
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![],
                 flag: Some(Flag::FinAck)
             })
@@ -1504,7 +1627,7 @@ mod tests {
         // Verify handle signals closure (returns Fin)
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![],
                 flag: Some(Flag::Fin)
             })
@@ -1515,13 +1638,13 @@ mod tests {
     async fn simultaneous_close() {
         // Test simultaneous close where both sides send FIN at the same time.
         // This verifies that:
-        // 1. Both sides can be in FinSent state simultaneously
-        // 2. Both sides correctly respond to FIN with FIN_ACK even when in FinSent state
+        // 1. Both sides can be in Fin state simultaneously
+        // 2. Both sides correctly respond to FIN with FIN_ACK even when in Fin state
         // 3. Both sides eventually transition to FinAcked
 
         let (mut substream, mut handle) = Substream::new();
 
-        // Local side initiates shutdown (sends FIN, transitions to FinSent)
+        // Local side initiates shutdown (sends FIN, transitions to Fin)
         let shutdown_task = tokio::spawn(async move {
             substream.shutdown().await.unwrap();
         });
@@ -1529,17 +1652,20 @@ mod tests {
         // Wait for local FIN to be sent
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![],
                 flag: Some(Flag::Fin)
             })
         );
 
-        // Verify local is in FinSent state
-        assert!(matches!(*handle.state.lock(), State::FinSent));
+        // Verify local is in Fin state
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::Fin
+        ));
 
         // Now simulate remote also sending FIN (simultaneous close)
-        // This should trigger FIN_ACK response even though we're in FinSent state
+        // This should trigger FIN_ACK response even though we're in Fin state
         handle
             .on_message(WebRtcMessage {
                 payload: None,
@@ -1551,14 +1677,21 @@ mod tests {
         // Local should send FIN_ACK in response to remote's FIN
         assert_eq!(
             handle.next().await,
-            Some(Event::Message {
+            Some(Message {
                 payload: vec![],
                 flag: Some(Flag::FinAck)
             })
         );
 
-        // Local should still be in FinSent (waiting for FIN_ACK from remote)
-        assert!(matches!(*handle.state.lock(), State::FinSent));
+        // Local should still be in Fin (waiting for FIN_ACK from remote)
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::Fin
+        ));
+        assert!(matches!(
+            *handle.reader_state.inner.state.lock(),
+            ReaderState::FinAck
+        ));
 
         // Now remote sends FIN_ACK (completing their side of the handshake)
         handle
@@ -1570,7 +1703,10 @@ mod tests {
             .unwrap();
 
         // Local should now transition to FinAcked
-        assert!(matches!(*handle.state.lock(), State::FinAcked));
+        assert!(matches!(
+            *handle.writer_state.inner.state.lock(),
+            WriterState::FinAck
+        ));
 
         // Shutdown should complete successfully
         shutdown_task.await.unwrap();
@@ -1582,7 +1718,7 @@ mod tests {
         // to the substream before the RecvClosed event. This is important because
         // the spec allows a FIN message to contain final data.
 
-        let (mut substream, handle) = Substream::new();
+        let (mut substream, mut handle) = Substream::new();
 
         // Simulate receiving FIN with payload from remote
         handle
@@ -1600,9 +1736,7 @@ mod tests {
 
         // Then, subsequent read should fail with BrokenPipe (RecvClosed)
         match substream.read(&mut buf).await {
-            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
-                // Expected - read half closed after FIN
-            }
+            Ok(read) if read == 0 => (),
             other => panic!("Expected BrokenPipe error, got: {:?}", other),
         }
     }
