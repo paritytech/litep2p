@@ -220,7 +220,7 @@ impl OpeningWebRtcConnection {
             tracing::error!(
                 target: LOG_TARGET,
                 connection_id = ?self.connection_id,
-                "noise channel full during initial handshake write"
+                "sending first noise handshake message failed: channel full"
             );
             return Err(Error::ChannelClogged);
         }
@@ -321,7 +321,7 @@ impl OpeningWebRtcConnection {
             tracing::error!(
                 target: LOG_TARGET,
                 connection_id = ?self.connection_id,
-                "noise channel full during initial handshake write"
+                "sending second noise handshake message failed: channel full"
             );
             return Err(Error::ChannelClogged);
         }

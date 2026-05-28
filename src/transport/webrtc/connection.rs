@@ -62,7 +62,7 @@ const LOG_TARGET: &str = "litep2p::webrtc::connection";
 /// Threshold under which str0m emits Event::ChannelBufferedAmountLow.
 const BACKPRESSURE_THRESHOLD: usize = 16 * (1 << 10); // 16 KB
 
-/// Maximum number of pending message supported per channel.
+/// Maximum number of pending messages supported per channel.
 const MAX_PENDING_PER_CHANNEL: usize = 16;
 
 /// Opening channel context.
@@ -95,7 +95,7 @@ struct SubstreamHandleSet {
     /// Substream handles.
     handles: IndexMap<ChannelId, SubstreamHandle>,
 
-    /// Substream which has pending messages.
+    /// Substreams that have pending messages.
     pending: HashSet<ChannelId>,
 
     /// Waker used to drive the stream when no handle can make progress.
@@ -130,12 +130,12 @@ impl SubstreamHandleSet {
         self.handles.swap_remove(key)
     }
 
-    /// Add a channel to the ones which has pending messages.
+    /// Mark channel as having pending messages.
     pub fn add_pending(&mut self, key: ChannelId) {
         self.pending.insert(key);
     }
 
-    /// Remove the channel from the ones with pending messages.
+    /// Unmark channel as having pending messages.
     pub fn clear_pending(&mut self, key: &ChannelId) {
         if self.pending.remove(key) {
             self.waker.wake();
@@ -396,7 +396,7 @@ impl WebRtcConnection {
                     peer = ?peer,
                     ?channel_id,
                     ?e,
-                     "failed to write multistream-select fallback proposal",
+                    "failed to write message to webrtc channel",
                 );
                 Err(Error::WebRtc(e))
             }
@@ -404,7 +404,7 @@ impl WebRtcConnection {
     }
 
     // Attempt to write all pending messages of the specified ChannelId.
-    // Returns either all messages has been sent or not.
+    // Returns whether all messages have been sent or not.
     fn write_pending(&mut self, channel_id: ChannelId) -> Result<bool, Error> {
         let Some(mut channel) = self.rtc.channel(channel_id) else {
             tracing::trace!(
@@ -432,12 +432,12 @@ impl WebRtcConnection {
             };
 
             let succeeded = Self::channel_write(&mut channel, channel_id, message, self.peer)?;
-
-            match self.pending_messages.get_mut(&channel_id) {
-                Some(messages) if succeeded => {
-                    messages.pop_front();
-                }
-                _ => break Ok(false),
+            if succeeded {
+                self.pending_messages
+                    .get_mut(&channel_id)
+                    .and_then(|messages| messages.pop_front());
+            } else {
+                break Ok(false);
             }
         }
     }
