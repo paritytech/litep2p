@@ -51,49 +51,41 @@ pub struct Message {
 }
 
 /// Shared state used to sync `Substream` and `SubstreamHandle`.
+#[derive(Clone)]
 struct SharedState<T: Clone> {
-    state: Arc<Mutex<T>>,
-    wakers: Vec<Arc<AtomicWaker>>,
+    inner: Arc<Inner<T>>,
 }
 
-struct SharedStateWatcher<T: Clone> {
-    state: Arc<Mutex<T>>,
-    waker: Arc<AtomicWaker>,
+struct Inner<T> {
+    state: Mutex<T>,
+    waker: AtomicWaker,
 }
 
 impl<T: Clone> SharedState<T> {
     fn new(val: T) -> Self {
         Self {
-            state: Arc::new(Mutex::new(val)),
-            wakers: vec![],
+            inner: Arc::new(Inner {
+                state: Mutex::new(val),
+                waker: AtomicWaker::new(),
+            }),
         }
     }
 
     fn set(&self, new_value: T) {
-        *self.state.lock() = new_value;
-        for waker in self.wakers.iter() {
-            waker.wake()
-        }
+        *self.inner.state.lock() = new_value;
+        self.inner.waker.wake();
     }
 
     fn get(&self) -> T {
-        self.state.lock().clone()
+        self.inner.state.lock().clone()
     }
 
-    fn register_watcher(&mut self) -> SharedStateWatcher<T> {
-        let waker = Arc::new(AtomicWaker::new());
-        self.wakers.push(waker.clone());
-        SharedStateWatcher {
-            state: self.state.clone(),
-            waker,
-        }
-    }
-}
-
-impl<T: Clone> SharedStateWatcher<T> {
-    fn get(&self, cx: &mut Context<'_>) -> T {
-        self.waker.register(cx.waker());
-        self.state.lock().clone()
+    // NOTE: this method should only be called from one single place
+    // otherwise the waker is re-registered for another context
+    // and thus stealing the waker itself.
+    fn register_and_get(&self, cx: &mut Context<'_>) -> T {
+        self.inner.waker.register(cx.waker());
+        self.get()
     }
 }
 
@@ -141,14 +133,10 @@ pub struct Substream {
     /// TX channel for sending messages to `peer`, wrapped in a [`PollSender`]
     /// so that backpressure is driven by the caller's waker.
     tx: Option<PollSender<Message>>,
-    /// Watcher of the state of the channel, used by the reader half.
-    channel_reader_watcher: SharedStateWatcher<ChannelState>,
-    /// Watcher of the state of the channel, used by the writer half.
-    channel_writer_watcher: SharedStateWatcher<ChannelState>,
+    /// Watcher of the state of the channel.
+    channel_state: SharedState<ChannelState>,
     /// Watcher of the State of the writing half.
-    writer_watcher: SharedStateWatcher<WriterState>,
-    /// Watcher of the State of the reading half.
-    reader_watcher: SharedStateWatcher<ReaderState>,
+    writer_state: SharedState<WriterState>,
 }
 
 impl Substream {
@@ -159,22 +147,15 @@ impl Substream {
         let (outbound_message_tx, outbound_message_rx) = channel(256);
         let (inbound_message_tx, inbound_message_rx) = channel(256);
 
-        let mut channel_state = SharedState::new(ChannelState::Open);
-        let mut writer_state = SharedState::new(WriterState::Open);
-        let mut reader_state = SharedState::new(ReaderState::Open);
-        let reader_watcher_handle = reader_state.register_watcher();
-
-        let channel_reader_watcher = channel_state.register_watcher();
-        let channel_writer_watcher = channel_state.register_watcher();
-        let reader_watcher_subtream = reader_state.register_watcher();
-        let writer_watcher = writer_state.register_watcher();
+        let channel_state = SharedState::new(ChannelState::Open);
+        let writer_state = SharedState::new(WriterState::Open);
+        let reader_state = SharedState::new(ReaderState::Open);
 
         let handle = SubstreamHandle {
-            channel_state: channel_state,
-            writer_state: writer_state,
-            reader_state: reader_state,
-            reader_watcher: reader_watcher_handle,
-            message_tx: inbound_message_tx,
+            channel_state: channel_state.clone(),
+            writer_state: writer_state.clone(),
+            reader_state: reader_state.clone(),
+            message_tx: Some(inbound_message_tx),
             message_rx: outbound_message_rx,
             fin_ack_timeout: None,
         };
@@ -184,10 +165,8 @@ impl Substream {
                 read_buffer: BytesMut::new(),
                 tx: Some(PollSender::new(outbound_message_tx)),
                 rx: inbound_message_rx,
-                channel_reader_watcher,
-                channel_writer_watcher,
-                writer_watcher,
-                reader_watcher: reader_watcher_subtream,
+                channel_state,
+                writer_state,
             },
             handle,
         )
@@ -202,10 +181,8 @@ pub struct SubstreamHandle {
     writer_state: SharedState<WriterState>,
     /// State of the reading half.
     reader_state: SharedState<ReaderState>,
-    /// Watcher of the State of the reading half.
-    reader_watcher: SharedStateWatcher<ReaderState>,
     /// TX channel for sending inbound messages from `peer` to the associated `Substream`.
-    message_tx: Sender<Message>,
+    message_tx: Option<Sender<Message>>,
     /// RX channel for receiving outbound messages to `peer` from the associated `Substream`.
     message_rx: Receiver<Message>,
     /// Timeout for waiting on FIN_ACK after sending FIN
@@ -229,15 +206,14 @@ impl SubstreamHandle {
         }
 
         // Process payload first, before handling flags.
-        match message.payload {
-            Some(payload) if !payload.is_empty() => {
+        match (self.message_tx.as_ref(), message.payload) {
+            (Some(message_tx), Some(payload)) if !payload.is_empty() => {
                 // TODO: awaiting here makes the entire connection
                 // rely on the readers to be fast enough, a slow reader
                 // could cause this method to wait and thus stall the entire webrtc
                 // connection. Solution would be to implement reading
                 // backpressure, keeping track of pending incoming messages.
-                let _ = self
-                    .message_tx
+                let _ = message_tx
                     .send(Message {
                         payload,
                         flag: None,
@@ -261,6 +237,7 @@ impl SubstreamHandle {
                         return Ok(());
                     }
                     self.reader_state.set(ReaderState::Fin);
+                    let _ = self.message_tx.take();
                     return Ok(());
                 }
                 Flag::FinAck => {
@@ -268,7 +245,7 @@ impl SubstreamHandle {
                     if matches!(self.writer_state.get(), WriterState::Fin) {
                         self.writer_state.set(WriterState::FinAck);
                     } else {
-                        tracing::warn!(
+                        tracing::debug!(
                             target: LOG_TARGET,
                             state = ?self.writer_state.get(),
                             "received FIN_ACK in unexpected state, ignoring"
@@ -295,6 +272,7 @@ impl SubstreamHandle {
                     // (matching go-libp2p behavior)
                     self.channel_state.set(ChannelState::Reset);
                     self.message_rx.close();
+                    self.message_tx.take();
                     return Err(Error::ConnectionClosed);
                 }
             }
@@ -375,7 +353,12 @@ impl Stream for SubstreamHandle {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // There are three states which need to be taken into consideration to poll the stream:
-        // - channel_state: it preempts any other state if Reset have been entered
+        // - channel_state: it preempts any other state if Reset has been entered
+        //
+        // NOTE: channel_state's waker is already registered from Substream's writing
+        // half (poll_shutdown), so we don't register it again here. That's fine
+        // because every transition to ChannelState::Reset is driven from this same
+        // task. This match is just an early-out when the channel has already been reset.
         if matches!(self.channel_state.get(), ChannelState::Reset) {
             // If something went wrong, RESET_STREAM should have been sent,
             // in that case the channel is treated as closed.
@@ -387,7 +370,7 @@ impl Stream for SubstreamHandle {
         //   1. If FIN arrived then FIN_ACK is expected to be sent back.
         //   2. If FIN_ACK arrived the writer_state is updated.
         {
-            if matches!(self.reader_watcher.get(cx), ReaderState::Fin) {
+            if matches!(self.reader_state.register_and_get(cx), ReaderState::Fin) {
                 self.reader_state.set(ReaderState::FinAck);
                 return Poll::Ready(Some(Message {
                     payload: vec![],
@@ -407,7 +390,7 @@ impl Stream for SubstreamHandle {
                         if matches!(self.writer_state.get(), WriterState::Open) {
                             self.poll_half_close(cx)
                         } else {
-                            // Do not hanlde duplicates. If within the first call to half_close
+                            // Do not handle duplicates. If within the first call to half_close
                             // something went wrong and the state didn't transition from Open to
                             // Fin then just tear down the connection.
                             self.channel_state.set(ChannelState::Reset);
@@ -453,22 +436,6 @@ impl tokio::io::AsyncRead for Substream {
 
             // TODO: optimize by trying to read more data from substream and not exiting early
             return Poll::Ready(Ok(()));
-        }
-
-        if matches!(self.channel_reader_watcher.get(cx), ChannelState::Reset) {
-            self.rx.close();
-            return Poll::Ready(Ok(()));
-        }
-
-        if matches!(
-            self.reader_watcher.get(cx),
-            ReaderState::Fin | ReaderState::FinAck
-        ) {
-            // Wait for the reader to drain all pending messages.
-            if self.rx.is_empty() {
-                self.rx.close();
-                return Poll::Ready(Ok(()));
-            }
         }
 
         match futures::ready!(self.rx.poll_recv(cx)) {
@@ -546,9 +513,12 @@ impl tokio::io::AsyncWrite for Substream {
 
         // Shutdown process is complete if either the channel entered in a Reset
         // state or the writer has received a FinAck or StopSending.
-        let shutdown = matches!(self.channel_writer_watcher.get(cx), ChannelState::Reset)
+        //
+        // NOTE: short-circuit of the waker registration here is fine becaue
+        // the channel_state preempt over any writing state.
+        let shutdown = matches!(self.channel_state.register_and_get(cx), ChannelState::Reset)
             || matches!(
-                self.writer_watcher.get(cx),
+                self.writer_state.register_and_get(cx),
                 WriterState::FinAck | WriterState::StopSending
             );
 
@@ -652,7 +622,7 @@ mod tests {
             })
         );
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::Fin
         ));
 
@@ -667,7 +637,7 @@ mod tests {
 
         // Write side is closed now, not the read side.
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::FinAck
         ));
 
@@ -681,7 +651,7 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            *handle.reader_state.state.lock(),
+            *handle.reader_state.inner.state.lock(),
             ReaderState::Fin
         ));
         // Expecing FIN_ACK to be sent immediately
@@ -693,7 +663,7 @@ mod tests {
             })
         );
         assert!(matches!(
-            *handle.reader_state.state.lock(),
+            *handle.reader_state.inner.state.lock(),
             ReaderState::FinAck
         ));
 
@@ -763,6 +733,8 @@ mod tests {
         let (mut substream, handle) = Substream::new();
         handle
             .message_tx
+            .as_ref()
+            .unwrap()
             .send(Message {
                 payload: vec![1u8; 256],
                 flag: None,
@@ -798,6 +770,8 @@ mod tests {
 
         handle
             .message_tx
+            .as_ref()
+            .unwrap()
             .send(Message {
                 payload: first,
                 flag: None,
@@ -841,6 +815,8 @@ mod tests {
 
         handle
             .message_tx
+            .as_ref()
+            .unwrap()
             .send(Message {
                 payload: first,
                 flag: None,
@@ -849,6 +825,8 @@ mod tests {
             .unwrap();
         handle
             .message_tx
+            .as_ref()
+            .unwrap()
             .send(Message {
                 payload: vec![4u8; 2048],
                 flag: None,
@@ -989,7 +967,7 @@ mod tests {
 
         // Verify state is Fin
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::Fin
         ));
 
@@ -1063,7 +1041,7 @@ mod tests {
 
         // Verify we're in Fin state
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::Fin
         ));
 
@@ -1078,7 +1056,7 @@ mod tests {
 
         // Should transition to FinAcked
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::FinAck
         ));
 
@@ -1127,7 +1105,7 @@ mod tests {
 
         // Should be in FinAcked state
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::FinAck
         ));
 
@@ -1150,7 +1128,7 @@ mod tests {
 
         // Should transition to SendClosed
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::StopSending
         ));
 
@@ -1178,7 +1156,7 @@ mod tests {
 
         // Write side should be closed (state = SendClosed)
         assert!(matches!(
-            *handle.channel_state.state.lock(),
+            *handle.channel_state.inner.state.lock(),
             ChannelState::Reset
         ));
 
@@ -1208,7 +1186,7 @@ mod tests {
         );
         // Verify we're in Fin state
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::Fin
         ));
 
@@ -1225,7 +1203,7 @@ mod tests {
 
         // Should transition to FinAcked, not SendClosed
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::FinAck
         ));
 
@@ -1251,7 +1229,7 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::StopSending
         ));
 
@@ -1268,7 +1246,7 @@ mod tests {
 
         assert!(matches!(result, Err(Error::ConnectionClosed)));
         assert!(matches!(
-            *handle2.channel_state.state.lock(),
+            *handle2.channel_state.inner.state.lock(),
             ChannelState::Reset
         ));
 
@@ -1289,7 +1267,7 @@ mod tests {
         );
         // Verify we're in Fin state
         assert!(matches!(
-            *handle3.writer_state.state.lock(),
+            *handle3.writer_state.inner.state.lock(),
             WriterState::Fin
         ));
 
@@ -1303,7 +1281,7 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            *handle3.writer_state.state.lock(),
+            *handle3.writer_state.inner.state.lock(),
             WriterState::FinAck
         ));
 
@@ -1421,7 +1399,7 @@ mod tests {
 
         // Verify we transitioned through Closing to Fin
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::Fin
         ));
 
@@ -1458,7 +1436,7 @@ mod tests {
             })
         );
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::Fin
         ));
 
@@ -1477,7 +1455,7 @@ mod tests {
         // Second shutdown should succeed without error (already in FinAcked state)
         substream.shutdown().await.unwrap();
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::FinAck
         ));
     }
@@ -1504,12 +1482,12 @@ mod tests {
 
         // Verify we're in Fin state
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::Fin
         ));
 
         // DON'T send FIN_ACK - let it timeout
-        // The shutdown should complete after FIN_ACK_TIMEOUT (5 seconds)
+        // The shutdown should complete after FIN_ACK_TIMEOUT (10 seconds)
         // Add a bit of buffer to the timeout
         let _ = timeout(Duration::from_secs(11), shutdown_task).await;
 
@@ -1522,7 +1500,7 @@ mod tests {
             }),
         );
         assert!(matches!(
-            *handle.channel_state.state.lock(),
+            *handle.channel_state.inner.state.lock(),
             ChannelState::Reset
         ));
     }
@@ -1561,11 +1539,11 @@ mod tests {
         shutdown_task.await.unwrap();
 
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::FinAck
         ));
-        // If also reader_state.inner.state is closed then we can expecte a None.
-        *handle.reader_state.state.lock() = ReaderState::FinAck;
+        // If also reader_state.inner.inner.state is closed then we can expecte a None.
+        *handle.reader_state.inner.state.lock() = ReaderState::FinAck;
         // Verify handle signals closure (returns None)
         assert_eq!(
             handle.next().await,
@@ -1648,7 +1626,7 @@ mod tests {
 
         // Verify local is in Fin state
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::Fin
         ));
 
@@ -1673,11 +1651,11 @@ mod tests {
 
         // Local should still be in Fin (waiting for FIN_ACK from remote)
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::Fin
         ));
         assert!(matches!(
-            *handle.reader_state.state.lock(),
+            *handle.reader_state.inner.state.lock(),
             ReaderState::FinAck
         ));
 
@@ -1692,7 +1670,7 @@ mod tests {
 
         // Local should now transition to FinAcked
         assert!(matches!(
-            *handle.writer_state.state.lock(),
+            *handle.writer_state.inner.state.lock(),
             WriterState::FinAck
         ));
 
