@@ -182,6 +182,10 @@ pub struct SubstreamHandle {
     /// State of the reading half.
     reader_state: SharedState<ReaderState>,
     /// TX channel for sending inbound messages from `peer` to the associated `Substream`.
+    ///
+    /// The sender is taken (dropped) when a FIN flag is received from the remote:
+    /// closing it signals to the `Substream` reader that no further inbound
+    /// payloads will arrive.
     message_tx: Option<Sender<Message>>,
     /// RX channel for receiving outbound messages to `peer` from the associated `Substream`.
     message_rx: Receiver<Message>,
@@ -207,18 +211,34 @@ impl SubstreamHandle {
 
         // Process payload first, before handling flags.
         match (self.message_tx.as_ref(), message.payload) {
+            (None, Some(payload)) if !payload.is_empty() => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    payload_len = payload.len(),
+                    "peer sent payload after FIN flag, spec violation"
+                );
+            }
             (Some(message_tx), Some(payload)) if !payload.is_empty() => {
                 // TODO: awaiting here makes the entire connection
                 // rely on the readers to be fast enough, a slow reader
                 // could cause this method to wait and thus stall the entire webrtc
                 // connection. Solution would be to implement reading
                 // backpressure, keeping track of pending incoming messages.
-                let _ = message_tx
+                // https://github.com/paritytech/litep2p/issues/604
+                let send_result = message_tx
                     .send(Message {
                         payload,
                         flag: None,
                     })
                     .await;
+
+                if let Err(err) = send_result {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?err,
+                        "failed to propagate message to Substream"
+                    );
+                }
             }
             _ => (),
         }
@@ -237,19 +257,28 @@ impl SubstreamHandle {
                         return Ok(());
                     }
                     self.reader_state.set(ReaderState::Fin);
-                    let _ = self.message_tx.take();
+                    if self.message_tx.take().is_none() {
+                        tracing::warn!(target: LOG_TARGET, "message channel was already dropped");
+                    }
                     return Ok(());
                 }
                 Flag::FinAck => {
                     // Received FIN_ACK, we can now fully close our write half
-                    if matches!(self.writer_state.get(), WriterState::Fin) {
+                    let writer_state = self.writer_state.get();
+                    if matches!(writer_state, WriterState::Fin) {
                         self.writer_state.set(WriterState::FinAck);
                     } else {
+                        // If FIN_ACK is received upon an unexpected writer_state
+                        // tear down the connection.
                         tracing::debug!(
                             target: LOG_TARGET,
-                            state = ?self.writer_state.get(),
-                            "received FIN_ACK in unexpected state, ignoring"
+                            ?writer_state,
+                            "received FIN_ACK in unexpected writer state, tearing down channel"
                         );
+                        self.channel_state.set(ChannelState::Reset);
+                        self.message_rx.close();
+                        let _ = self.message_tx.take();
+                        return Err(Error::ConnectionClosed);
                     }
                     return Ok(());
                 }
@@ -272,7 +301,7 @@ impl SubstreamHandle {
                     // (matching go-libp2p behavior)
                     self.channel_state.set(ChannelState::Reset);
                     self.message_rx.close();
-                    self.message_tx.take();
+                    let _ = self.message_tx.take();
                     return Err(Error::ConnectionClosed);
                 }
             }
@@ -283,16 +312,18 @@ impl SubstreamHandle {
 
     // This function carries forward the writer half close process.
     //
-    // It is expected to:
-    // If WriterState::Open
+    // The following behaviors are expected on:
+    // WriterState::Open|StopSending state
     // - flush any pending message
     // - send FIN flag
     // - start timeout_fin_ack
     // - transition to WriterState::Fin
-    // If WriterState::Fin
+    // WriterState::Fin state
     // - wait for FIN_ACK
     // - handle timeout
-    // - transtion to WriterState::FinAck
+    // - transition to WriterState::FinAck
+    // WriterState::FinAck state:
+    // - do nothing, shutdown complete
     fn poll_half_close(&mut self, cx: &mut Context<'_>) -> Poll<Option<Message>> {
         match self.writer_state.get() {
             // First call to shutdown, if peer sent StopSending we are still
@@ -302,7 +333,12 @@ impl SubstreamHandle {
                 let mut timeout = Box::pin(tokio::time::sleep(FIN_ACK_TIMEOUT));
                 // Poll the timeout once to register it with tokio's timer
                 // This ensures we'll be woken when it expires
-                let _ = timeout.as_mut().poll(cx);
+                if timeout.as_mut().poll(cx).is_ready() {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        "misconfigured timer is not supposed to be ready"
+                    );
+                }
                 self.fin_ack_timeout = Some(timeout);
                 self.writer_state.set(WriterState::Fin);
                 // Send message with FIN flag
@@ -369,14 +405,12 @@ impl Stream for SubstreamHandle {
         //   incoming messages, there are 2 side effects which connects the two streams:
         //   1. If FIN arrived then FIN_ACK is expected to be sent back.
         //   2. If FIN_ACK arrived the writer_state is updated.
-        {
-            if matches!(self.reader_state.register_and_get(cx), ReaderState::Fin) {
-                self.reader_state.set(ReaderState::FinAck);
-                return Poll::Ready(Some(Message {
-                    payload: vec![],
-                    flag: Some(Flag::FinAck),
-                }));
-            }
+        if matches!(self.reader_state.register_and_get(cx), ReaderState::Fin) {
+            self.reader_state.set(ReaderState::FinAck);
+            return Poll::Ready(Some(Message {
+                payload: vec![],
+                flag: Some(Flag::FinAck),
+            }));
         }
 
         // - writer_state: here messages sent from the `Substream` needs to be forwarded wrapped by
