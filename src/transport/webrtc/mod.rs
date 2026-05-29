@@ -252,8 +252,8 @@ impl WebRtcTransport {
 
         let noise_channel_id = rtc.direct_api().create_data_channel(ChannelConfig {
             label: "noise".to_string(),
-            ordered: false,
-            reliability: Default::default(),
+            ordered: true,
+            reliability: str0m::channel::Reliability::Reliable,
             negotiated: Some(0),
             protocol: "".to_string(),
         });
