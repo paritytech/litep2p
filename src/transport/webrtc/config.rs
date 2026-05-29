@@ -21,6 +21,7 @@
 //! WebRTC transport configuration.
 
 use multiaddr::Multiaddr;
+use std::path::PathBuf;
 
 /// WebRTC transport configuration.
 #[derive(Debug)]
@@ -32,6 +33,17 @@ pub struct Config {
     ///
     /// How many datagrams can the buffer between `WebRtcTransport` and a connection handler hold.
     pub datagram_buffer_size: usize,
+
+    /// Folder used to persist the DTLS certificate across restarts.
+    ///
+    /// If specified and a certificate file already exists in the folder, the
+    /// certificate is loaded from it, otherwise a new certificate is generated
+    /// and saved into the folder. Persisting it keeps the node's `certhash`
+    /// (and therefore its advertised addresses) stable across restarts.
+    ///
+    /// NOTE: a folder must be used by a single node only, different nodes on the
+    /// same machine must use different folders.
+    pub dtdl_cert_persistent_path: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -41,6 +53,7 @@ impl Default for Config {
                 .parse()
                 .expect("valid multiaddress")],
             datagram_buffer_size: 2048,
+            dtdl_cert_persistent_path: None,
         }
     }
 }

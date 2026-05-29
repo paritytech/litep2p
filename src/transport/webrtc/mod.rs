@@ -55,7 +55,9 @@ use tokio::{
 
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
+    io::{ErrorKind, Read, Write},
     net::SocketAddr,
+    path::PathBuf,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -422,11 +424,43 @@ impl TransportBuilder for WebRtcTransport {
 
         // OpenSsl as crypto provider is specified through the 'openssl' str0m feature flag.
         let crypto_provider = str0m::crypto::from_feature_flags();
-        let dtls_cert = crypto_provider.dtls_provider.generate_certificate().ok_or(
-            crate::error::Error::WebRtc(RtcError::Dtls(DtlsError::CryptoError(
-                CryptoError::Other("OpenSsl failed to generate certificate".to_string()),
-            ))),
-        )?;
+        let generate_cert = |crypto: &str0m::crypto::CryptoProvider| {
+            crypto.dtls_provider.generate_certificate().ok_or(crate::error::Error::WebRtc(
+                RtcError::Dtls(DtlsError::CryptoError(CryptoError::Other(
+                    "OpenSsl failed to generate certificate".to_string(),
+                ))),
+            ))
+        };
+
+        let dtls_cert = if let Some(dtls_cert_path) = config.dtdl_cert_persistent_path {
+            match decode_dtls_cert(dtls_cert_path.clone()) {
+                Ok(dtls_cert) => dtls_cert,
+                Err(false) => {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        dtls_cert_path = ?dtls_cert_path.clone(),
+                        "failed to decode dtls cert, not overwriting it");
+                    generate_cert(&crypto_provider)?
+                }
+                Err(true) => {
+                    tracing::info!(
+                        target: LOG_TARGET,
+                        dtls_cert_path = ?dtls_cert_path.clone(),
+                        "dtls cert didn't exist, generating new one");
+                    let dtls_cert = generate_cert(&crypto_provider)?;
+                    if let Err(e) = encode_dtls_cert(dtls_cert_path.clone(), &dtls_cert) {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?dtls_cert_path,
+                            ?e,
+                            "failed to encode dtls cert to the specified path");
+                    }
+                    dtls_cert
+                }
+            }
+        } else {
+            generate_cert(&crypto_provider)?
+        };
 
         let fingerprint = crypto_provider.sha256_provider.sha256(&dtls_cert.certificate);
 
@@ -745,4 +779,92 @@ fn is_stun_packet(bytes: &[u8]) -> bool {
     const STUN_MAGIC_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];
     // 20 bytes for the header, then follows attributes.
     bytes.len() >= 20 && bytes[0] < 2 && bytes[4..8] == STUN_MAGIC_COOKIE
+}
+
+/// Encodes `dtls_cert` into the `webrtc_certhash` file inside `path`.
+///
+/// Layout, lengths as big-endian `u64`:
+/// `cert len ++ cert bytes ++ key len ++ key bytes`.
+///
+/// Errors if `path` does not exist.
+fn encode_dtls_cert(path: PathBuf, dtls_cert: &DtlsCert) -> std::io::Result<()> {
+    if !path.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "dtls cert folder doesn't exist",
+        ));
+    }
+
+    let path = path.join("webrtc_certhash");
+
+    let mut file =
+        std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
+
+    file.write_all(&(dtls_cert.certificate.len() as u64).to_be_bytes()[..])?;
+    file.write_all(&dtls_cert.certificate[..])?;
+    file.write_all(&(dtls_cert.private_key.len() as u64).to_be_bytes()[..])?;
+    file.write_all(&dtls_cert.private_key[..])?;
+
+    Ok(())
+}
+
+/// Decodes a [`DtlsCert`] from the `webrtc_certhash` file inside `path`.
+///
+/// Layout, lengths as big-endian `u64`:
+/// `cert len ++ cert bytes ++ key len ++ key bytes`.
+///
+/// The `bool` in the error says whether the caller may persist a fresh cert:
+/// - true: file absent, generate and save a new one.
+/// - false: file present but unreadable/corrupt, do NOT overwrite it
+fn decode_dtls_cert(path: PathBuf) -> Result<DtlsCert, bool> {
+    let path = path.join("webrtc_certhash");
+
+    let mut file = std::fs::OpenOptions::new().read(true).open(path.clone()).map_err(|e| {
+        tracing::debug!(?path, ?e, "failed opening dtls cert file");
+        // Create the new dtls cert file only if the file was not existing before.
+        match e.kind() {
+            ErrorKind::NotFound => true,
+            _ => false,
+        }
+    })?;
+
+    let file_len = file
+        .metadata()
+        .map_err(|e| {
+            tracing::debug!(?path, ?e, "failed access to dtls cert file metadata");
+            false
+        })
+        .map(|metadata| metadata.len() as usize)?;
+
+    let mut read = |buf: &mut [u8]| {
+        file.read_exact(buf).map_err(|e| {
+            tracing::debug!(?path, ?e, "failed reading buffer from file");
+            false
+        })
+    };
+
+    let mut buf = [0; 8];
+    read(&mut buf)?;
+    let certificate_len = u64::from_be_bytes(buf) as usize;
+    if certificate_len > file_len {
+        tracing::debug!(?path, "decoded certificate_len is too big");
+        return Err(false);
+    }
+    let mut certificate = vec![0; certificate_len];
+    read(&mut certificate)?;
+
+    read(&mut buf)?;
+    let private_key_len = u64::from_be_bytes(buf) as usize;
+    // 16 = 2 length u64 prefixes
+    if private_key_len != file_len - certificate_len - 16 {
+        tracing::debug!(?path, "decoded private key len doesn't match expected one");
+        return Err(false);
+    }
+    let mut private_key = vec![0; private_key_len];
+    read(&mut private_key)?;
+
+    Ok(DtlsCert {
+        certificate,
+        private_key,
+    })
 }
