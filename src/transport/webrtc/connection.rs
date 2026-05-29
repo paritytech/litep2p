@@ -1115,20 +1115,6 @@ impl WebRtcConnection {
                 },
             };
 
-            let duration = timeout.saturating_duration_since(Instant::now());
-            if duration.is_zero() {
-                if let Err(error) = self.rtc.handle_input(Input::Timeout(Instant::now())) {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        peer = ?self.peer,
-                        ?error,
-                        "str0m rejected timeout input, closing connection",
-                    );
-                    return self.on_connection_closed().await;
-                }
-                continue;
-            }
-
             tokio::select! {
                 biased;
                 datagram = self.dgram_rx.recv() => match datagram {
@@ -1248,7 +1234,7 @@ impl WebRtcConnection {
                         );
                     }
                 },
-                _ = tokio::time::sleep(duration) => {
+                _ = tokio::time::sleep(timeout.saturating_duration_since(Instant::now())) => {
                     if let Err(error) = self.rtc.handle_input(Input::Timeout(Instant::now())) {
                         tracing::debug!(
                             target: LOG_TARGET,
