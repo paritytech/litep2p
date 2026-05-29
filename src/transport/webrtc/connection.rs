@@ -1115,7 +1115,7 @@ impl WebRtcConnection {
                 },
             };
 
-            let duration = timeout - Instant::now();
+            let duration = timeout.saturating_duration_since(Instant::now());
             if duration.is_zero() {
                 if let Err(error) = self.rtc.handle_input(Input::Timeout(Instant::now())) {
                     tracing::debug!(
