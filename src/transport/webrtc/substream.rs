@@ -419,21 +419,8 @@ impl Stream for SubstreamHandle {
         let writer_state_stream_result = match self.writer_state.get() {
             WriterState::Open => {
                 match self.message_rx.poll_recv(cx) {
-                    Poll::Ready(None) => {
-                        // Writes are finished, start half close procedure.
-                        if matches!(self.writer_state.get(), WriterState::Open) {
-                            self.poll_half_close(cx)
-                        } else {
-                            // Do not handle duplicates. If within the first call to half_close
-                            // something went wrong and the state didn't transition from Open to
-                            // Fin then just tear down the connection.
-                            self.channel_state.set(ChannelState::Reset);
-                            Poll::Ready(Some(Message {
-                                payload: vec![],
-                                flag: Some(Flag::ResetStream),
-                            }))
-                        }
-                    }
+                    // Writes are finished, start half close procedure.
+                    Poll::Ready(None) => self.poll_half_close(cx),
                     res => res,
                 }
             }
