@@ -25,13 +25,16 @@ use crate::{
 
 use bytes::{Buf, BufMut, BytesMut};
 use futures::{task::AtomicWaker, Future, Stream};
-use parking_lot::Mutex;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio_util::sync::PollSender;
 
 use std::{
+    marker::PhantomData,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc,
+    },
     task::{Context, Poll},
     time::Duration,
 };
@@ -50,34 +53,41 @@ pub struct Message {
     pub flag: Option<Flag>,
 }
 
-/// Shared state used to sync `Substream` and `SubstreamHandle`.
-#[derive(Clone)]
-struct SharedState<T: Clone> {
-    inner: Arc<Inner<T>>,
+trait AtomicState {
+    fn from_u8(raw_state: u8) -> Self;
+    fn into_u8(self) -> u8;
 }
 
-struct Inner<T> {
-    state: Mutex<T>,
+/// Shared state used to sync `Substream` and `SubstreamHandle`.
+#[derive(Clone)]
+struct SharedState<T: AtomicState> {
+    inner: Arc<Inner>,
+    _phantom: PhantomData<T>,
+}
+
+struct Inner {
+    state: AtomicU8,
     waker: AtomicWaker,
 }
 
-impl<T: Clone> SharedState<T> {
+impl<T: AtomicState> SharedState<T> {
     fn new(val: T) -> Self {
         Self {
             inner: Arc::new(Inner {
-                state: Mutex::new(val),
+                state: AtomicU8::new(val.into_u8()),
                 waker: AtomicWaker::new(),
             }),
+            _phantom: Default::default(),
         }
     }
 
     fn set(&self, new_value: T) {
-        *self.inner.state.lock() = new_value;
+        self.inner.state.store(new_value.into_u8(), Ordering::Release);
         self.inner.waker.wake();
     }
 
     fn get(&self) -> T {
-        self.inner.state.lock().clone()
+        T::from_u8(self.inner.state.load(Ordering::Acquire))
     }
 
     // NOTE: this method should only be called from a single place,
@@ -90,38 +100,95 @@ impl<T: Clone> SharedState<T> {
 }
 
 /// Substream stream.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
+#[repr(u8)]
 enum ChannelState {
     /// Substream is fully open.
-    Open,
+    Open = 0,
     /// ResetStream has been received.
     ///
     /// This preempts both writer and reader state.
-    Reset,
+    Reset = 1,
+}
+
+impl AtomicState for ChannelState {
+    fn from_u8(raw_state: u8) -> Self {
+        match raw_state {
+            0 => ChannelState::Open,
+            1 => ChannelState::Reset,
+            // Unreachable in practice: `into_u8` only ever stores a valid variant and the
+            // `AtomicU8` only returns a previously-stored byte.
+            // Return Reset defensively rather than a panic.
+            _ => ChannelState::Reset,
+        }
+    }
+
+    fn into_u8(self) -> u8 {
+        self as u8
+    }
 }
 
 /// State of the reading side of the stream.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
+#[repr(u8)]
 enum ReaderState {
     /// The reading stream is open.
-    Open,
+    Open = 0,
     /// A Fin flag was received.
-    Fin,
+    Fin = 1,
     /// FinAck was sent back.
-    FinAck,
+    FinAck = 2,
+}
+
+impl AtomicState for ReaderState {
+    fn from_u8(raw_state: u8) -> Self {
+        match raw_state {
+            0 => ReaderState::Open,
+            1 => ReaderState::Fin,
+            2 => ReaderState::FinAck,
+            // Unreachable in practice: `into_u8` only ever stores a valid variant and the
+            // `AtomicU8` only returns a previously-stored byte.
+            // Return FinAck defensively rather than a panic.
+            _ => ReaderState::FinAck,
+        }
+    }
+
+    fn into_u8(self) -> u8 {
+        self as u8
+    }
 }
 
 /// State of the writing side of the stream.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
+#[repr(u8)]
 enum WriterState {
     /// The writing stream is open.
-    Open,
+    Open = 0,
     /// A Fin flag was sent.
-    Fin,
+    Fin = 1,
     /// FinAck was received.
-    FinAck,
+    FinAck = 2,
     /// StopSending was received.
-    StopSending,
+    StopSending = 3,
+}
+
+impl AtomicState for WriterState {
+    fn from_u8(raw_state: u8) -> Self {
+        match raw_state {
+            0 => WriterState::Open,
+            1 => WriterState::Fin,
+            2 => WriterState::FinAck,
+            3 => WriterState::StopSending,
+            // Unreachable in practice: `into_u8` only ever stores a valid variant and the
+            // `AtomicU8` only returns a previously-stored byte.
+            // Return FinAck defensively rather than a panic.
+            _ => WriterState::FinAck,
+        }
+    }
+
+    fn into_u8(self) -> u8 {
+        self as u8
+    }
 }
 
 /// Channel-backed substream. Must be owned and polled by exactly one task at a time.
@@ -642,10 +709,7 @@ mod tests {
                 flag: Some(Flag::Fin),
             })
         );
-        assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
-            WriterState::Fin
-        ));
+        assert!(matches!(handle.writer_state.get(), WriterState::Fin));
 
         // Receiving FIN_ACK
         handle
@@ -657,10 +721,7 @@ mod tests {
             .unwrap();
 
         // Write side is closed now, not the read side.
-        assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
-            WriterState::FinAck
-        ));
+        assert!(matches!(handle.writer_state.get(), WriterState::FinAck));
 
         // Receiving FIN
         handle
@@ -671,10 +732,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(matches!(
-            *handle.reader_state.inner.state.lock(),
-            ReaderState::Fin
-        ));
+        assert!(matches!(handle.reader_state.get(), ReaderState::Fin));
         // Expecing FIN_ACK to be sent immediately
         assert_eq!(
             handle.next().await,
@@ -683,10 +741,7 @@ mod tests {
                 flag: Some(Flag::FinAck),
             })
         );
-        assert!(matches!(
-            *handle.reader_state.inner.state.lock(),
-            ReaderState::FinAck
-        ));
+        assert!(matches!(handle.reader_state.get(), ReaderState::FinAck));
 
         assert_eq!(handle.next().await, None);
     }
@@ -987,10 +1042,7 @@ mod tests {
         );
 
         // Verify state is Fin
-        assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
-            WriterState::Fin
-        ));
+        assert!(matches!(handle.writer_state.get(), WriterState::Fin));
 
         // Send FIN_ACK to complete shutdown cleanly (avoids waiting for timeout)
         handle
@@ -1061,10 +1113,7 @@ mod tests {
         );
 
         // Verify we're in Fin state
-        assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
-            WriterState::Fin
-        ));
+        assert!(matches!(handle.writer_state.get(), WriterState::Fin));
 
         // Simulate receiving FIN_ACK from remote
         handle
@@ -1076,10 +1125,7 @@ mod tests {
             .unwrap();
 
         // Should transition to FinAcked
-        assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
-            WriterState::FinAck
-        ));
+        assert!(matches!(handle.writer_state.get(), WriterState::FinAck));
 
         // Shutdown should now complete
         shutdown_task.await.unwrap();
@@ -1125,10 +1171,7 @@ mod tests {
             .unwrap();
 
         // Should be in FinAcked state
-        assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
-            WriterState::FinAck
-        ));
+        assert!(matches!(handle.writer_state.get(), WriterState::FinAck));
 
         // Shutdown should now complete
         shutdown_task.await.unwrap();
@@ -1149,7 +1192,7 @@ mod tests {
 
         // Should transition to SendClosed
         assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
+            handle.writer_state.get(),
             WriterState::StopSending
         ));
 
@@ -1176,10 +1219,7 @@ mod tests {
         assert!(matches!(result, Err(Error::ConnectionClosed)));
 
         // Write side should be closed (state = SendClosed)
-        assert!(matches!(
-            *handle.channel_state.inner.state.lock(),
-            ChannelState::Reset
-        ));
+        assert!(matches!(handle.channel_state.get(), ChannelState::Reset));
 
         let mut buf = vec![0u8; 1024];
         match substream.read(&mut buf).await {
@@ -1206,10 +1246,7 @@ mod tests {
             }),
         );
         // Verify we're in Fin state
-        assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
-            WriterState::Fin
-        ));
+        assert!(matches!(handle.writer_state.get(), WriterState::Fin));
 
         // Now simulate receiving FIN_ACK (value = 3)
         // This should NOT trigger STOP_SENDING (value = 1) or RESET_STREAM (value = 2)
@@ -1223,10 +1260,7 @@ mod tests {
             .unwrap();
 
         // Should transition to FinAcked, not SendClosed
-        assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
-            WriterState::FinAck
-        ));
+        assert!(matches!(handle.writer_state.get(), WriterState::FinAck));
 
         // Shutdown should complete
         shutdown_task.await.unwrap();
@@ -1250,7 +1284,7 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
+            handle.writer_state.get(),
             WriterState::StopSending
         ));
 
@@ -1266,10 +1300,7 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(Error::ConnectionClosed)));
-        assert!(matches!(
-            *handle2.channel_state.inner.state.lock(),
-            ChannelState::Reset
-        ));
+        assert!(matches!(handle2.channel_state.get(), ChannelState::Reset));
 
         // Create a new substream for FIN test
         let (mut substream3, mut handle3) = Substream::new();
@@ -1287,10 +1318,7 @@ mod tests {
             }),
         );
         // Verify we're in Fin state
-        assert!(matches!(
-            *handle3.writer_state.inner.state.lock(),
-            WriterState::Fin
-        ));
+        assert!(matches!(handle3.writer_state.get(), WriterState::Fin));
 
         // Test that FIN_ACK (3) is handled correctly
         handle3
@@ -1301,10 +1329,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(matches!(
-            *handle3.writer_state.inner.state.lock(),
-            WriterState::FinAck
-        ));
+        assert!(matches!(handle3.writer_state.get(), WriterState::FinAck));
 
         // Shutdown should complete
         shutdown_task3.await.unwrap();
@@ -1419,10 +1444,7 @@ mod tests {
         );
 
         // Verify we transitioned through Closing to Fin
-        assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
-            WriterState::Fin
-        ));
+        assert!(matches!(handle.writer_state.get(), WriterState::Fin));
 
         // Send FIN_ACK to complete shutdown
         handle
@@ -1456,10 +1478,7 @@ mod tests {
                 flag: Some(Flag::Fin)
             })
         );
-        assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
-            WriterState::Fin
-        ));
+        assert!(matches!(handle.writer_state.get(), WriterState::Fin));
 
         // Send FIN_ACK to complete first shutdown
         handle
@@ -1475,10 +1494,7 @@ mod tests {
 
         // Second shutdown should succeed without error (already in FinAcked state)
         substream.shutdown().await.unwrap();
-        assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
-            WriterState::FinAck
-        ));
+        assert!(matches!(handle.writer_state.get(), WriterState::FinAck));
     }
 
     #[tokio::test]
@@ -1502,10 +1518,7 @@ mod tests {
         );
 
         // Verify we're in Fin state
-        assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
-            WriterState::Fin
-        ));
+        assert!(matches!(handle.writer_state.get(), WriterState::Fin));
 
         // DON'T send FIN_ACK - let it timeout
         // The shutdown should complete after FIN_ACK_TIMEOUT (10 seconds)
@@ -1520,10 +1533,7 @@ mod tests {
                 flag: Some(Flag::ResetStream)
             }),
         );
-        assert!(matches!(
-            *handle.channel_state.inner.state.lock(),
-            ChannelState::Reset
-        ));
+        assert!(matches!(handle.channel_state.get(), ChannelState::Reset));
     }
 
     #[tokio::test]
@@ -1559,12 +1569,9 @@ mod tests {
         // Wait for shutdown to complete and Substream to drop
         shutdown_task.await.unwrap();
 
-        assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
-            WriterState::FinAck
-        ));
+        assert!(matches!(handle.writer_state.get(), WriterState::FinAck));
         // If reader_state.inner.state is also closed, then we can expect a None.
-        *handle.reader_state.inner.state.lock() = ReaderState::FinAck;
+        handle.reader_state.set(ReaderState::FinAck);
         // Verify handle signals closure (returns None)
         assert_eq!(
             handle.next().await,
@@ -1646,10 +1653,7 @@ mod tests {
         );
 
         // Verify local is in Fin state
-        assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
-            WriterState::Fin
-        ));
+        assert!(matches!(handle.writer_state.get(), WriterState::Fin));
 
         // Now simulate remote also sending FIN (simultaneous close)
         // This should trigger FIN_ACK response even though we're in Fin state
@@ -1671,14 +1675,8 @@ mod tests {
         );
 
         // Local should still be in Fin (waiting for FIN_ACK from remote)
-        assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
-            WriterState::Fin
-        ));
-        assert!(matches!(
-            *handle.reader_state.inner.state.lock(),
-            ReaderState::FinAck
-        ));
+        assert!(matches!(handle.writer_state.get(), WriterState::Fin));
+        assert!(matches!(handle.reader_state.get(), ReaderState::FinAck));
 
         // Now remote sends FIN_ACK (completing their side of the handshake)
         handle
@@ -1690,10 +1688,7 @@ mod tests {
             .unwrap();
 
         // Local should now transition to FinAcked
-        assert!(matches!(
-            *handle.writer_state.inner.state.lock(),
-            WriterState::FinAck
-        ));
+        assert!(matches!(handle.writer_state.get(), WriterState::FinAck));
 
         // Shutdown should complete successfully
         shutdown_task.await.unwrap();
