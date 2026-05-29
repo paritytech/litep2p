@@ -414,7 +414,6 @@ impl WebRtcTransport {
             target: LOG_TARGET,
             ?source,
             ?ufrag,
-            ?pass,
             "received stun message"
         );
 
