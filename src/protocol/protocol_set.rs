@@ -177,19 +177,13 @@ impl From<InnerTransportEvent> for TransportEvent {
 pub enum ProtocolCommand {
     /// Open substream.
     OpenSubstream {
-        /// Protocol name.
-        protocol: ProtocolName,
-
-        /// Fallback names.
+        /// Protocols to negotiate.
         ///
-        /// If the protocol has changed its name but wishes to support the old name(s), it must
-        /// provide the old protocol names in `fallback_names`. These are fed into
-        /// `multistream-select` which them attempts to negotiate a protocol for the substream
-        /// using one of the provided names and if the substream is negotiated successfully, will
-        /// report back the actual protocol name that was negotiated, in case the protocol
-        /// needs to deal with the old version of the protocol in different way compared to
-        /// the new version.
-        fallback_names: Vec<ProtocolName>,
+        /// `protocols[0]` is the main protocol; the rest are fallbacks fed into
+        /// `multistream-select`, which attempts to negotiate one of them. The list is
+        /// precomputed once per protocol handler and shared via [`Arc`] so it can be
+        /// cheaply forwarded with every substream open.
+        protocols: Arc<[ProtocolName]>,
 
         /// Substream ID.
         ///
@@ -236,7 +230,10 @@ pub struct ProtocolSet {
     /// Mapping `fallback_name` -> `main_name`.
     fallback_names: HashMap<ProtocolName, ProtocolName>,
     /// Connection keep-alive settings for both main & fallback protocol names.
-    keep_alives: HashMap<ProtocolName, SubstreamKeepAlive>,
+    ///
+    /// Wrapped in [`Arc`] so it can be handed to the listener path on every inbound
+    /// substream without re-cloning the map.
+    keep_alives: Arc<HashMap<ProtocolName, SubstreamKeepAlive>>,
 }
 
 impl ProtocolSet {
@@ -275,7 +272,8 @@ impl ProtocolSet {
                 )
             })
             .collect::<Vec<_>>();
-        let keep_alives = main_keep_alives.into_iter().chain(fallback_keep_alives).collect();
+        let keep_alives =
+            Arc::new(main_keep_alives.into_iter().chain(fallback_keep_alives).collect());
 
         ProtocolSet {
             rx,
@@ -310,8 +308,8 @@ impl ProtocolSet {
     }
 
     /// Get the list of all supported protocols with corresponding keep-alive settings.
-    pub fn protocols_with_keep_alives(&self) -> HashMap<ProtocolName, SubstreamKeepAlive> {
-        self.keep_alives.clone()
+    pub fn protocols_with_keep_alives(&self) -> Arc<HashMap<ProtocolName, SubstreamKeepAlive>> {
+        Arc::clone(&self.keep_alives)
     }
 
     /// Report to `protocol` that substream was opened for `peer`.

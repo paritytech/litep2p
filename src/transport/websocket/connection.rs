@@ -32,7 +32,10 @@ use crate::{
         websocket::{stream::BufferedStream, substream::Substream},
         Endpoint,
     },
-    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
+    types::{
+        protocol::{protocol_name_as_str, ProtocolName},
+        ConnectionId, SubstreamId,
+    },
     BandwidthSink, PeerId,
 };
 
@@ -43,7 +46,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use url::Url;
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 mod schema {
     pub(super) mod noise {
@@ -203,13 +206,18 @@ impl WebSocketConnection {
     }
 
     /// Negotiate protocol.
-    async fn negotiate_protocol<S: AsyncRead + AsyncWrite + Unpin>(
+    async fn negotiate_protocol<S, I>(
         stream: S,
         role: &Role,
-        protocols: Vec<&str>,
+        protocols: I,
         substream_open_timeout: Duration,
-    ) -> Result<(Negotiated<S>, ProtocolName), NegotiationError> {
-        tracing::trace!(target: LOG_TARGET, ?protocols, "negotiating protocols");
+    ) -> Result<(Negotiated<S>, ProtocolName), NegotiationError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+        I: IntoIterator,
+        I::Item: AsRef<[u8]> + Clone + std::fmt::Display,
+    {
+        tracing::trace!(target: LOG_TARGET, "negotiating protocols");
 
         match tokio::time::timeout(substream_open_timeout, async move {
             match role {
@@ -222,7 +230,7 @@ impl WebSocketConnection {
             Err(_) => Err(NegotiationError::Timeout),
             Ok(Err(error)) => Err(NegotiationError::MultistreamSelectError(error)),
             Ok(Ok((protocol, socket))) => {
-                tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
+                tracing::trace!(target: LOG_TARGET, %protocol, "protocol negotiated");
 
                 Ok((socket, ProtocolName::from(protocol.to_string())))
             }
@@ -378,7 +386,7 @@ impl WebSocketConnection {
         stream: crate::yamux::Stream,
         permit: Permit,
         substream_id: SubstreamId,
-        protocols: HashMap<ProtocolName, SubstreamKeepAlive>,
+        protocols: Arc<HashMap<ProtocolName, SubstreamKeepAlive>>,
         substream_open_timeout: Duration,
     ) -> Result<NegotiatedSubstream, NegotiationError> {
         tracing::trace!(
@@ -387,11 +395,10 @@ impl WebSocketConnection {
             "accept inbound substream"
         );
 
-        let protocol_names = protocols.keys().map(|protocol| &**protocol).collect::<Vec<&str>>();
         let (io, protocol) = Self::negotiate_protocol(
             stream,
             &Role::Listener,
-            protocol_names,
+            protocols.keys().map(protocol_name_as_str),
             substream_open_timeout,
         )
         .await?;
@@ -413,17 +420,21 @@ impl WebSocketConnection {
         })
     }
 
-    /// Open substream for `protocol`.
+    /// Open substream for `protocols`.
     pub async fn open_substream(
         mut control: crate::yamux::Control,
         permit: Permit,
         substream_id: SubstreamId,
-        protocol: ProtocolName,
-        fallback_names: Vec<ProtocolName>,
+        protocols: Arc<[ProtocolName]>,
         substream_open_timeout: Duration,
         keep_alive: SubstreamKeepAlive,
     ) -> Result<NegotiatedSubstream, SubstreamError> {
-        tracing::debug!(target: LOG_TARGET, ?protocol, ?substream_id, "open substream");
+        tracing::debug!(
+            target: LOG_TARGET,
+            protocol = %protocols[0],
+            ?substream_id,
+            "open substream",
+        );
 
         let stream = match control.open_stream().await {
             Ok(stream) => {
@@ -444,15 +455,13 @@ impl WebSocketConnection {
             }
         };
 
-        // TODO: https://github.com/paritytech/litep2p/issues/346 protocols don't change after
-        // they've been initialized so this should be done only once
-        let protocols = std::iter::once(&*protocol)
-            .chain(fallback_names.iter().map(|protocol| &**protocol))
-            .collect();
-
-        let (io, protocol) =
-            Self::negotiate_protocol(stream, &Role::Dialer, protocols, substream_open_timeout)
-                .await?;
+        let (io, protocol) = Self::negotiate_protocol(
+            stream,
+            &Role::Dialer,
+            protocols.iter().map(protocol_name_as_str),
+            substream_open_timeout,
+        )
+        .await?;
 
         Ok(NegotiatedSubstream {
             io: io.inner(),
@@ -567,8 +576,7 @@ impl WebSocketConnection {
                 }
                 protocol = self.protocol_set.next() => match protocol {
                     Some(ProtocolCommand::OpenSubstream {
-                        protocol,
-                        fallback_names,
+                        protocols,
                         substream_id,
                         permit,
                         keep_alive,
@@ -576,10 +584,11 @@ impl WebSocketConnection {
                     }) => {
                         let control = self.control.clone();
                         let substream_open_timeout = self.substream_open_timeout;
+                        let protocol = protocols[0].clone();
 
                         tracing::trace!(
                             target: LOG_TARGET,
-                            ?protocol,
+                            %protocol,
                             ?substream_id,
                             "open substream"
                         );
@@ -591,8 +600,7 @@ impl WebSocketConnection {
                                     control,
                                     permit,
                                     substream_id,
-                                    protocol.clone(),
-                                    fallback_names,
+                                    protocols,
                                     substream_open_timeout,
                                     keep_alive,
                                 ),
