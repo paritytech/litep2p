@@ -212,7 +212,7 @@ pub struct WebRtcConnection {
     /// Substream handles.
     handles: SubstreamHandleSet,
 
-    /// Inbound noise-channel byte buffer for reassembling pbio-delimited frames.
+    /// Inbound data channel byte buffer for reassembling full protobuf frames.
     ///
     /// The libp2p-go msgio implementation issues two separate `Write` calls:
     ///  - variant length
