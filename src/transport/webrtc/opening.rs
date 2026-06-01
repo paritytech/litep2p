@@ -116,7 +116,7 @@ pub struct OpeningWebRtcConnection {
     /// Local address.
     local_address: SocketAddr,
 
-    /// Inbound noise-channel byte buffer for reassembling pbio-delimited frames.
+    /// Inbound noise-channel byte buffer for reassembling protobuf frames.
     ///
     /// The libp2p-go msgio implementation issues two separate `Write` calls:
     ///  - variant length
