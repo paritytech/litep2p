@@ -33,7 +33,10 @@ use crate::{
         tcp::substream::Substream,
         Endpoint,
     },
-    types::{protocol::ProtocolName, ConnectionId, SubstreamId},
+    types::{
+        protocol::{protocol_name_as_str, ProtocolName},
+        ConnectionId, SubstreamId,
+    },
     BandwidthSink, PeerId,
 };
 
@@ -275,11 +278,15 @@ impl TcpConnection {
         substream_id: SubstreamId,
         permit: Permit,
         keep_alive: SubstreamKeepAlive,
-        protocol: ProtocolName,
-        fallback_names: Vec<ProtocolName>,
+        protocols: Arc<[ProtocolName]>,
         open_timeout: Duration,
     ) -> Result<NegotiatedSubstream, SubstreamError> {
-        tracing::debug!(target: LOG_TARGET, ?protocol, ?substream_id, "open substream");
+        tracing::debug!(
+            target: LOG_TARGET,
+            protocol = %protocols[0],
+            ?substream_id,
+            "open substream",
+        );
 
         let stream = match control.open_stream().await {
             Ok(stream) => {
@@ -300,14 +307,13 @@ impl TcpConnection {
             }
         };
 
-        // TODO: https://github.com/paritytech/litep2p/issues/346 protocols don't change after
-        // they've been initialized so this should be done only once
-        let protocols = std::iter::once(&*protocol)
-            .chain(fallback_names.iter().map(|protocol| &**protocol))
-            .collect();
-
-        let (io, protocol) =
-            Self::negotiate_protocol(stream, &Role::Dialer, protocols, open_timeout).await?;
+        let (io, protocol) = Self::negotiate_protocol(
+            stream,
+            &Role::Dialer,
+            protocols.iter().map(protocol_name_as_str),
+            open_timeout,
+        )
+        .await?;
 
         Ok(NegotiatedSubstream {
             io: io.inner(),
@@ -360,7 +366,7 @@ impl TcpConnection {
         stream: crate::yamux::Stream,
         permit: Permit,
         substream_id: SubstreamId,
-        protocols: HashMap<ProtocolName, SubstreamKeepAlive>,
+        protocols: Arc<HashMap<ProtocolName, SubstreamKeepAlive>>,
         open_timeout: Duration,
     ) -> Result<NegotiatedSubstream, NegotiationError> {
         tracing::trace!(
@@ -369,9 +375,13 @@ impl TcpConnection {
             "accept inbound substream",
         );
 
-        let protocol_names = protocols.keys().map(|protocol| &**protocol).collect::<Vec<&str>>();
-        let (io, protocol) =
-            Self::negotiate_protocol(stream, &Role::Listener, protocol_names, open_timeout).await?;
+        let (io, protocol) = Self::negotiate_protocol(
+            stream,
+            &Role::Listener,
+            protocols.keys().map(protocol_name_as_str),
+            open_timeout,
+        )
+        .await?;
         let keep_alive = *protocols.get(&protocol).expect("protocol to be one of the keys");
 
         tracing::trace!(
@@ -391,13 +401,18 @@ impl TcpConnection {
     }
 
     /// Negotiate protocol.
-    async fn negotiate_protocol<S: AsyncRead + AsyncWrite + Unpin>(
+    async fn negotiate_protocol<S, I>(
         stream: S,
         role: &Role,
-        protocols: Vec<&str>,
+        protocols: I,
         substream_open_timeout: Duration,
-    ) -> Result<(Negotiated<S>, ProtocolName), NegotiationError> {
-        tracing::trace!(target: LOG_TARGET, ?protocols, "negotiating protocols");
+    ) -> Result<(Negotiated<S>, ProtocolName), NegotiationError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+        I: IntoIterator,
+        I::Item: AsRef<[u8]> + Clone + std::fmt::Display,
+    {
+        tracing::trace!(target: LOG_TARGET, "negotiating protocols");
 
         match tokio::time::timeout(substream_open_timeout, async move {
             match role {
@@ -410,7 +425,7 @@ impl TcpConnection {
             Err(_) => Err(NegotiationError::Timeout),
             Ok(Err(error)) => Err(NegotiationError::MultistreamSelectError(error)),
             Ok(Ok((protocol, socket))) => {
-                tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
+                tracing::trace!(target: LOG_TARGET, %protocol, "protocol negotiated");
 
                 Ok((socket, ProtocolName::from(protocol.to_string())))
             }
@@ -681,8 +696,7 @@ impl TcpConnection {
     ) -> crate::Result<bool> {
         match command {
             Some(ProtocolCommand::OpenSubstream {
-                protocol,
-                fallback_names,
+                protocols,
                 substream_id,
                 connection_id,
                 permit,
@@ -690,10 +704,11 @@ impl TcpConnection {
             }) => {
                 let control = self.control.clone();
                 let open_timeout = self.substream_open_timeout;
+                let protocol = protocols[0].clone();
 
                 tracing::trace!(
                     target: LOG_TARGET,
-                    ?protocol,
+                    %protocol,
                     ?substream_id,
                     ?connection_id,
                     "open substream",
@@ -707,8 +722,7 @@ impl TcpConnection {
                             substream_id,
                             permit,
                             keep_alive,
-                            protocol.clone(),
-                            fallback_names,
+                            protocols,
                             open_timeout,
                         ),
                     )

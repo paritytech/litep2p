@@ -286,8 +286,13 @@ pub struct TransportService {
     /// Protocol.
     protocol: ProtocolName,
 
-    /// Fallback names for the protocol.
-    fallback_names: Vec<ProtocolName>,
+    /// Protocols to negotiate on every outbound substream, with the main protocol at index 0
+    /// and fallbacks afterwards.
+    ///
+    /// Precomputed once in [`Self::new`] and reused for every substream open. The list is
+    /// shared with the transport via [`Arc`], avoiding a per-substream allocation in the hot
+    /// path (see paritytech/litep2p#346).
+    outbound_protocols: Arc<[ProtocolName]>,
 
     /// Open connections.
     connections: HashMap<PeerId, ConnectionContext>,
@@ -323,12 +328,17 @@ impl TransportService {
 
         let keep_alive_tracker = KeepAliveTracker::new(keep_alive_timeout);
 
+        let outbound_protocols: Arc<[ProtocolName]> = std::iter::once(protocol.clone())
+            .chain(fallback_names)
+            .collect::<Vec<_>>()
+            .into();
+
         (
             Self {
                 rx,
                 protocol,
                 local_peer_id,
-                fallback_names,
+                outbound_protocols,
                 transport_handle,
                 next_substream_id,
                 connections: HashMap::new(),
@@ -592,8 +602,7 @@ impl TransportService {
 
         connection
             .open_substream(
-                self.protocol.clone(),
-                self.fallback_names.clone(),
+                Arc::clone(&self.outbound_protocols),
                 substream_id,
                 permit,
                 self.substream_keep_alive,
@@ -1426,12 +1435,12 @@ mod tests {
         let protocol_command = cmd_rx1.recv().await.unwrap();
         match protocol_command {
             ProtocolCommand::OpenSubstream {
-                protocol,
+                protocols,
                 substream_id: opened_substream_id,
                 permit,
                 ..
             } => {
-                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(protocols[0], ProtocolName::from("/notif/1"));
                 assert_eq!(substream_id, opened_substream_id);
 
                 // Save the substream permit for later.
@@ -1444,12 +1453,12 @@ mod tests {
         let protocol_command = cmd_rx1.recv().await.unwrap();
         match protocol_command {
             ProtocolCommand::OpenSubstream {
-                protocol,
+                protocols,
                 substream_id: opened_substream_id,
                 permit,
                 ..
             } => {
-                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(protocols[0], ProtocolName::from("/notif/1"));
                 assert_eq!(second_substream_id, opened_substream_id);
 
                 // Save the substream permit for later.
@@ -1475,12 +1484,12 @@ mod tests {
         let protocol_command = cmd_rx1.recv().await.unwrap();
         match protocol_command {
             ProtocolCommand::OpenSubstream {
-                protocol,
+                protocols,
                 substream_id: opened_substream_id,
                 permit,
                 ..
             } => {
-                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(protocols[0], ProtocolName::from("/notif/1"));
                 assert_eq!(substream_id, opened_substream_id);
 
                 // Save the substream permit for later.
@@ -1561,12 +1570,12 @@ mod tests {
         let protocol_command = cmd_rx1.recv().await.unwrap();
         match protocol_command {
             ProtocolCommand::OpenSubstream {
-                protocol,
+                protocols,
                 substream_id: opened_substream_id,
                 permit,
                 ..
             } => {
-                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(protocols[0], ProtocolName::from("/notif/1"));
                 assert_eq!(substream_id, opened_substream_id);
 
                 // Save the substream permit for later.
@@ -1579,12 +1588,12 @@ mod tests {
         let protocol_command = cmd_rx1.recv().await.unwrap();
         match protocol_command {
             ProtocolCommand::OpenSubstream {
-                protocol,
+                protocols,
                 substream_id: opened_substream_id,
                 permit,
                 ..
             } => {
-                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(protocols[0], ProtocolName::from("/notif/1"));
                 assert_eq!(second_substream_id, opened_substream_id);
 
                 // Save the substream permit for later.
@@ -1619,12 +1628,12 @@ mod tests {
         let protocol_command = cmd_rx1.recv().await.unwrap();
         match protocol_command {
             ProtocolCommand::OpenSubstream {
-                protocol,
+                protocols,
                 substream_id: opened_substream_id,
                 permit,
                 ..
             } => {
-                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(protocols[0], ProtocolName::from("/notif/1"));
                 assert_eq!(substream_id, opened_substream_id);
 
                 // Save the substream permit for later.
