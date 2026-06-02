@@ -288,19 +288,10 @@ impl Transport for QuicTransport {
                 Ok(Ok(address)) => address,
             };
 
-            let crypto_config = match make_client_config(&keypair, Some(peer)) {
-                Ok(config) => Arc::new(config),
-                Err(_) =>
-                    return (
-                        connection_id,
-                        Err(crate::error::NegotiationError::Quic(QuicError::InvalidCertificate).into()),
-                    ),
-            };
+            let crypto_config =
+                Arc::new(make_client_config(&keypair, Some(peer)).expect("to succeed"));
             let mut transport_config = quinn::TransportConfig::default();
-            let timeout = match IdleTimeout::try_from(connection_open_timeout) {
-                Ok(timeout) => timeout,
-                Err(_) => return (connection_id, Err(DialError::Timeout)),
-            };
+            let timeout = IdleTimeout::try_from(connection_open_timeout).expect("to succeed");
             transport_config.max_idle_timeout(Some(timeout));
             let mut client_config = ClientConfig::new(crypto_config);
             client_config.transport_config(Arc::new(transport_config));
@@ -436,14 +427,11 @@ impl Transport for QuicTransport {
                         Ok(Ok(address)) => address,
                     };
 
-                    let crypto_config = Arc::new(
-                        make_client_config(&keypair, Some(peer)).map_err(|_| {
-                            DialError::NegotiationError(QuicError::InvalidCertificate.into())
-                        })?,
-                    );
+                    let crypto_config =
+                        Arc::new(make_client_config(&keypair, Some(peer)).expect("to succeed"));
                     let mut transport_config = quinn::TransportConfig::default();
-                    let timeout = IdleTimeout::try_from(connection_open_timeout)
-                        .map_err(|_| DialError::Timeout)?;
+                    let timeout =
+                        IdleTimeout::try_from(connection_open_timeout).expect("to succeed");
                     transport_config.max_idle_timeout(Some(timeout));
                     let mut client_config = ClientConfig::new(crypto_config);
                     client_config.transport_config(Arc::new(transport_config));
