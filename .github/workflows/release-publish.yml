@@ -6,9 +6,9 @@
 #     and runs the full test suite, so the reviewer sees real results before
 #     approving.
 #   - `publish` is gated by the `release` environment and only runs after
-#     `verify` succeeds and a reviewer approves. It creates and pushes the
-#     `vX.Y.Z` tag, publishes to crates.io, and creates a GitHub Release with
-#     notes extracted from CHANGELOG.md.
+#     `verify` succeeds and a reviewer approves. It publishes to crates.io
+#     first, then (on success) creates and pushes the `vX.Y.Z` tag and
+#     creates a GitHub Release with notes extracted from CHANGELOG.md.
 
 name: Release Publish
 
@@ -30,7 +30,7 @@ permissions:
 jobs:
   verify:
     name: Verify release
-    runs-on: parity-default
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
       image: paritytech/ci-unified:bullseye-1.93.0-2026-01-27-v202605151311
@@ -84,6 +84,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish
+
       - name: Create and push tag
         shell: bash
         env:
@@ -98,11 +103,6 @@ jobs:
             git push origin "$TAG"
             echo "Created and pushed tag $TAG."
           fi
-
-      - name: Publish to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: cargo publish
 
       - name: Extract release notes from CHANGELOG.md
         id: notes

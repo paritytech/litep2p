@@ -40,7 +40,7 @@ These do not need to be repeated for subsequent releases.
 5. Go to the [Release Publish workflow](https://github.com/paritytech/litep2p/actions/workflows/release-publish.yml), click **Run workflow**, and supply the **same `version`** you just merged.
 
     - The `verify` job runs the full test suite and checks that the requested version matches `Cargo.toml` on `master`. Review its result before approving the next step.
-    - The `publish` job is gated by the `release` environment. Once `verify` passes, GitHub requests a reviewer's approval; once approved it **creates and pushes the `vX.Y.Z` tag on `master`**, publishes to crates.io, and creates a GitHub Release using the changelog section from step 3.
+    - The `publish` job is gated by the `release` environment. Once `verify` passes, GitHub requests a reviewer's approval; once approved it **publishes to crates.io first**, and only on success **creates and pushes the `vX.Y.Z` tag on `master`** and creates a GitHub Release using the changelog section from step 3. If `cargo publish` fails, no tag or release is created — you can fix the issue and re-run cleanly.
 
     You no longer create or push the tag by hand — the publish workflow does it. The tag is an annotated (unsigned) tag created by `github-actions[bot]`.
 

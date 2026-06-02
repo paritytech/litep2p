@@ -43,7 +43,7 @@ permissions:
 jobs:
   prepare:
     name: Prepare release PR
-    runs-on: parity-default
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
       image: paritytech/ci-unified:bullseye-1.93.0-2026-01-27-v202605151311
@@ -116,8 +116,8 @@ jobs:
             { print }
           ' Cargo.toml > Cargo.toml.new
           mv Cargo.toml.new Cargo.toml
-          echo "Updated package version line:"
-          grep -m1 '^version = ' Cargo.toml
+          echo "Diff of Cargo.toml after version bump:"
+          git --no-pager diff -- Cargo.toml
 
       - name: Regenerate Cargo.lock
         run: cargo generate-lockfile
