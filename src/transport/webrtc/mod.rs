@@ -31,7 +31,7 @@ use crate::{
     PeerId,
 };
 
-use futures::{future::BoxFuture, Future, Stream};
+use futures::{future::BoxFuture, stream::FuturesUnordered, Future, Stream, StreamExt};
 use futures_timer::Delay;
 use hickory_resolver::TokioResolver;
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
@@ -140,6 +140,9 @@ pub(crate) struct WebRtcTransport {
 
     /// Connected peers.
     open: HashMap<SocketAddr, ConnectionContext>,
+
+    /// Watches for closed connections.
+    closed_connections: FuturesUnordered<BoxFuture<'static, (SocketAddr, ConnectionId)>>,
 
     /// OpeningWebRtc connections.
     opening: HashMap<SocketAddr, OpeningWebRtcConnection>,
@@ -514,6 +517,7 @@ impl TransportBuilder for WebRtcTransport {
                 dtls_cert,
                 listen_address,
                 open: HashMap::new(),
+                closed_connections: FuturesUnordered::new(),
                 opening: HashMap::new(),
                 connections: HashMap::new(),
                 socket: Arc::new(socket),
@@ -605,6 +609,13 @@ impl Transport for WebRtcTransport {
         let socket = Arc::clone(&self.socket);
         let listen_address = self.listen_address;
 
+        let watcher_tx = tx.clone();
+        self.closed_connections.push(Box::pin(async move {
+            // Resolves when the `WebRtcConnection` is dropped.
+            watcher_tx.closed().await;
+            (source, connection_id)
+        }));
+
         self.open.insert(
             source,
             ConnectionContext {
@@ -692,6 +703,17 @@ impl Stream for WebRtcTransport {
 
         if let Some(event) = this.pending_events.pop_front() {
             return Poll::Ready(Some(event));
+        }
+
+        while let Poll::Ready(Some((source, connection_id))) =
+            this.closed_connections.poll_next_unpin(cx)
+        {
+            if let Entry::Occupied(entry) = this.open.entry(source) {
+                if entry.get().connection_id == connection_id {
+                    entry.remove();
+                }
+            }
+            this.timeouts.remove(&source);
         }
 
         loop {
