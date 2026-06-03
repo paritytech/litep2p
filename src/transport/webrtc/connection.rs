@@ -38,8 +38,7 @@ use crate::{
     PeerId,
 };
 
-use bytes::{Bytes, BytesMut
-};
+use bytes::{Bytes, BytesMut};
 use futures::{task::AtomicWaker, Stream, StreamExt};
 use indexmap::IndexMap;
 use str0m::{
