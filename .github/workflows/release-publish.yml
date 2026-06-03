@@ -1,0 +1,141 @@
+# Tags master and publishes litep2p to crates.io. Triggered manually from the
+# Actions tab once the release-prep PR (version bump + CHANGELOG) is merged.
+#
+# Flow:
+#   - `verify` checks that the requested version matches Cargo.toml on master
+#     and runs the full test suite, so the reviewer sees real results before
+#     approving.
+#   - `publish` is gated by the `release` environment and only runs after
+#     `verify` succeeds and a reviewer approves. It publishes to crates.io
+#     first, then (on success) creates and pushes the `vX.Y.Z` tag and
+#     creates a GitHub Release with notes extracted from CHANGELOG.md.
+
+name: Release Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release; must match Cargo.toml on master (e.g. 0.15.0, no leading 'v')"
+        required: true
+        type: string
+
+concurrency:
+  group: release-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: paritytech/ci-unified:bullseye-1.93.0-2026-01-27-v202605151311
+      options: --sysctl net.ipv6.conf.all.disable_ipv6=0
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: master
+
+      - name: Verify requested version matches Cargo.toml
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          CRATE_VERSION="$(grep -m1 -E '^version = "' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+          echo "Requested version: $VERSION"
+          echo "Cargo.toml version: $CRATE_VERSION"
+          if [ "$VERSION" != "$CRATE_VERSION" ]; then
+            echo "::error::Requested version ($VERSION) does not match Cargo.toml on master ($CRATE_VERSION). Merge the release-prep PR first, or pass the correct version."
+            exit 1
+          fi
+
+      - name: Run tests
+        run: cargo test --all-features --all-targets
+
+  publish:
+    name: Publish to crates.io
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: paritytech/ci-unified:bullseye-1.93.0-2026-01-27-v202605151311
+    environment:
+      name: release
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: master
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Configure git identity
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish
+
+      - name: Create and push tag
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v$VERSION"
+          if git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists on origin; skipping tag creation."
+          else
+            git tag -a "$TAG" -m "Release litep2p $TAG"
+            git push origin "$TAG"
+            echo "Created and pushed tag $TAG."
+          fi
+
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\["ver"\\]" { p=1; next }
+            p && /^## \[/ { exit }
+            p { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::warning::No CHANGELOG section found for $VERSION; release notes will be empty."
+            echo "Release v$VERSION" > release-notes.md
+          fi
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION:  ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" \
+              --title "$TAG" \
+              --notes-file release-notes.md
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file release-notes.md \
+              --verify-tag
+          fi
