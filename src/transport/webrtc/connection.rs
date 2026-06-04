@@ -30,7 +30,7 @@ use crate::{
         webrtc::{
             schema::webrtc::message::Flag,
             substream::{Event as SubstreamEvent, Substream as WebRtcSubstream, SubstreamHandle},
-            util::WebRtcMessage,
+            util::{extract_framed_message, WebRtcMessage},
         },
         Endpoint,
     },
@@ -38,6 +38,7 @@ use crate::{
     PeerId,
 };
 
+use bytes::{Bytes, BytesMut};
 use futures::{task::AtomicWaker, Stream, StreamExt};
 use indexmap::IndexMap;
 use str0m::{
@@ -251,6 +252,18 @@ pub struct WebRtcConnection {
 
     /// Substream handles.
     handles: SubstreamHandleSet,
+
+    /// Inbound data channel byte buffer for reassembling full protobuf frames.
+    ///
+    /// The libp2p-go msgio implementation issues two separate `Write` calls:
+    ///  - variant length
+    ///  - protobuf body
+    ///
+    /// These will become two distinct SCTP messages on the data channel.
+    ///
+    /// Accumulate raw bytes here and only attempt protobuf decode once a
+    /// full `varint length ++ body` frame is available.
+    recv_buffers: HashMap<ChannelId, BytesMut>,
 }
 
 impl WebRtcConnection {
@@ -278,6 +291,7 @@ impl WebRtcConnection {
             pending_messages: HashMap::new(),
             channels: HashMap::new(),
             handles: SubstreamHandleSet::new(),
+            recv_buffers: HashMap::new(),
         }
     }
 
@@ -455,6 +469,7 @@ impl WebRtcConnection {
         self.channels.remove(&channel_id);
         self.pending_messages.remove(&channel_id);
         self.handles.remove(&channel_id);
+        self.recv_buffers.remove(&channel_id);
 
         Ok(())
     }
@@ -476,7 +491,7 @@ impl WebRtcConnection {
     async fn on_inbound_opening_channel_data(
         &mut self,
         channel_id: ChannelId,
-        data: Vec<u8>,
+        data: Bytes,
         header_received: bool,
     ) -> crate::Result<Option<(SubstreamId, SubstreamHandle, Option<Permit>)>> {
         tracing::trace!(
@@ -558,7 +573,7 @@ impl WebRtcConnection {
     async fn on_outbound_opening_channel_data(
         &mut self,
         channel_id: ChannelId,
-        data: Vec<u8>,
+        data: Bytes,
         mut dialer_state: WebRtcDialerState,
         context: ChannelContext,
     ) -> Result<Option<(SubstreamId, SubstreamHandle)>, SubstreamError> {
@@ -683,8 +698,9 @@ impl WebRtcConnection {
     async fn on_open_channel_data(
         &mut self,
         channel_id: ChannelId,
-        data: Vec<u8>,
+        data: Bytes,
     ) -> crate::Result<()> {
+        // Decode errors are not recoverable.
         let message = WebRtcMessage::decode(&data)?;
 
         tracing::debug!(
@@ -713,6 +729,13 @@ impl WebRtcConnection {
     }
 
     /// Handle data received from a channel.
+    ///
+    /// Bytes are accumulated in a per-channel buffer and only handed to the per-state
+    /// dispatcher once a complete `varint length ++ protobuf body` frame is available.
+    ///
+    /// This handles peers (go-libp2p's pbio writer) that split varint and body
+    /// across two SCTP messages, while remaining a no-op for peers that send the whole
+    /// frame in one message (smoldot).
     async fn on_inbound_data(&mut self, channel_id: ChannelId, data: Vec<u8>) -> crate::Result<()> {
         tracing::debug!(
             target: LOG_TARGET,
@@ -723,6 +746,31 @@ impl WebRtcConnection {
             "received channel data",
         );
 
+        self.recv_buffers.entry(channel_id).or_default().extend_from_slice(&data);
+
+        loop {
+            let Some(buffer) = self.recv_buffers.get_mut(&channel_id) else {
+                return Ok(());
+            };
+
+            let Some(body) = extract_framed_message(buffer)? else {
+                return Ok(());
+            };
+
+            self.dispatch_framed_message(channel_id, body).await?;
+            // If the channel was closed/removed during dispatch, stop draining its buffer.
+            if !self.channels.contains_key(&channel_id) {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Dispatch a single reassembled protobuf body to the per-channel-state handler.
+    async fn dispatch_framed_message(
+        &mut self,
+        channel_id: ChannelId,
+        data: Bytes,
+    ) -> crate::Result<()> {
         let Some(state) = self.channels.remove(&channel_id) else {
             tracing::warn!(
                 target: LOG_TARGET,
