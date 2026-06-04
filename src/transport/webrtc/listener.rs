@@ -39,6 +39,12 @@ impl WebRtcListener {
 
         let handle_multiaddr = |listen_socket| -> crate::Result<(UdpSocket, SocketAddr)> {
             let listen_socket = Self::get_socket_address(&listen_socket)?;
+            if listen_socket.ip().is_unspecified() {
+                return Err(Error::Other(
+                    "WebRTC cannot listen on an unspecified address".to_string(),
+                ));
+            }
+
             let socket = if listen_socket.is_ipv4() {
                 Socket::new(Domain::IPV4, Type::DGRAM, Some(socket2::Protocol::UDP))?
             } else {
