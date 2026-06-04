@@ -1,0 +1,226 @@
+# Opens a release PR: bumps the version in Cargo.toml, regenerates Cargo.lock,
+# and drafts a CHANGELOG entry from the PRs merged since the last release tag
+# (via .github/scripts/generate-litep2p-changelog.sh). Triggered manually from
+# the Actions tab.
+#
+# After this workflow runs:
+#   1. Edit CHANGELOG.md on the release branch: sort the auto-generated entries
+#      into Added / Changed / Fixed and add a summary paragraph, then commit the
+#      result to the PR.
+#   2. Merge the PR.
+#   3. Run the Release Publish workflow with the same version to tag master and
+#      publish (see RELEASING.md).
+#
+# Re-running: this workflow only CREATES the release branch. If the branch
+# already exists on origin it fails fast, because someone may have pushed
+# manual edits to it (reviewer CHANGELOG fixes, etc.). To iterate on a pending
+# release, edit that branch / its PR directly rather than re-running. To
+# regenerate from master, delete the branch first
+# (git push --delete origin release-vX.Y.Z) and re-run.
+#
+# Known limitation: GitHub does not trigger `pull_request` workflows on PRs
+# opened by GITHUB_TOKEN. If you need CI to run on the release PR, push an
+# empty commit to the branch after this workflow finishes, or replace
+# GITHUB_TOKEN below with a PAT / GitHub App token stored as a secret.
+
+name: Release Prep
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "New version (e.g. 0.15.0, no leading 'v')"
+        required: true
+        type: string
+
+concurrency:
+  group: release-prep
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare release PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: paritytech/ci-unified:bullseye-1.93.0-2026-01-27-v202605151311
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: master
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate version input
+        id: validate
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version '$VERSION' is not a valid semver X.Y.Z"
+            exit 1
+          fi
+          CURRENT="$(grep -m1 -E '^version = "' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+          echo "Current version: $CURRENT"
+          echo "New version:     $VERSION"
+          if [ "$VERSION" = "$CURRENT" ]; then
+            echo "::error::New version equals current version ($CURRENT)"
+            exit 1
+          fi
+          higher=$(printf '%s\n%s\n' "$CURRENT" "$VERSION" | sort -V | tail -1)
+          if [ "$higher" != "$VERSION" ]; then
+            echo "::error::New version ($VERSION) is not greater than current ($CURRENT)"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "branch=release-v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Configure git identity
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Check release branch does not already exist
+        shell: bash
+        env:
+          BRANCH: ${{ steps.validate.outputs.branch }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "::error::Branch $BRANCH already exists on origin. To iterate on the pending release, push to that branch or edit its PR directly. To regenerate from master, delete the branch first: git push --delete origin $BRANCH"
+            exit 1
+          fi
+          echo "Branch $BRANCH does not exist on origin; it will be created."
+
+      - name: Bump version in Cargo.toml
+        env:
+          NEW_VERSION: ${{ steps.validate.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          awk -v new="$NEW_VERSION" '
+            !done && /^version = "/ { sub(/"[^"]+"/, "\""new"\""); done=1 }
+            { print }
+          ' Cargo.toml > Cargo.toml.new
+          mv Cargo.toml.new Cargo.toml
+          echo "Diff of Cargo.toml after version bump:"
+          git --no-pager diff -- Cargo.toml
+
+      - name: Regenerate Cargo.lock
+        run: cargo generate-lockfile
+
+      - name: Draft CHANGELOG entry
+        env:
+          NEW_VERSION: ${{ steps.validate.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TODAY=$(date -u +%Y-%m-%d)
+
+          # Make sure origin/master and tags are present for the changelog script.
+          git fetch --tags --force origin master >/dev/null 2>&1 || true
+
+          # Generate the PR list with the shared script (strip its "[+]" log lines).
+          CHANGELOG_LIST=$(bash .github/scripts/generate-litep2p-changelog.sh 2>/dev/null | grep '^- ' || true)
+          if [ -z "$CHANGELOG_LIST" ]; then
+            CHANGELOG_LIST="_No merged PRs found since the last release tag; add entries manually._"
+          fi
+
+          # Build the new section (flat list; the reviewer sorts it into categories).
+          # Saved under $RUNNER_TEMP (outside the repo) so the PR-body step can
+          # reuse it without leaving an untracked file that would make
+          # `cargo publish --dry-run` see a dirty working tree.
+          {
+            echo "## [$NEW_VERSION] - $TODAY"
+            echo
+            echo "$CHANGELOG_LIST"
+            echo
+          } > "$RUNNER_TEMP/release-section.md"
+
+          # Prepend it before the first existing version heading in CHANGELOG.md.
+          FIRST_HEADING_LINE=$(grep -nE '^## \[' CHANGELOG.md | head -1 | cut -d: -f1)
+          if [ -z "$FIRST_HEADING_LINE" ]; then
+            echo "::error::No existing '## [...]' heading found in CHANGELOG.md; cannot determine insertion point."
+            exit 1
+          fi
+
+          head -n $((FIRST_HEADING_LINE - 1)) CHANGELOG.md  > CHANGELOG.new
+          cat "$RUNNER_TEMP/release-section.md"             >> CHANGELOG.new
+          tail -n +"$FIRST_HEADING_LINE" CHANGELOG.md        >> CHANGELOG.new
+          mv CHANGELOG.new CHANGELOG.md
+
+      - name: Commit release changes
+        env:
+          BRANCH:  ${{ steps.validate.outputs.branch }}
+          VERSION: ${{ steps.validate.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -b "$BRANCH"
+          git add Cargo.toml Cargo.lock CHANGELOG.md
+          git commit -m "chore: Release litep2p v$VERSION"
+
+      - name: Verify crate publishes cleanly (cargo publish --dry-run)
+        run: cargo publish --dry-run
+
+      - name: Push release branch
+        env:
+          BRANCH: ${{ steps.validate.outputs.branch }}
+        shell: bash
+        run: git push origin "$BRANCH"
+
+      - name: Open release PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION:  ${{ steps.validate.outputs.version }}
+          BRANCH:   ${{ steps.validate.outputs.branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Start the body with the generated changelog section, then append guidance.
+          # Kept under $RUNNER_TEMP (outside the repo) to avoid dirtying the tree.
+          cp "$RUNNER_TEMP/release-section.md" "$RUNNER_TEMP/pr-body.md"
+          cat >> "$RUNNER_TEMP/pr-body.md" <<EOF
+
+          ---
+
+          > **Reviewer action required:** the changelog entries above are auto-generated from merged PRs and are **unsorted**. Please edit \`CHANGELOG.md\` on this branch to:
+          > - Group the entries under \`### Added\` / \`### Changed\` / \`### Fixed\`.
+          > - Add a short summary paragraph at the top of the \`## [$VERSION]\` section.
+          >
+          > Then **commit the adjusted \`CHANGELOG.md\` to this PR**.
+
+          **After merging:** run the **Release Publish** workflow from the Actions tab with version \`$VERSION\` to tag \`master\` and publish to crates.io. See \`RELEASING.md\`.
+
+          ---
+
+          > _CI note: GitHub does not run \`pull_request\` workflows on PRs opened by \`GITHUB_TOKEN\`. If CI hasn't started on this PR, push an empty commit to trigger it:_
+          > \`\`\`bash
+          > git fetch origin && git checkout $BRANCH
+          > git commit --allow-empty -m "trigger ci" && git push
+          > \`\`\`
+          EOF
+
+          PR_URL=$(gh pr create \
+            --base master \
+            --head "$BRANCH" \
+            --title "chore: Release litep2p v$VERSION" \
+            --body-file "$RUNNER_TEMP/pr-body.md")
+
+          echo "Opened PR: $PR_URL"
+          echo "## Release PR opened" >> "$GITHUB_STEP_SUMMARY"
+          echo "$PR_URL" >> "$GITHUB_STEP_SUMMARY"

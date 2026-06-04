@@ -23,11 +23,15 @@
 use crate::{
     config::Role,
     crypto::{ed25519::Keypair, noise::NoiseContext},
-    transport::{webrtc::util::WebRtcMessage, Endpoint},
+    transport::{
+        webrtc::util::{extract_framed_message, WebRtcMessage},
+        Endpoint,
+    },
     types::ConnectionId,
     Error, PeerId,
 };
 
+use bytes::BytesMut;
 use multiaddr::{Multiaddr, Protocol};
 use multihash_codetable::Code;
 use str0m::{
@@ -111,6 +115,18 @@ pub struct OpeningWebRtcConnection {
 
     /// Local address.
     local_address: SocketAddr,
+
+    /// Inbound noise-channel byte buffer for reassembling protobuf frames.
+    ///
+    /// The libp2p-go msgio implementation issues two separate `Write` calls:
+    ///  - variant length
+    ///  - protobuf body
+    ///
+    /// These will become two distinct SCTP messages on the data channel.
+    ///
+    /// Accumulate raw bytes here and only attempt protobuf decode once a
+    /// full `varint length ++ body` frame is available.
+    noise_recv_buffer: BytesMut,
 }
 
 /// Connection state.
@@ -168,6 +184,7 @@ impl OpeningWebRtcConnection {
             id_keypair,
             peer_address,
             local_address,
+            noise_recv_buffer: BytesMut::new(),
         }
     }
 
@@ -204,7 +221,12 @@ impl OpeningWebRtcConnection {
     ///
     /// Create the first Noise handshake message and send it to remote peer.
     fn on_noise_channel_open(&mut self) -> crate::Result<()> {
-        tracing::trace!(target: LOG_TARGET, "send initial noise handshake");
+        tracing::trace!(
+            target: LOG_TARGET,
+            connection_id = ?self.connection_id,
+            peer = ?self.peer_address,
+            "send initial noise handshake",
+        );
 
         let State::Opened { mut context } = std::mem::replace(&mut self.state, State::Poisoned)
         else {
@@ -214,11 +236,21 @@ impl OpeningWebRtcConnection {
         // create first noise handshake and send it to remote peer
         let payload = WebRtcMessage::encode(context.first_message(Role::Dialer)?, None);
 
-        self.rtc
+        let succeeded = self
+            .rtc
             .channel(self.noise_channel_id)
             .ok_or(Error::ChannelDoesntExist)?
             .write(true, payload.as_slice())
             .map_err(Error::WebRtc)?;
+
+        if !succeeded {
+            tracing::error!(
+                target: LOG_TARGET,
+                connection_id = ?self.connection_id,
+                "sending first noise handshake message failed: channel full"
+            );
+            return Err(Error::ChannelClogged);
+        }
 
         self.state = State::HandshakeSent { context };
         Ok(())
@@ -229,6 +261,8 @@ impl OpeningWebRtcConnection {
         if let Err(error) = self.rtc.handle_input(Input::Timeout(Instant::now())) {
             tracing::error!(
                 target: LOG_TARGET,
+                connection_id = ?self.connection_id,
+                peer = ?self.peer_address,
                 ?error,
                 "failed to handle timeout for `Rtc`"
             );
@@ -249,8 +283,38 @@ impl OpeningWebRtcConnection {
     ///
     /// If the peer is accepted, [`OpeningWebRtcConnection::on_accept()`] is called which creates
     /// the final Noise message and sends it to the remote peer, concluding the handshake.
-    fn on_noise_channel_data(&mut self, data: Vec<u8>) -> crate::Result<WebRtcEvent> {
-        tracing::trace!(target: LOG_TARGET, "handle noise handshake reply");
+    fn on_noise_channel_data(&mut self, data: Vec<u8>) -> crate::Result<Option<WebRtcEvent>> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            connection_id = ?self.connection_id,
+            peer = ?self.peer_address,
+            len = data.len(),
+            buffered = self.noise_recv_buffer.len(),
+            "noise channel data received",
+        );
+
+        self.noise_recv_buffer.extend_from_slice(&data);
+
+        let body = match extract_framed_message(&mut self.noise_recv_buffer)? {
+            Some(body) => body,
+            None => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    connection_id = ?self.connection_id,
+                    peer = ?self.peer_address,
+                    buffered = self.noise_recv_buffer.len(),
+                    "incomplete noise frame, waiting for more bytes",
+                );
+                return Ok(None);
+            }
+        };
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            connection_id = ?self.connection_id,
+            peer = ?self.peer_address,
+            "handle noise handshake reply",
+        );
 
         let State::HandshakeSent { mut context } =
             std::mem::replace(&mut self.state, State::Poisoned)
@@ -258,11 +322,13 @@ impl OpeningWebRtcConnection {
             return Err(Error::InvalidState);
         };
 
-        let message = WebRtcMessage::decode(&data)?.payload.ok_or(Error::InvalidData)?;
+        let message = WebRtcMessage::decode(&body)?.payload.ok_or(Error::InvalidData)?;
         let remote_peer_id = context.get_remote_peer_id(&message)?;
 
         tracing::trace!(
             target: LOG_TARGET,
+            connection_id = ?self.connection_id,
+            peer = ?self.peer_address,
             ?remote_peer_id,
             "remote reply parsed successfully",
         );
@@ -284,20 +350,25 @@ impl OpeningWebRtcConnection {
         let address = Multiaddr::empty()
             .with(Protocol::from(self.peer_address.ip()))
             .with(Protocol::Udp(self.peer_address.port()))
-            .with(Protocol::WebRTC)
+            .with(Protocol::WebRTCDirect)
             .with(Protocol::Certhash(certificate))
             .with(Protocol::P2p(remote_peer_id.into()));
 
-        Ok(WebRtcEvent::ConnectionOpened {
+        Ok(Some(WebRtcEvent::ConnectionOpened {
             peer: remote_peer_id,
             endpoint: Endpoint::listener(address, self.connection_id),
-        })
+        }))
     }
 
     /// Accept connection by sending the final Noise handshake message
     /// and return the `Rtc` object for further use.
     pub fn on_accept(mut self) -> crate::Result<Rtc> {
-        tracing::trace!(target: LOG_TARGET, "accept webrtc connection");
+        tracing::trace!(
+            target: LOG_TARGET,
+            connection_id = ?self.connection_id,
+            peer = ?self.peer_address,
+            "accept webrtc connection",
+        );
 
         let State::Validating { mut context } = std::mem::replace(&mut self.state, State::Poisoned)
         else {
@@ -310,9 +381,18 @@ impl OpeningWebRtcConnection {
         let mut channel =
             self.rtc.channel(self.noise_channel_id).ok_or(Error::ChannelDoesntExist)?;
 
-        channel.write(true, payload.as_slice()).map_err(Error::WebRtc)?;
-        self.rtc.direct_api().close_data_channel(self.noise_channel_id);
+        let succeeded = channel.write(true, payload.as_slice()).map_err(Error::WebRtc)?;
 
+        if !succeeded {
+            tracing::error!(
+                target: LOG_TARGET,
+                connection_id = ?self.connection_id,
+                "sending second noise handshake message failed: channel full"
+            );
+            return Err(Error::ChannelClogged);
+        }
+
+        self.rtc.direct_api().close_data_channel(self.noise_channel_id);
         Ok(self.rtc)
     }
 
@@ -334,20 +414,17 @@ impl OpeningWebRtcConnection {
             },
         );
 
-        match self.rtc.accepts(&message) {
-            true => self.rtc.handle_input(message).map_err(|error| {
-                tracing::debug!(target: LOG_TARGET, source = ?self.peer_address, ?error, "failed to handle data");
-                Error::InputRejected
-            }),
-            false => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    peer = ?self.peer_address,
-                    "input rejected",
-                );
-                Err(Error::InputRejected)
-            }
-        }
+        // Let str0m handle input validation internally, similar to how the initial STUN packet is
+        // handled
+        self.rtc.handle_input(message).map_err(|error| {
+            tracing::debug!(
+                target: LOG_TARGET,
+                source = ?self.peer_address,
+                ?error,
+                "failed to handle data"
+            );
+            Error::InputRejected
+        })
     }
 
     /// Progress the state of [`OpeningWebRtcConnection`].
@@ -355,6 +432,8 @@ impl OpeningWebRtcConnection {
         if !self.rtc.is_alive() {
             tracing::debug!(
                 target: LOG_TARGET,
+                connection_id = ?self.connection_id,
+                peer = ?self.peer_address,
                 "`Rtc` is not alive, closing `WebRtcConnection`"
             );
 
@@ -368,6 +447,7 @@ impl OpeningWebRtcConnection {
                     tracing::debug!(
                         target: LOG_TARGET,
                         connection_id = ?self.connection_id,
+                        peer = ?self.peer_address,
                         ?error,
                         "`WebRtcConnection::poll_process()` failed",
                     );
@@ -380,6 +460,8 @@ impl OpeningWebRtcConnection {
                 Output::Transmit(transmit) => {
                     tracing::trace!(
                         target: LOG_TARGET,
+                        connection_id = ?self.connection_id,
+                        peer = ?self.peer_address,
                         "transmit data",
                     );
 
@@ -392,13 +474,19 @@ impl OpeningWebRtcConnection {
                 Output::Event(e) => match e {
                     Event::IceConnectionStateChange(v) =>
                         if v == IceConnectionState::Disconnected {
-                            tracing::trace!(target: LOG_TARGET, "ice connection closed");
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                connection_id = ?self.connection_id,
+                                peer = ?self.peer_address,
+                                "ice connection closed",
+                            );
                             return WebRtcEvent::ConnectionClosed;
                         },
                     Event::ChannelOpen(channel_id, name) => {
                         tracing::trace!(
                             target: LOG_TARGET,
                             connection_id = ?self.connection_id,
+                            peer = ?self.peer_address,
                             ?channel_id,
                             ?name,
                             "channel opened",
@@ -408,6 +496,7 @@ impl OpeningWebRtcConnection {
                             tracing::warn!(
                                 target: LOG_TARGET,
                                 connection_id = ?self.connection_id,
+                                peer = ?self.peer_address,
                                 ?channel_id,
                                 "ignoring opened channel",
                             );
@@ -418,6 +507,7 @@ impl OpeningWebRtcConnection {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 connection_id = ?self.connection_id,
+                                peer = ?self.peer_address,
                                 ?error,
                                 "noise channel open failed",
                             );
@@ -427,6 +517,8 @@ impl OpeningWebRtcConnection {
                     Event::ChannelData(data) => {
                         tracing::trace!(
                             target: LOG_TARGET,
+                            connection_id = ?self.connection_id,
+                            peer = ?self.peer_address,
                             "data received over channel",
                         );
 
@@ -435,17 +527,20 @@ impl OpeningWebRtcConnection {
                                 target: LOG_TARGET,
                                 channel_id = ?data.id,
                                 connection_id = ?self.connection_id,
+                                peer = ?self.peer_address,
                                 "ignoring data from channel",
                             );
                             continue;
                         }
 
                         match self.on_noise_channel_data(data.data) {
-                            Ok(event) => return event,
+                            Ok(Some(event)) => return event,
+                            Ok(None) => continue,
                             Err(error) => {
                                 tracing::debug!(
                                     target: LOG_TARGET,
                                     connection_id = ?self.connection_id,
+                                    peer = ?self.peer_address,
                                     ?error,
                                     "noise channel data handling failed",
                                 );
@@ -454,7 +549,13 @@ impl OpeningWebRtcConnection {
                         }
                     }
                     Event::ChannelClose(channel_id) => {
-                        tracing::debug!(target: LOG_TARGET, ?channel_id, "channel closed");
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            connection_id = ?self.connection_id,
+                            peer = ?self.peer_address,
+                            ?channel_id,
+                            "channel closed",
+                        );
                     }
                     Event::Connected => match std::mem::replace(&mut self.state, State::Poisoned) {
                         State::Closed => {
@@ -469,6 +570,7 @@ impl OpeningWebRtcConnection {
                                 Err(err) => {
                                     tracing::error!(
                                         target: LOG_TARGET,
+                                        connection_id = ?self.connection_id,
                                         peer = ?self.peer_address,
                                         "NoiseContext failed with error {err}",
                                     );
@@ -479,6 +581,7 @@ impl OpeningWebRtcConnection {
 
                             tracing::debug!(
                                 target: LOG_TARGET,
+                                connection_id = ?self.connection_id,
                                 peer = ?self.peer_address,
                                 "connection opened",
                             );
@@ -488,6 +591,7 @@ impl OpeningWebRtcConnection {
                         state => {
                             tracing::debug!(
                                 target: LOG_TARGET,
+                                connection_id = ?self.connection_id,
                                 peer = ?self.peer_address,
                                 ?state,
                                 "invalid state for connection"
