@@ -241,8 +241,14 @@ impl WebRtcTransport {
                     destination,
                     datagram,
                 } => {
-                    // UNWRAP: local addr originated from self.listener, must be present.
-                    let socket = self.listener.socket(&addrs.local).unwrap();
+                    let Some(socket) = self.listener.socket(&addrs.local) else {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?addrs,
+                            "no socket bound to local address in listener, dropping outbound datagram",
+                        );
+                        continue;
+                    };
                     if let Err(error) = socket.try_send_to(&datagram, destination) {
                         tracing::warn!(
                             target: LOG_TARGET,
@@ -539,8 +545,15 @@ impl Transport for WebRtcTransport {
             },
         );
 
-        // UNWRAP: local addr originated from this.listener, must be present.
-        let socket = self.listener.socket(&addrs.local).unwrap();
+        let Some(socket) = self.listener.socket(&addrs.local) else {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?addrs,
+                "no socket for local address; aborting connection"
+            );
+            return Err(Error::InvalidState);
+        };
+
         Ok(Box::pin(async move {
             // First, notify all protocols about the connection establishment
             protocol_set.report_connection_established(peer, endpoint_clone).await?;
