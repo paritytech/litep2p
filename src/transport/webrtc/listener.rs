@@ -21,7 +21,8 @@ const LOG_TARGET: &str = "litep2p::webrtc::listener";
 /// WebRtc listener.
 pub(super) struct WebRtcListener {
     /// Bound sockets paired with their local address.
-    listen_addresses: Vec<(SocketAddr, Arc<UdpSocket>)>,
+    listen_sockets: Vec<(SocketAddr, Arc<UdpSocket>)>,
+
     /// Index of the socket to poll first on the next call (round-robin).
     next_listener: usize,
     /// Delay used to wake up `WebRtcListener` if all sockets errored out.
@@ -34,11 +35,11 @@ impl WebRtcListener {
         certificate: Multihash<64>,
     ) -> crate::Result<(Self, Vec<Multiaddr>)> {
         let mut listen_multi_addresses = Vec::with_capacity(multiaddr_listen_addresses.len());
-        let mut listen_addresses = Vec::with_capacity(multiaddr_listen_addresses.len());
+        let mut listen_sockets = Vec::with_capacity(multiaddr_listen_addresses.len());
 
-        let handle_multiaddr = |listen_address| -> crate::Result<(UdpSocket, SocketAddr)> {
-            let listen_address = Self::get_socket_address(&listen_address)?;
-            let socket = if listen_address.is_ipv4() {
+        let handle_multiaddr = |listen_socket| -> crate::Result<(UdpSocket, SocketAddr)> {
+            let listen_socket = Self::get_socket_address(&listen_socket)?;
+            let socket = if listen_socket.is_ipv4() {
                 Socket::new(Domain::IPV4, Type::DGRAM, Some(socket2::Protocol::UDP))?
             } else {
                 let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(socket2::Protocol::UDP))?;
@@ -46,16 +47,16 @@ impl WebRtcListener {
                 socket
             };
 
-            socket.bind(&listen_address.into())?;
+            socket.bind(&listen_socket.into())?;
             socket.set_nonblocking(true)?;
 
             let socket = UdpSocket::from_std(socket.into())?;
-            let listen_address = socket.local_addr()?;
-            Ok((socket, listen_address))
+            let listen_socket = socket.local_addr()?;
+            Ok((socket, listen_socket))
         };
 
-        for listen_address in multiaddr_listen_addresses {
-            let (socket, listen_address) = match handle_multiaddr(listen_address) {
+        for listen_socket in multiaddr_listen_addresses {
+            let (socket, listen_socket) = match handle_multiaddr(listen_socket) {
                 Ok(res) => res,
                 Err(err) => {
                     tracing::warn!(target: LOG_TARGET, ?err, "failed to bind listen address, skipping");
@@ -63,17 +64,17 @@ impl WebRtcListener {
                 }
             };
 
-            listen_addresses.push((listen_address, Arc::new(socket)));
+            listen_sockets.push((listen_socket, Arc::new(socket)));
             listen_multi_addresses.push(
                 Multiaddr::empty()
-                    .with(Protocol::from(listen_address.ip()))
-                    .with(Protocol::Udp(listen_address.port()))
+                    .with(Protocol::from(listen_socket.ip()))
+                    .with(Protocol::Udp(listen_socket.port()))
                     .with(Protocol::WebRTCDirect)
                     .with(Protocol::Certhash(certificate)),
             );
         }
 
-        if listen_addresses.is_empty() {
+        if listen_sockets.is_empty() {
             return Err(Error::Other(
                 "WebRtcListener requires at least one valid listen address".to_string(),
             ));
@@ -81,7 +82,7 @@ impl WebRtcListener {
 
         Ok((
             Self {
-                listen_addresses,
+                listen_sockets,
                 next_listener: 0,
                 error_delay: None,
             },
@@ -90,7 +91,7 @@ impl WebRtcListener {
     }
 
     pub(super) fn socket(&self, local: &SocketAddr) -> Option<Arc<UdpSocket>> {
-        self.listen_addresses
+        self.listen_sockets
             .iter()
             .find(|(addr, _)| local == addr)
             .map(|(_, socket)| socket.clone())
@@ -101,7 +102,7 @@ impl WebRtcListener {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<AddressPair>> {
-        let n_listener = self.listen_addresses.len();
+        let n_listener = self.listen_sockets.len();
         debug_assert!(n_listener > 0);
 
         if let Some(delay) = self.error_delay.as_mut() {
@@ -117,7 +118,7 @@ impl WebRtcListener {
         let mut any_pending = false;
 
         loop {
-            let (local, socket) = &self.listen_addresses[idx];
+            let (local, socket) = &self.listen_sockets[idx];
             idx = (idx + 1) % n_listener;
 
             match socket.poll_recv_from(cx, buf) {
