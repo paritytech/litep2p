@@ -65,8 +65,8 @@ impl WebRtcListener {
             let (socket, listen_socket) = match handle_multiaddr(listen_socket) {
                 Ok(res) => res,
                 Err(err) => {
-                    tracing::warn!(target: LOG_TARGET, ?err, "failed to bind listen address, skipping");
-                    continue;
+                    tracing::warn!(target: LOG_TARGET, ?err, "failed to bind listen address");
+                    return Err(err);
                 }
             };
 
