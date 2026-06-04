@@ -713,7 +713,6 @@ impl Stream for WebRtcTransport {
                     entry.remove();
                 }
             }
-            this.timeouts.remove(&source);
         }
 
         loop {
