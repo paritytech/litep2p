@@ -671,9 +671,12 @@ impl Stream for WebRtcTransport {
                             });
                         }
                         ConnectionEvent::ConnectionClosed => {
-                            this.opening.remove(&addrs);
+                            // Connection closed before it was accepted/rejected, drop all
+                            // per-connection state held for this address pair.
                             this.timeouts.remove(&addrs);
-
+                            if let Some(opening) = this.opening.remove(&addrs) {
+                                this.connections.remove(opening.connection_id());
+                            }
                             break;
                         }
                         ConnectionEvent::Timeout { duration } => {
@@ -717,7 +720,10 @@ impl Stream for WebRtcTransport {
                         // keep polling the connection until it registers a timeout
                     }
                     ConnectionEvent::ConnectionClosed => {
-                        this.opening.remove(&addrs);
+                        // Same teardown as above, timeouts entry is pruned  after this loop.
+                        if let Some(opening) = this.opening.remove(&addrs) {
+                            this.connections.remove(opening.connection_id());
+                        }
                         break;
                     }
                     ConnectionEvent::Timeout { duration } => {
