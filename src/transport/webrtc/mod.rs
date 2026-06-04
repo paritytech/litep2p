@@ -224,14 +224,18 @@ impl WebRtcTransport {
         pass: &str,
         source: SocketAddr,
         destination: SocketAddr,
-    ) -> (Rtc, ChannelId) {
+    ) -> crate::Result<(Rtc, ChannelId)> {
         let mut rtc = Rtc::builder()
             .set_ice_lite(true)
             .set_dtls_cert(self.dtls_cert.clone())
             .set_fingerprint_verification(false)
             .build(std::time::Instant::now());
-        rtc.add_local_candidate(Candidate::host(destination, Str0mProtocol::Udp).unwrap());
-        rtc.add_remote_candidate(Candidate::host(source, Str0mProtocol::Udp).unwrap());
+        rtc.add_local_candidate(
+            Candidate::host(destination, Str0mProtocol::Udp).map_err(RtcError::Ice)?,
+        );
+        rtc.add_remote_candidate(
+            Candidate::host(source, Str0mProtocol::Udp).map_err(RtcError::Ice)?,
+        );
         rtc.direct_api()
             .set_remote_fingerprint(REMOTE_FINGERPRINT.parse().expect("parse() to succeed"));
         rtc.direct_api().set_remote_ice_credentials(IceCreds {
@@ -243,18 +247,18 @@ impl WebRtcTransport {
             pass: pass.to_owned(),
         });
         rtc.direct_api().set_ice_controlling(false);
-        rtc.direct_api().start_dtls(false).unwrap();
+        rtc.direct_api().start_dtls(false)?;
         rtc.direct_api().start_sctp(false);
 
         let noise_channel_id = rtc.direct_api().create_data_channel(ChannelConfig {
             label: "noise".to_string(),
-            ordered: false,
-            reliability: Default::default(),
+            ordered: true,
+            reliability: str0m::channel::Reliability::Reliable,
             negotiated: Some(0),
             protocol: "".to_string(),
         });
 
-        (rtc, noise_channel_id)
+        Ok((rtc, noise_channel_id))
     }
 
     /// Poll opening connection.
@@ -365,35 +369,34 @@ impl WebRtcTransport {
         let contents: DatagramRecv =
             buffer.as_slice().try_into().map_err(|_| Error::InvalidData)?;
 
-        // Handle non stun packets.
-        if !is_stun_packet(&buffer) {
-            tracing::debug!(
+        // If an opening connection already exists for this source, route all packets to it
+        if let Some(opening_conn) = self.opening.get_mut(&source) {
+            tracing::trace!(
                 target: LOG_TARGET,
                 ?source,
-                "received non-stun message"
+                is_stun = is_stun_packet(&buffer),
+                "routing packet to existing opening connection"
             );
 
-            match self.opening.get_mut(&source) {
-                Some(connection) =>
-                    if let Err(error) = connection.on_input(contents) {
-                        tracing::error!(
-                            target: LOG_TARGET,
-                            ?error,
-                            ?source,
-                            "failed to handle inbound datagram"
-                        );
-                    },
-                None => {
-                    tracing::warn!(
-                        target: LOG_TARGET,
-                        ?source,
-                        "received non-stun message from unknown peer",
-                    );
-                    return Err(Error::InvalidData);
-                }
-            };
-
+            if let Err(error) = opening_conn.on_input(contents) {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?error,
+                    ?source,
+                    "failed to handle inbound datagram"
+                );
+            }
             return Ok(true);
+        }
+
+        // No existing connection - this should be a STUN packet to create a new connection
+        if !is_stun_packet(&buffer) {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?source,
+                "received non-stun packet without existing connection, ignoring"
+            );
+            return Ok(false);
         }
 
         let stun_message =
@@ -411,24 +414,22 @@ impl WebRtcTransport {
             target: LOG_TARGET,
             ?source,
             ?ufrag,
-            ?pass,
             "received stun message"
         );
 
         // create new `Rtc` object for the peer and give it the received STUN message
-        let (mut rtc, noise_channel_id) =
-            self.make_rtc_client(ufrag, pass, source, self.socket.local_addr().unwrap());
+        let local_addr = self.socket.local_addr()?;
+        let (mut rtc, noise_channel_id) = self.make_rtc_client(ufrag, pass, source, local_addr)?;
 
         rtc.handle_input(Input::Receive(
             Instant::now(),
             Receive {
                 source,
                 proto: Str0mProtocol::Udp,
-                destination: self.socket.local_addr().unwrap(),
+                destination: local_addr,
                 contents,
             },
-        ))
-        .expect("client to handle input successfully");
+        ))?;
 
         let connection_id = self.context.next_connection_id();
         let connection = OpeningWebRtcConnection::new(

@@ -409,24 +409,17 @@ impl OpeningWebRtcConnection {
             },
         );
 
-        match self.rtc.accepts(&message) {
-            true => self.rtc.handle_input(message).map_err(|error| {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    peer = ?self.peer_address,
-                    ?error, "failed to handle data"
-                );
-                Error::InputRejected
-            }),
-            false => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    peer = ?self.peer_address,
-                    "input rejected",
-                );
-                Err(Error::InputRejected)
-            }
-        }
+        // Let str0m handle input validation internally, similar to how the initial STUN packet is
+        // handled
+        self.rtc.handle_input(message).map_err(|error| {
+            tracing::debug!(
+                target: LOG_TARGET,
+                source = ?self.peer_address,
+                ?error,
+                "failed to handle data"
+            );
+            Error::InputRejected
+        })
     }
 
     /// Progress the state of [`OpeningWebRtcConnection`].
