@@ -37,7 +37,8 @@ use crate::{
 use futures::{future::BoxFuture, Future, Stream};
 use futures_timer::Delay;
 use hickory_resolver::TokioResolver;
-use multiaddr::{multihash::Multihash, Multiaddr};
+use multiaddr::Multiaddr;
+use multihash_codetable::MultihashDigest;
 use str0m::{
     channel::{ChannelConfig, ChannelId},
     config::DtlsCert,
@@ -435,13 +436,13 @@ impl TransportBuilder for WebRtcTransport {
         )?;
 
         let fingerprint = crypto_provider.sha256_provider.sha256(&dtls_cert.certificate);
-
-        const MULTIHASH_SHA256_CODE: u64 = 0x12;
-        let certificate = Multihash::wrap(MULTIHASH_SHA256_CODE, &fingerprint)
-            .expect("fingerprint's len to be 32 bytes");
+        let cert_hash = multihash_codetable::Code::Sha2_256.wrap(&fingerprint).map_err(|err| {
+            tracing::warn!(target: LOG_TARGET, ?err, "failed to wrap WebRTC certificate");
+            Error::Other("could not compute WebRTC certificate".to_string())
+        })?;
 
         let (listener, listen_multi_addresses) =
-            WebRtcListener::new(config.listen_addresses, certificate)?;
+            WebRtcListener::new(config.listen_addresses, cert_hash)?;
 
         Ok((
             Self {
