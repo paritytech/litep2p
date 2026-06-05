@@ -34,7 +34,7 @@ use crate::{
     PeerId,
 };
 
-use futures::{future::BoxFuture, Future, Stream};
+use futures::{future::BoxFuture, stream::FuturesUnordered, Future, Stream, StreamExt};
 use futures_timer::Delay;
 use hickory_resolver::TokioResolver;
 use multiaddr::Multiaddr;
@@ -150,6 +150,9 @@ pub(crate) struct WebRtcTransport {
 
     /// Connected peers.
     open: HashMap<AddressPair, ConnectionContext>,
+
+    /// Watches for closed connections.
+    closed_connections: FuturesUnordered<BoxFuture<'static, (AddressPair, ConnectionId)>>,
 
     /// OpeningWebRtc connections.
     opening: HashMap<AddressPair, OpeningWebRtcConnection>,
@@ -452,6 +455,7 @@ impl TransportBuilder for WebRtcTransport {
                 dtls_cert,
                 listener,
                 open: HashMap::new(),
+                closed_connections: FuturesUnordered::new(),
                 opening: HashMap::new(),
                 connections: HashMap::new(),
                 timeouts: HashMap::new(),
@@ -538,6 +542,13 @@ impl Transport for WebRtcTransport {
         let connection_id = endpoint.connection_id();
         let endpoint_clone = endpoint.clone();
         let executor = self.context.executor.clone();
+
+        let watcher_tx = tx.clone();
+        self.closed_connections.push(Box::pin(async move {
+            // Resolves when the `WebRtcConnection` is dropped.
+            watcher_tx.closed().await;
+            (addrs, connection_id)
+        }));
 
         self.open.insert(
             addrs,
@@ -635,6 +646,16 @@ impl Stream for WebRtcTransport {
 
         if let Some(event) = this.pending_events.pop_front() {
             return Poll::Ready(Some(event));
+        }
+
+        while let Poll::Ready(Some((source, connection_id))) =
+            this.closed_connections.poll_next_unpin(cx)
+        {
+            if let Entry::Occupied(entry) = this.open.entry(source) {
+                if entry.get().connection_id == connection_id {
+                    entry.remove();
+                }
+            }
         }
 
         loop {
