@@ -32,6 +32,12 @@ pub struct Config {
     ///
     /// How many datagrams can the buffer between `WebRtcTransport` and a connection handler hold.
     pub datagram_buffer_size: usize,
+
+    /// Optional pre-generated DTLS certificate.
+    ///
+    /// Accepts encoded bytes, when `None`, a fresh certificate
+    /// is generated on every start.
+    pub raw_dtls_certificate: Option<Vec<u8>>,
 }
 
 impl Default for Config {
@@ -41,6 +47,7 @@ impl Default for Config {
                 .parse()
                 .expect("valid multiaddress")],
             datagram_buffer_size: 2048,
+            raw_dtls_certificate: None,
         }
     }
 }

@@ -531,6 +531,31 @@ impl Litep2p {
             }
         }
     }
+
+    /// Generates a fresh WebRTC DTLS certificate, encoded for persistence.
+    ///
+    /// The returned bytes contain the certificate **and its private key**.
+    /// Feed the value back via [`webrtc::Config::raw_dtls_certificate`]
+    /// to keep a stable WebRTC identity (`certhash`) across restarts.
+    #[cfg(feature = "webrtc")]
+    pub fn generate_webrtc_certificate() -> crate::Result<Vec<u8>> {
+        let certificate = transport::webrtc::generate_certificate()?;
+        Ok(transport::webrtc::encode(&certificate))
+    }
+
+    /// Validates an encoded WebRTC DTLS certificate.
+    ///
+    /// Accepts the bytes produced by [`Litep2p::generate_webrtc_certificate`] and
+    /// checks that they decode into a certificate and private key the DTLS stack
+    /// can actually use.
+    ///
+    /// Returns an error if the bytes are truncated, the encoded lengths are
+    /// inconsistent, or the certificate/key fails to load.
+    #[cfg(feature = "webrtc")]
+    pub fn validate_webrtc_certificate(encoded_certificate: Vec<u8>) -> crate::Result<()> {
+        let certificate = transport::webrtc::decode(encoded_certificate)?;
+        transport::webrtc::validate_certificate(&certificate)
+    }
 }
 
 #[cfg(test)]
