@@ -152,7 +152,7 @@ pub(crate) struct WebRtcTransport {
     open: HashMap<AddressPair, ConnectionContext>,
 
     /// Watches for closed connections.
-    closed_connections: FuturesUnordered<BoxFuture<'static, (SocketAddr, ConnectionId)>>,
+    closed_connections: FuturesUnordered<BoxFuture<'static, (AddressPair, ConnectionId)>>,
 
     /// OpeningWebRtc connections.
     opening: HashMap<AddressPair, OpeningWebRtcConnection>,
@@ -547,7 +547,7 @@ impl Transport for WebRtcTransport {
         self.closed_connections.push(Box::pin(async move {
             // Resolves when the `WebRtcConnection` is dropped.
             watcher_tx.closed().await;
-            (source, connection_id)
+            (addrs, connection_id)
         }));
 
         self.open.insert(
