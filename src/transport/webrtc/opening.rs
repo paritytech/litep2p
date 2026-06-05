@@ -188,6 +188,11 @@ impl OpeningWebRtcConnection {
         }
     }
 
+    /// Returns the [`ConnectionId`] assigned to this opening connection.
+    pub fn connection_id(&self) -> &ConnectionId {
+        &self.connection_id
+    }
+
     /// Get remote fingerprint to bytes.
     fn remote_fingerprint(&mut self) -> Vec<u8> {
         let fingerprint = self
