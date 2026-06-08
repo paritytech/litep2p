@@ -40,7 +40,7 @@ pub struct Config {
     ///
     /// Accepts encoded bytes, when `None`, a fresh certificate
     /// is generated on every start.
-    pub raw_dtls_certificate: Option<Vec<u8>>,
+    pub raw_certificate: Option<Vec<u8>>,
 }
 
 impl Config {
@@ -60,7 +60,7 @@ impl Default for Config {
                 .parse()
                 .expect("valid multiaddress")],
             datagram_buffer_size: 2048,
-            raw_dtls_certificate: None,
+            raw_certificate: None,
         }
     }
 }

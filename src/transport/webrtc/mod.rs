@@ -432,7 +432,7 @@ impl TransportBuilder for WebRtcTransport {
             "start webrtc transport",
         );
 
-        let dtls_cert = match config.raw_dtls_certificate {
+        let dtls_cert = match config.raw_certificate {
             Some(raw_bytes) => {
                 let certificate = certificate::decode(raw_bytes)?;
                 certificate::validate_certificate(&certificate)?;
