@@ -63,7 +63,7 @@ use std::{
 
 pub(crate) use substream::Substream;
 
-mod certificate;
+pub mod certificate;
 mod connection;
 mod listener;
 mod opening;
@@ -71,7 +71,7 @@ mod substream;
 mod util;
 
 pub mod config;
-pub use certificate::{decode, encode, generate_certificate, validate_certificate};
+pub use certificate::DtlsCertificate;
 
 pub(super) mod schema {
     pub(super) mod webrtc {
@@ -432,17 +432,14 @@ impl TransportBuilder for WebRtcTransport {
             "start webrtc transport",
         );
 
-        let dtls_cert = match config.raw_certificate {
-            Some(raw_bytes) => {
-                let certificate = certificate::decode(raw_bytes)?;
-                certificate::validate_certificate(&certificate)?;
-                certificate
-            }
+        let dtls_cert: DtlsCert = match config.certificate {
+            Some(certificate) => certificate.into(),
             None => {
                 tracing::debug!(target: LOG_TARGET, "generating temporary WebRtc certificate");
-                certificate::generate_certificate()?
+                DtlsCertificate::new()?.into()
             }
         };
+
         // OpenSsl is used as crypto backend to generate the certificate, it uses sha256.
         let cert_hash = multihash_codetable::Code::Sha2_256.digest(&dtls_cert.certificate);
 

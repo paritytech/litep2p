@@ -22,6 +22,8 @@
 
 use multiaddr::Multiaddr;
 
+use crate::transport::webrtc::certificate::DtlsCertificate;
+
 /// WebRTC transport configuration.
 ///
 /// To be valid, the configuration must contain at least one listen address,
@@ -38,9 +40,8 @@ pub struct Config {
 
     /// Optional pre-generated DTLS certificate.
     ///
-    /// Accepts encoded bytes, when `None`, a fresh certificate
-    /// is generated on every start.
-    pub raw_certificate: Option<Vec<u8>>,
+    /// If `None`, a fresh certificate is generated on every start.
+    pub certificate: Option<DtlsCertificate>,
 }
 
 impl Config {
@@ -60,7 +61,7 @@ impl Default for Config {
                 .parse()
                 .expect("valid multiaddress")],
             datagram_buffer_size: 2048,
-            raw_certificate: None,
+            certificate: None,
         }
     }
 }
