@@ -56,17 +56,14 @@ use std::{
 
 pub use config::{Config, ConfigBuilder};
 pub use handle::{
-    IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle, Quorum,
-    RoutingTableUpdateMode,
+    IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle, KademliaMetrics,
+    Quorum, RoutingTableUpdateMode,
 };
 pub use query::QueryId;
 pub use record::{ContentProvider, Key as RecordKey, PeerRecord, Record};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia";
-
-/// Parallelism factor, `α`.
-const PARALLELISM_FACTOR: usize = 3;
 
 mod bucket;
 mod config;
@@ -180,6 +177,18 @@ pub(crate) struct Kademlia {
 
     /// Query executor.
     executor: QueryExecutor,
+
+    /// Total number of Kademlia messages sent (requests and responses).
+    messages_sent: u64,
+
+    /// Total number of Kademlia messages received (requests and responses).
+    messages_received: u64,
+
+    /// Number of successful request/response exchanges per in-flight locally-initiated query.
+    query_hops: HashMap<QueryId, u16>,
+
+    /// `(query, hops)` for queries that completed successfully since the last metrics snapshot.
+    completed_lookups: Vec<(QueryId, u16)>,
 }
 
 impl Kademlia {
@@ -214,7 +223,29 @@ impl Kademlia {
             validation_mode: config.validation_mode,
             record_ttl: config.record_ttl,
             replication_factor: config.replication_factor,
-            engine: QueryEngine::new(local_peer_id, config.replication_factor, PARALLELISM_FACTOR),
+            engine: QueryEngine::new(
+                local_peer_id,
+                config.replication_factor,
+                config.parallelism_factor,
+            ),
+            messages_sent: 0,
+            messages_received: 0,
+            query_hops: HashMap::new(),
+            completed_lookups: Vec::new(),
+        }
+    }
+
+    /// Register a successful request/response exchange ("hop") for a locally-initiated query.
+    fn register_query_hop(&mut self, query_id: QueryId) {
+        *self.query_hops.entry(query_id).or_default() += 1;
+    }
+
+    /// Record query completion for the metrics snapshot. Hops of failed queries are discarded.
+    fn register_query_completion(&mut self, query_id: QueryId, succeeded: bool) {
+        let hops = self.query_hops.remove(&query_id).unwrap_or(0);
+
+        if succeeded {
+            self.completed_lookups.push((query_id, hops));
         }
     }
 
@@ -464,6 +495,12 @@ impl Kademlia {
         substream: Substream,
     ) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, query = ?query_id, "handle message from peer");
+
+        // A message tied to a query ID is a response to a locally-initiated query, i.e. one
+        // successful request/response exchange of the iterative query.
+        if let Some(query_id) = query_id {
+            self.register_query_hop(query_id);
+        }
 
         match KademliaMessage::from_bytes(message, self.replication_factor)
             .ok_or(Error::InvalidData)?
@@ -857,6 +894,7 @@ impl Kademlia {
                     "`FIND_NODE` succeeded",
                 );
 
+                self.register_query_completion(query, true);
                 let _ = self
                     .event_tx
                     .send(KademliaEvent::FindNodeSuccess {
@@ -915,6 +953,7 @@ impl Kademlia {
             QueryAction::PutRecordQuerySucceeded { query, key } => {
                 tracing::debug!(target: LOG_TARGET, ?query, "`PUT_VALUE` query succeeded");
 
+                self.register_query_completion(query, true);
                 let _ = self
                     .event_tx
                     .send(KademliaEvent::PutRecordSuccess {
@@ -971,6 +1010,7 @@ impl Kademlia {
             } => {
                 tracing::debug!(target: LOG_TARGET, ?query, "`ADD_PROVIDER` query succeeded");
 
+                self.register_query_completion(query, true);
                 let _ = self
                     .event_tx
                     .send(KademliaEvent::AddProviderSuccess {
@@ -981,6 +1021,7 @@ impl Kademlia {
                 Ok(())
             }
             QueryAction::GetRecordQueryDone { query_id } => {
+                self.register_query_completion(query_id, true);
                 let _ = self.event_tx.send(KademliaEvent::GetRecordSuccess { query_id }).await;
                 Ok(())
             }
@@ -989,6 +1030,7 @@ impl Kademlia {
                 provided_key,
                 providers,
             } => {
+                self.register_query_completion(query_id, true);
                 let _ = self
                     .event_tx
                     .send(KademliaEvent::GetProvidersSuccess {
@@ -1002,6 +1044,7 @@ impl Kademlia {
             QueryAction::QueryFailed { query } => {
                 tracing::debug!(target: LOG_TARGET, ?query, "query failed");
 
+                self.register_query_completion(query, false);
                 let _ = self.event_tx.send(KademliaEvent::QueryFailed { query_id: query }).await;
                 Ok(())
             }
@@ -1080,8 +1123,12 @@ impl Kademlia {
                                 "message sent to peer",
                             );
                             let _ = substream.close().await;
+                            self.messages_sent += 1;
 
                             if let Some(query_id) = query_id {
+                                // Send-only exchange of a locally-initiated query
+                                // (`ADD_PROVIDER`).
+                                self.register_query_hop(query_id);
                                 self.engine.register_send_success(query_id, peer);
                             }
                         }
@@ -1096,8 +1143,11 @@ impl Kademlia {
                                 query = ?query_id,
                                 "treating message as sent to peer",
                             );
+                            self.messages_sent += 1;
 
                             if let Some(query_id) = query_id {
+                                // Legacy `PUT_VALUE` exchange without an ACK.
+                                self.register_query_hop(query_id);
                                 self.engine.register_send_success(query_id, peer);
                             }
                         }
@@ -1119,6 +1169,13 @@ impl Kademlia {
                                 query = ?query_id,
                                 "message read from peer",
                             );
+
+                            self.messages_received += 1;
+                            if query_id.is_some() {
+                                // Reading a response implies our request was sent successfully;
+                                // the send is not reported separately by the executor.
+                                self.messages_sent += 1;
+                            }
 
                             if let Some(query_id) = query_id {
                                 // Read success for locally originating requests implies send
@@ -1377,6 +1434,21 @@ impl Kademlia {
 
                             self.store.put(record);
                         }
+                        Some(KademliaCommand::GetMetrics { tx }) => {
+                            let (num_records, record_bytes, num_provider_keys, num_providers) =
+                                self.store.stats();
+
+                            let _ = tx.send(KademliaMetrics {
+                                routing_table_size: self.routing_table.num_entries(),
+                                num_records,
+                                record_bytes,
+                                num_provider_keys,
+                                num_providers,
+                                messages_sent: self.messages_sent,
+                                messages_received: self.messages_received,
+                                completed_lookups: std::mem::take(&mut self.completed_lookups),
+                            });
+                        }
                         None => return Err(Error::EssentialTaskClosed),
                     }
                 },
@@ -1455,6 +1527,7 @@ mod tests {
             known_peers: HashMap::new(),
             codec: ProtocolCodec::UnsignedVarint(Some(70 * 1024)),
             replication_factor: 20usize,
+            parallelism_factor: 3usize,
             update_mode: RoutingTableUpdateMode::Automatic,
             validation_mode: IncomingRecordValidationMode::Automatic,
             record_ttl: Duration::from_secs(36 * 60 * 60),

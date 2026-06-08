@@ -25,7 +25,10 @@ use crate::{
 
 use futures::Stream;
 use multiaddr::Multiaddr;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::{
+    mpsc::{Receiver, Sender},
+    oneshot,
+};
 
 use std::{
     num::NonZeroUsize,
@@ -74,6 +77,38 @@ pub enum IncomingRecordValidationMode {
 
     /// Automatically accept all incoming records.
     Automatic,
+}
+
+/// Snapshot of `Kademlia`-internal counters and sizes, for observability and benchmarking.
+///
+/// Obtained with [`KademliaHandle::metrics()`].
+#[derive(Debug, Clone, Default)]
+pub struct KademliaMetrics {
+    /// Number of routable peers (peers with at least one known address) in the routing table.
+    pub routing_table_size: usize,
+
+    /// Number of records in the local memory store.
+    pub num_records: usize,
+
+    /// Total size of stored record keys + values in bytes.
+    pub record_bytes: usize,
+
+    /// Number of provider keys in the local memory store.
+    pub num_provider_keys: usize,
+
+    /// Total number of provider records across all keys in the local memory store.
+    pub num_providers: usize,
+
+    /// Total number of Kademlia messages sent (requests and responses), cumulative.
+    pub messages_sent: u64,
+
+    /// Total number of Kademlia messages received (requests and responses), cumulative.
+    pub messages_received: u64,
+
+    /// `(query ID, peers successfully exchanged with)` for locally-initiated queries that
+    /// completed successfully since the previous snapshot. The per-query count is the number
+    /// of request/response exchanges ("hops") the iterative query performed.
+    pub completed_lookups: Vec<(QueryId, u16)>,
 }
 
 /// Kademlia commands.
@@ -173,6 +208,13 @@ pub enum KademliaCommand {
     StoreRecord {
         // Record.
         record: Record,
+    },
+
+    /// Get a snapshot of internal metrics.
+    #[cfg_attr(feature = "fuzz", serde(skip))]
+    GetMetrics {
+        /// Channel over which the snapshot is sent.
+        tx: oneshot::Sender<KademliaMetrics>,
     },
 }
 
@@ -422,6 +464,15 @@ impl KademliaHandle {
     /// [`IncomingRecordValidationMode::Manual`].
     pub async fn store_record(&mut self, record: Record) {
         let _ = self.cmd_tx.send(KademliaCommand::StoreRecord { record }).await;
+    }
+
+    /// Get a snapshot of `Kademlia`-internal metrics.
+    ///
+    /// Returns `None` only if `Kademlia` is terminating.
+    pub async fn metrics(&self) -> Option<KademliaMetrics> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx.send(KademliaCommand::GetMetrics { tx }).await.ok()?;
+        rx.await.ok()
     }
 
     /// Try to add known peer and if the channel is clogged, return an error.
