@@ -345,7 +345,7 @@ impl OpeningWebRtcConnection {
 
         let certificate =
             multihash::Multihash::<64>::wrap(Code::Sha2_256.into(), &remote_fingerprint)
-                .map_err(|_| Error::InvalidData)?;
+                .map_err(|_| Error::InvalidCertificate)?;
 
         let address = Multiaddr::empty()
             .with(Protocol::from(self.peer_address.ip()))
