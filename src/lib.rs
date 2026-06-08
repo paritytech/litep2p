@@ -361,9 +361,11 @@ impl Litep2p {
             transport_manager.register_transport(SupportedTransport::Quic, Box::new(transport));
         }
 
-        // enable webrtc transport if the config exists
+        // Enable webrtc transport if the config exists and is valid.
+        // A config without any listen address is skipped gracefully instead of
+        // failing startup.
         #[cfg(feature = "webrtc")]
-        if let Some(config) = litep2p_config.webrtc.take() {
+        if let Some(config) = litep2p_config.webrtc.take().filter(|config| config.is_valid()) {
             let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
             let (transport, transport_listen_addresses) =
                 <WebRtcTransport as TransportBuilder>::new(handle, config, resolver.clone())?;

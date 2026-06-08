@@ -23,6 +23,9 @@
 use multiaddr::Multiaddr;
 
 /// WebRTC transport configuration.
+///
+/// To be valid, the configuration must contain at least one listen address,
+/// otherwise the WebRTC transport is skipped at startup.
 #[derive(Debug)]
 pub struct Config {
     /// WebRTC listening address.
@@ -38,6 +41,16 @@ pub struct Config {
     /// Accepts encoded bytes, when `None`, a fresh certificate
     /// is generated on every start.
     pub raw_dtls_certificate: Option<Vec<u8>>,
+}
+
+impl Config {
+    /// Returns `true` if the WebRTC configuration is usable.
+    ///
+    /// A configuration is valid only when it specifies at least one listen
+    /// address.
+    pub fn is_valid(&self) -> bool {
+        !self.listen_addresses.is_empty()
+    }
 }
 
 impl Default for Config {
