@@ -673,7 +673,7 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
-            Arc::new(TokioResolver::builder_tokio().unwrap().build()),
+            Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap()),
         )
         .await
         .unwrap();
@@ -789,7 +789,7 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
-            Arc::new(TokioResolver::builder_tokio().unwrap().build()),
+            Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap()),
         )
         .await
         .unwrap();
@@ -1061,7 +1061,7 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
-            Arc::new(TokioResolver::builder_tokio().unwrap().build()),
+            Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap()),
         )
         .await
         .unwrap();
@@ -1229,7 +1229,7 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
-            Arc::new(TokioResolver::builder_tokio().unwrap().build()),
+            Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap()),
         )
         .await
         .unwrap();
@@ -1383,7 +1383,7 @@ mod tests {
             Default::default(),
             Duration::from_secs(10),
             false,
-            Arc::new(TokioResolver::builder_tokio().unwrap().build()),
+            Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap()),
         )
         .await
         .unwrap();

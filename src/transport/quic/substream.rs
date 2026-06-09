@@ -84,7 +84,11 @@ impl TokioAsyncRead for Substream {
         cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        match futures::ready!(Pin::new(&mut self.recv_stream).poll_read(cx, buf)) {
+        match futures::ready!(TokioAsyncRead::poll_read(
+            Pin::new(&mut self.recv_stream),
+            cx,
+            buf
+        )) {
             Err(error) => Poll::Ready(Err(error)),
             Ok(res) => {
                 self.bandwidth_sink.increase_inbound(buf.filled().len());
@@ -100,7 +104,13 @@ impl TokioAsyncWrite for Substream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        match futures::ready!(Pin::new(&mut self.send_stream).poll_write(cx, buf)) {
+        // `quinn::SendStream` has an inherent `poll_write` returning `quinn::WriteError`; call the
+        // tokio `AsyncWrite` impl explicitly so we keep yielding `io::Error`.
+        match futures::ready!(TokioAsyncWrite::poll_write(
+            Pin::new(&mut self.send_stream),
+            cx,
+            buf
+        )) {
             Err(error) => Poll::Ready(Err(error)),
             Ok(nwritten) => {
                 self.bandwidth_sink.increase_outbound(nwritten);
@@ -110,14 +120,14 @@ impl TokioAsyncWrite for Substream {
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.send_stream).poll_flush(cx)
+        TokioAsyncWrite::poll_flush(Pin::new(&mut self.send_stream), cx)
     }
 
     fn poll_shutdown(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.send_stream).poll_shutdown(cx)
+        TokioAsyncWrite::poll_shutdown(Pin::new(&mut self.send_stream), cx)
     }
 }
 
@@ -151,7 +161,7 @@ impl AsyncRead for NegotiatingSubstream {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.recv_stream).poll_read(cx, buf)
+        AsyncRead::poll_read(Pin::new(&mut self.recv_stream), cx, buf)
     }
 }
 
@@ -161,14 +171,14 @@ impl AsyncWrite for NegotiatingSubstream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.send_stream).poll_write(cx, buf)
+        AsyncWrite::poll_write(Pin::new(&mut self.send_stream), cx, buf)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.send_stream).poll_flush(cx)
+        AsyncWrite::poll_flush(Pin::new(&mut self.send_stream), cx)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.send_stream).poll_close(cx)
+        AsyncWrite::poll_close(Pin::new(&mut self.send_stream), cx)
     }
 }
