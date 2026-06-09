@@ -63,7 +63,7 @@ use std::{
 
 pub(crate) use substream::Substream;
 
-pub mod certificate;
+mod certificate;
 mod connection;
 mod listener;
 mod opening;
