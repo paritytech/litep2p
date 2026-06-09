@@ -26,12 +26,14 @@ impl DtlsCertificate {
 
     /// Generates a fresh WebRTC DTLS certificate.
     pub fn new() -> crate::Result<Self> {
-        let dtls_cert =
-            str0m::crypto::from_feature_flags().dtls_provider.generate_certificate().ok_or(
-                crate::error::Error::WebRtc(RtcError::Dtls(DtlsError::CryptoError(
-                    CryptoError::Other("OpenSsl failed to generate certificate".to_string()),
-                ))),
-            )?;
+        let dtls_cert = str0m::crypto::from_feature_flags()
+            .dtls_provider
+            .generate_certificate()
+            .ok_or(crate::error::Error::WebRtc(RtcError::Dtls(
+                DtlsError::CryptoError(CryptoError::Other(
+                    "Crypto provider failed to generate DTLS certificate".to_string(),
+                )),
+            )))?;
         Ok(Self {
             certificate: dtls_cert.certificate,
             private_key: dtls_cert.private_key,

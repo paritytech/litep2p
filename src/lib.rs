@@ -365,17 +365,23 @@ impl Litep2p {
         // A config without any listen address is skipped gracefully instead of
         // failing startup.
         #[cfg(feature = "webrtc")]
-        if let Some(config) = litep2p_config.webrtc.take().filter(|config| config.is_valid()) {
-            let handle = transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
-            let (transport, transport_listen_addresses) =
-                <WebRtcTransport as TransportBuilder>::new(handle, config, resolver.clone())?;
+        if let Some(config) = litep2p_config.webrtc.take() {
+            if !config.is_valid() {
+                tracing::warn!(target: LOG_TARGET, "Invalid WebRtc Config, no listen address specified");
+            } else {
+                let handle =
+                    transport_manager.transport_handle(Arc::clone(&litep2p_config.executor));
+                let (transport, transport_listen_addresses) =
+                    <WebRtcTransport as TransportBuilder>::new(handle, config, resolver.clone())?;
 
-            for address in transport_listen_addresses {
-                transport_manager.register_listen_address(address.clone());
-                listen_addresses.push(address.with(Protocol::P2p(local_peer_id.into())));
+                for address in transport_listen_addresses {
+                    transport_manager.register_listen_address(address.clone());
+                    listen_addresses.push(address.with(Protocol::P2p(local_peer_id.into())));
+                }
+
+                transport_manager
+                    .register_transport(SupportedTransport::WebRtc, Box::new(transport));
             }
-
-            transport_manager.register_transport(SupportedTransport::WebRtc, Box::new(transport));
         }
 
         // enable websocket transport if the config exists

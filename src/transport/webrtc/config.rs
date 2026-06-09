@@ -27,7 +27,7 @@ use crate::transport::webrtc::certificate::DtlsCertificate;
 /// WebRTC transport configuration.
 ///
 /// To be valid, the configuration must contain at least one listen address,
-/// otherwise the WebRTC transport is skipped at startup.
+/// otherwise, the WebRTC transport is not initialized.
 #[derive(Debug)]
 pub struct Config {
     /// WebRTC listening address.
