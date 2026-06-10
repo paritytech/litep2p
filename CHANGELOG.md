@@ -7,21 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.14.1] - 2026-06-10
 
+This release focuses on advancing the WebRTC transport layer toward production readiness, along with stability patches and CI improvements.
+
+WebRTC has received substantial upgrades, including multiple listening addresses, backpressure handling, a spec-compliant multistream-select implementation, and critical bug fixes. While the implementation is still considered experimental, it is significantly closer to being production-ready.
+
+Additionally, this release mitigates overflow issues for long-running mDNS nodes and introduces QUIC support for DNS dialing.
+
+### Added
+
 - feat(webrtc): update how webrtc certificate is handled  ([#610](https://github.com/paritytech/litep2p/pull/610))
-- Replace unwrap/expect with proper error propagation  ([#535](https://github.com/paritytech/litep2p/pull/535))
-- webrtc: Fix memory leak by detecting closed connections  ([#608](https://github.com/paritytech/litep2p/pull/608))
 - feat(webrtc): introduce `WebRtcListener` to support multiple listen addresses  ([#579](https://github.com/paritytech/litep2p/pull/579))
-- fix(webrtx): ICE issue + substream shutdown procedure  ([#586](https://github.com/paritytech/litep2p/pull/586))
-- webrtc: Decode webrtc message from multiple SCTP messages  ([#594](https://github.com/paritytech/litep2p/pull/594))
-- Add automated publishing to crates.io  ([#599](https://github.com/paritytech/litep2p/pull/599))
 - feat(webrtc): producer backpressure  ([#575](https://github.com/paritytech/litep2p/pull/575))
-- chore: Upgrade sha2 to 0.11  ([#598](https://github.com/paritytech/litep2p/pull/598))
-- fix(webrtc): use `Protocol::WebRTCDirect` after Multiaddr version bump  ([#578](https://github.com/paritytech/litep2p/pull/578))
 - feat(webrtc): multistream-select protocol implementation  ([#573](https://github.com/paritytech/litep2p/pull/573))
+- Add automated publishing to crates.io  ([#599](https://github.com/paritytech/litep2p/pull/599))
 - support for dialing DNS addresses with QUIC  ([#542](https://github.com/paritytech/litep2p/pull/542))
-- mdns: Avoid overflows on long running nodes  ([#585](https://github.com/paritytech/litep2p/pull/585))
+
+### Changed
+
 - refactor(webrtc): update str0m dep  ([#569](https://github.com/paritytech/litep2p/pull/569))
-- build(deps): bump openssl from 0.10.78 to 0.10.79  ([#571](https://github.com/paritytech/litep2p/pull/571))
+- Replace unwrap/expect with proper error propagation  ([#535](https://github.com/paritytech/litep2p/pull/535))
+- webrtc: Decode webrtc message from multiple SCTP messages  ([#594](https://github.com/paritytech/litep2p/pull/594))
+
+### Fixed
+
+- fix(webrtx): ICE issue + substream shutdown procedure  ([#586](https://github.com/paritytech/litep2p/pull/586))
+- fix(webrtc): use `Protocol::WebRTCDirect` after Multiaddr version bump  ([#578](https://github.com/paritytech/litep2p/pull/578))
+- webrtc: Fix memory leak by detecting closed connections  ([#608](https://github.com/paritytech/litep2p/pull/608))
+- mdns: Avoid overflows on long running nodes  ([#585](https://github.com/paritytech/litep2p/pull/585))
 
 ## [0.14.0] - 2026-05-11
 
