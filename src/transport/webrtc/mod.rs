@@ -42,8 +42,6 @@ use multihash_codetable::MultihashDigest;
 use str0m::{
     channel::{ChannelConfig, ChannelId},
     config::DtlsCert,
-    crypto::CryptoError,
-    error::DtlsError,
     ice::IceCreds,
     net::{DatagramRecv, Protocol as Str0mProtocol, Receive},
     Candidate, Input, Rtc, RtcError,
@@ -65,6 +63,7 @@ use std::{
 
 pub(crate) use substream::Substream;
 
+mod certificate;
 mod connection;
 mod listener;
 mod opening;
@@ -72,6 +71,7 @@ mod substream;
 mod util;
 
 pub mod config;
+pub use certificate::DtlsCertificate;
 
 pub(super) mod schema {
     pub(super) mod webrtc {
@@ -432,19 +432,16 @@ impl TransportBuilder for WebRtcTransport {
             "start webrtc transport",
         );
 
-        // OpenSsl as crypto provider is specified through the 'openssl' str0m feature flag.
-        let crypto_provider = str0m::crypto::from_feature_flags();
-        let dtls_cert = crypto_provider.dtls_provider.generate_certificate().ok_or(
-            crate::error::Error::WebRtc(RtcError::Dtls(DtlsError::CryptoError(
-                CryptoError::Other("OpenSsl failed to generate certificate".to_string()),
-            ))),
-        )?;
+        let dtls_cert: DtlsCert = match config.certificate {
+            Some(certificate) => certificate.into(),
+            None => {
+                tracing::debug!(target: LOG_TARGET, "generating temporary WebRtc certificate");
+                DtlsCertificate::new()?.into()
+            }
+        };
 
-        let fingerprint = crypto_provider.sha256_provider.sha256(&dtls_cert.certificate);
-        let cert_hash = multihash_codetable::Code::Sha2_256.wrap(&fingerprint).map_err(|err| {
-            tracing::warn!(target: LOG_TARGET, ?err, "failed to wrap WebRTC certificate");
-            Error::Other("could not compute WebRTC certificate".to_string())
-        })?;
+        // OpenSsl is used as crypto backend to generate the certificate, it uses sha256.
+        let cert_hash = multihash_codetable::Code::Sha2_256.digest(&dtls_cert.certificate);
 
         let (listener, listen_multi_addresses) =
             WebRtcListener::new(config.listen_addresses, cert_hash)?;
