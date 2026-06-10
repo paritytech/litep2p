@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.1] - 2026-06-10
+
+- feat(webrtc): update how webrtc certificate is handled  ([#610](https://github.com/paritytech/litep2p/pull/610))
+- Replace unwrap/expect with proper error propagation  ([#535](https://github.com/paritytech/litep2p/pull/535))
+- webrtc: Fix memory leak by detecting closed connections  ([#608](https://github.com/paritytech/litep2p/pull/608))
+- feat(webrtc): introduce `WebRtcListener` to support multiple listen addresses  ([#579](https://github.com/paritytech/litep2p/pull/579))
+- fix(webrtx): ICE issue + substream shutdown procedure  ([#586](https://github.com/paritytech/litep2p/pull/586))
+- webrtc: Decode webrtc message from multiple SCTP messages  ([#594](https://github.com/paritytech/litep2p/pull/594))
+- Add automated publishing to crates.io  ([#599](https://github.com/paritytech/litep2p/pull/599))
+- feat(webrtc): producer backpressure  ([#575](https://github.com/paritytech/litep2p/pull/575))
+- chore: Upgrade sha2 to 0.11  ([#598](https://github.com/paritytech/litep2p/pull/598))
+- fix(webrtc): use `Protocol::WebRTCDirect` after Multiaddr version bump  ([#578](https://github.com/paritytech/litep2p/pull/578))
+- feat(webrtc): multistream-select protocol implementation  ([#573](https://github.com/paritytech/litep2p/pull/573))
+- support for dialing DNS addresses with QUIC  ([#542](https://github.com/paritytech/litep2p/pull/542))
+- mdns: Avoid overflows on long running nodes  ([#585](https://github.com/paritytech/litep2p/pull/585))
+- refactor(webrtc): update str0m dep  ([#569](https://github.com/paritytech/litep2p/pull/569))
+- build(deps): bump openssl from 0.10.78 to 0.10.79  ([#571](https://github.com/paritytech/litep2p/pull/571))
+
 ## [0.14.0] - 2026-05-11
 
 This release updates several core dependencies, aligns clippy rules with the latest Rust version, and enhances observability for notification protocols.
