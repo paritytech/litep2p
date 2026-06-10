@@ -39,6 +39,9 @@ impl WebRtcListener {
 
         let handle_multiaddr = |listen_socket| -> crate::Result<(UdpSocket, SocketAddr)> {
             let listen_socket = Self::get_socket_address(&listen_socket)?;
+            // Unspecified addresses (`0.0.0.0` / `[::]`) are rejected,
+            // WebRTC ICE candidates must carry a concrete IP, so the listener must
+            // be bound to a specific address of a local interface.
             if listen_socket.ip().is_unspecified() {
                 return Err(Error::Other(
                     "WebRTC cannot listen on an unspecified address".to_string(),

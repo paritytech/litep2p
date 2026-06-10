@@ -31,6 +31,8 @@ use crate::transport::webrtc::certificate::DtlsCertificate;
 #[derive(Debug)]
 pub struct Config {
     /// WebRTC listening address.
+    ///
+    /// Unspecified addresses (`0.0.0.0` / `[::]`) are not supported.
     pub listen_addresses: Vec<Multiaddr>,
 
     /// Connection datagram buffer size.
