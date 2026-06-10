@@ -32,7 +32,7 @@ use crate::{
             substream::{Message, Substream as WebRtcSubstream, SubstreamHandle},
             util::{extract_framed_message, WebRtcMessage},
         },
-        Endpoint,
+        Endpoint, SUBSTREAM_OPEN_TIMEOUT,
     },
     types::{protocol::ProtocolName, SubstreamId},
     PeerId,
@@ -50,6 +50,7 @@ use tokio::{net::UdpSocket, sync::mpsc::Receiver};
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
+    hash::Hash,
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
@@ -86,6 +87,70 @@ struct ChannelContext {
     /// Whether this substream should keep the connection alive while it exists, i.e., whether it
     /// should store the permit entioned above for the lifetime of the substream.
     keep_alive: SubstreamKeepAlive,
+}
+
+/// Tracks deadlines for channels that are still in the opening/negotiation phase.
+///
+/// A malicious or broken peer can open a data channel (or accept one we opened) and then
+/// never complete the `multistream-select` handshake, leaving the channel parked forever
+/// with no mechanism to remove it. Recording a deadline per opening channel lets the
+/// connection event loop reclaim channels whose negotiation has stalled past
+/// [`SUBSTREAM_OPEN_TIMEOUT`] instead of leaking them until the whole connection is torn
+/// down.
+#[derive(Debug)]
+struct OpeningDeadlines<K> {
+    /// Per-channel negotiation deadlines.
+    deadlines: HashMap<K, Instant>,
+}
+
+impl<K: Eq + Hash + Copy> OpeningDeadlines<K> {
+    /// Create a new, empty [`OpeningDeadlines`].
+    fn new() -> Self {
+        Self {
+            deadlines: HashMap::new(),
+        }
+    }
+
+    /// Returns `true` if no channel is currently being tracked.
+    fn is_empty(&self) -> bool {
+        self.deadlines.is_empty()
+    }
+
+    /// Start tracking `key` with the given negotiation `deadline`.
+    ///
+    /// An existing deadline for `key` is intentionally preserved so that a peer cannot keep
+    /// extending the negotiation window: the bound covers the whole opening lifecycle, from
+    /// when the channel starts opening until it reaches [`ChannelState::Open`].
+    fn insert(&mut self, key: K, deadline: Instant) {
+        self.deadlines.entry(key).or_insert(deadline);
+    }
+
+    /// Stop tracking `key` (e.g. it reached [`ChannelState::Open`] or was closed).
+    fn remove(&mut self, key: &K) {
+        self.deadlines.remove(key);
+    }
+
+    /// The earliest tracked deadline, if any.
+    ///
+    /// Used to bound how long the event loop sleeps so a stalled channel is swept promptly.
+    fn earliest(&self) -> Option<Instant> {
+        self.deadlines.values().copied().min()
+    }
+
+    /// Remove and return every channel whose deadline is at or before `now`.
+    fn drain_expired(&mut self, now: Instant) -> Vec<K> {
+        let expired: Vec<K> = self
+            .deadlines
+            .iter()
+            .filter_map(|(key, deadline)| (*deadline <= now).then_some(*key))
+            .collect();
+
+        for key in &expired {
+            self.deadlines.remove(key);
+        }
+
+        expired
+    }
 }
 
 /// Set of [`SubstreamHandle`]s.
@@ -264,6 +329,12 @@ pub struct WebRtcConnection {
     /// Accumulate raw bytes here and only attempt protobuf decode once a
     /// full `varint length ++ body` frame is available.
     recv_buffers: HashMap<ChannelId, BytesMut>,
+
+    /// Negotiation deadlines for channels that are still opening.
+    ///
+    /// Bounds the `multistream-select` negotiation phase so channels that never finish
+    /// handshaking are reclaimed instead of leaking. See [`OpeningDeadlines`].
+    opening_deadlines: OpeningDeadlines<ChannelId>,
 }
 
 impl WebRtcConnection {
@@ -292,7 +363,14 @@ impl WebRtcConnection {
             channels: HashMap::new(),
             handles: SubstreamHandleSet::new(),
             recv_buffers: HashMap::new(),
+            opening_deadlines: OpeningDeadlines::new(),
         }
+    }
+
+    /// Deadline after which a channel that is currently opening is considered to have
+    /// stalled and is force-closed.
+    fn opening_deadline() -> Instant {
+        Instant::now() + SUBSTREAM_OPEN_TIMEOUT
     }
 
     /// Handle opened channel.
@@ -327,6 +405,7 @@ impl WebRtcConnection {
                 "inbound channel opened, wait for `multistream-select` message",
             );
 
+            self.opening_deadlines.insert(channel_id, Self::opening_deadline());
             self.channels.insert(
                 channel_id,
                 ChannelState::InboundOpening {
@@ -512,8 +591,67 @@ impl WebRtcConnection {
         self.pending_messages.remove(&channel_id);
         self.handles.remove(&channel_id);
         self.recv_buffers.remove(&channel_id);
+        self.opening_deadlines.remove(&channel_id);
 
         Ok(())
+    }
+
+    /// Close any channels whose `multistream-select` negotiation has stalled past
+    /// [`SUBSTREAM_OPEN_TIMEOUT`].
+    ///
+    /// A malicious or broken peer may open a data channel (or accept one we opened) and then
+    /// never complete the handshake, leaving the channel parked forever. Bounding the
+    /// negotiation phase ensures such channels are reclaimed instead of leaking until the
+    /// whole connection is torn down. Outbound opens have a protocol handler waiting for the
+    /// result, so they are notified with a [`NegotiationError::Timeout`]; inbound opens have
+    /// no waiting handler and are simply closed.
+    ///
+    /// [`NegotiationError::Timeout`]: crate::error::NegotiationError::Timeout
+    async fn sweep_opening_timeouts(&mut self, now: Instant) {
+        for channel_id in self.opening_deadlines.drain_expired(now) {
+            // Outbound context: `pending_outbound` before the channel acks, `OutboundOpening`
+            // during negotiation. Inbound opens have none.
+            let outbound_context = match self.pending_outbound.remove(&channel_id) {
+                Some(context) => Some(context),
+                None => match self.channels.remove(&channel_id) {
+                    Some(ChannelState::OutboundOpening { context, .. }) => Some(context),
+                    _ => None,
+                },
+            };
+
+            if let Some(context) = outbound_context {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    peer = ?self.peer,
+                    ?channel_id,
+                    protocol = %context.protocol,
+                    substream_id = ?context.substream_id,
+                    "outbound substream negotiation timed out, closing channel",
+                );
+
+                let _ = self
+                    .protocol_set
+                    .report_substream_open_failure(
+                        context.protocol,
+                        context.substream_id,
+                        SubstreamError::NegotiationError(crate::error::NegotiationError::Timeout),
+                    )
+                    .await;
+            } else {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    peer = ?self.peer,
+                    ?channel_id,
+                    "inbound substream negotiation timed out, closing channel",
+                );
+            }
+
+            self.pending_messages.remove(&channel_id);
+            self.recv_buffers.remove(&channel_id);
+            self.handles.remove(&channel_id);
+            self.channels.insert(channel_id, ChannelState::Closing);
+            self.rtc.direct_api().close_data_channel(channel_id);
+        }
     }
 
     /// Handle data received to an opening inbound channel.
@@ -830,6 +968,7 @@ impl WebRtcConnection {
                 match self.on_inbound_opening_channel_data(channel_id, data, header_received).await
                 {
                     Ok(Some((substream_id, handle, lifetime_permit))) => {
+                        self.opening_deadlines.remove(&channel_id);
                         self.handles.insert(channel_id, handle);
                         self.channels.insert(
                             channel_id,
@@ -858,6 +997,7 @@ impl WebRtcConnection {
                             "failed to handle opening inbound substream",
                         );
 
+                        self.opening_deadlines.remove(&channel_id);
                         self.channels.insert(channel_id, ChannelState::Closing);
                         self.rtc.direct_api().close_data_channel(channel_id);
                     }
@@ -876,6 +1016,7 @@ impl WebRtcConnection {
                     .await
                 {
                     Ok(Some((substream_id, handle))) => {
+                        self.opening_deadlines.remove(&channel_id);
                         self.handles.insert(channel_id, handle);
                         self.channels.insert(
                             channel_id,
@@ -896,6 +1037,7 @@ impl WebRtcConnection {
                             "failed to handle opening outbound substream",
                         );
 
+                        self.opening_deadlines.remove(&channel_id);
                         let _ = self
                             .protocol_set
                             .report_substream_open_failure(protocol, substream_id, error)
@@ -996,6 +1138,9 @@ impl WebRtcConnection {
             "open data channel",
         );
 
+        // Start the negotiation deadline now; it is carried through DCEP and
+        // `multistream-select`, across the `pending_outbound` -> `OutboundOpening` transition.
+        self.opening_deadlines.insert(channel_id, Self::opening_deadline());
         self.pending_outbound.insert(
             channel_id,
             ChannelContext {
@@ -1061,7 +1206,7 @@ impl WebRtcConnection {
                     return self.on_connection_closed().await;
                 }
             };
-            let timeout = match output {
+            let str0m_timeout = match output {
                 Output::Timeout(v) => v,
                 Output::Transmit(v) => {
                     tracing::trace!(
@@ -1160,6 +1305,17 @@ impl WebRtcConnection {
                         continue;
                     }
                 },
+            };
+
+            // About to block: sweep stalled opening channels and cap the sleep at the next
+            // negotiation deadline so the following one is swept promptly even when idle.
+            let deadline = if self.opening_deadlines.is_empty() {
+                str0m_timeout
+            } else {
+                self.sweep_opening_timeouts(Instant::now()).await;
+                self.opening_deadlines.earliest().map_or(str0m_timeout, |open_deadline| {
+                    str0m_timeout.min(open_deadline)
+                })
             };
 
             tokio::select! {
@@ -1281,7 +1437,7 @@ impl WebRtcConnection {
                         );
                     }
                 },
-                _ = tokio::time::sleep(timeout.saturating_duration_since(Instant::now())) => {
+                _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => {
                     if let Err(error) = self.rtc.handle_input(Input::Timeout(Instant::now())) {
                         tracing::debug!(
                             target: LOG_TARGET,
@@ -1295,5 +1451,71 @@ impl WebRtcConnection {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn earliest_returns_the_minimum_deadline() {
+        let mut deadlines = OpeningDeadlines::new();
+        assert!(deadlines.is_empty());
+        assert_eq!(deadlines.earliest(), None);
+
+        let now = Instant::now();
+        deadlines.insert(1usize, now + Duration::from_secs(5));
+        deadlines.insert(2usize, now + Duration::from_secs(1));
+        deadlines.insert(3usize, now + Duration::from_secs(3));
+
+        assert!(!deadlines.is_empty());
+        assert_eq!(deadlines.earliest(), Some(now + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn insert_preserves_the_original_deadline() {
+        // First deadline wins: a peer can't extend its window by re-inserting.
+        let mut deadlines = OpeningDeadlines::new();
+        let now = Instant::now();
+
+        deadlines.insert(1usize, now + Duration::from_secs(1));
+        deadlines.insert(1usize, now + Duration::from_secs(100));
+
+        assert_eq!(deadlines.earliest(), Some(now + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn drain_expired_only_removes_passed_deadlines() {
+        let mut deadlines = OpeningDeadlines::new();
+        let now = Instant::now();
+
+        deadlines.insert(1usize, now - Duration::from_secs(1)); // expired
+        deadlines.insert(2usize, now); // expired (deadline == now)
+        deadlines.insert(3usize, now + Duration::from_secs(5)); // still pending
+
+        let mut expired = deadlines.drain_expired(now);
+        expired.sort_unstable();
+        assert_eq!(expired, vec![1usize, 2usize]);
+
+        // The pending channel is retained and remains the earliest deadline.
+        assert_eq!(deadlines.earliest(), Some(now + Duration::from_secs(5)));
+
+        // Draining again before the remaining deadline yields nothing.
+        assert!(deadlines.drain_expired(now).is_empty());
+    }
+
+    #[test]
+    fn remove_stops_tracking() {
+        let mut deadlines = OpeningDeadlines::new();
+        let now = Instant::now();
+
+        deadlines.insert(1usize, now + Duration::from_secs(1));
+        deadlines.remove(&1usize);
+
+        assert!(deadlines.is_empty());
+        assert_eq!(deadlines.earliest(), None);
+        assert!(deadlines.drain_expired(now + Duration::from_secs(10)).is_empty());
     }
 }
