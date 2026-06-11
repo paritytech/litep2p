@@ -187,8 +187,11 @@ impl WebRtcTransport {
         rtc.add_remote_candidate(
             Candidate::host(source, Str0mProtocol::Udp).map_err(RtcError::Ice)?,
         );
-        rtc.direct_api()
-            .set_remote_fingerprint(REMOTE_FINGERPRINT.parse().expect("parse() to succeed"));
+        rtc.direct_api().set_remote_fingerprint(
+            REMOTE_FINGERPRINT
+                .parse()
+                .map_err(|_| Error::Other("remote fingerprint generation failed".to_string()))?,
+        );
         rtc.direct_api().set_remote_ice_credentials(IceCreds {
             ufrag: ufrag.to_owned(),
             pass: pass.to_owned(),

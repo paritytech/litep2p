@@ -161,11 +161,27 @@ impl Stream for SubstreamHandleSet {
             let index = self.index % len;
             self.index += 1;
 
-            let key =
-                self.handles.get_index(index).map(|(k, _)| k).cloned().expect("handle to exist");
+            let Some((key, _)) = self.handles.get_index(index) else {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    index,
+                    num_handles = self.handles.len(),
+                    "substream handles index out of bounds",
+                );
+                return Poll::Ready(None);
+            };
 
-            if !self.pending.contains(&key) {
-                let (key, stream) = self.handles.get_index_mut(index).expect("handle to exist");
+            if !self.pending.contains(key) {
+                let Some((key, stream)) = self.handles.get_index_mut(index) else {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        index,
+                        num_handles = self.handles.len(),
+                        "substream handles index out of bounds",
+                    );
+                    return Poll::Ready(None);
+                };
+
                 match stream.poll_next_unpin(cx) {
                     Poll::Pending => {}
                     Poll::Ready(event) => return Poll::Ready(Some((*key, event))),
@@ -572,8 +588,9 @@ impl WebRtcConnection {
         let opening_permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
         let (substream, handle) = WebRtcSubstream::new();
         let substream = Substream::new_webrtc(self.peer, substream_id, substream, codec);
-        let keep_alive =
-            protocols.get(&protocol).expect("negotiated protocol to be one of the keys");
+        let keep_alive = protocols
+            .get(&protocol)
+            .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?;
         let lifetime_permit = keep_alive.then(|| opening_permit.clone());
 
         tracing::trace!(
@@ -1211,7 +1228,12 @@ impl WebRtcConnection {
                     }
                 },
                 event = self.handles.next() => match event {
-                    None => unreachable!(),
+                    None => {
+                        tracing::warn!(
+                            target: LOG_TARGET, peer = ?self.peer, "substream handle set unexpectedly terminated"
+                        );
+                        return self.on_connection_closed().await;
+                    },
                     Some((channel_id, None)) => {
                         tracing::trace!(
                             target: LOG_TARGET,
@@ -1270,7 +1292,18 @@ impl WebRtcConnection {
                                 is_connected = self.rtc.is_connected(),
                                 "rejecting substream open: connection not healthy",
                             );
-                            continue;
+
+                            // This substream isn't tracked in `pending_outbound`/`channels` yet, so report
+                            // the failure here. Other in-flight substreams are reported during connection close.
+                            let _ = self
+                                .protocol_set
+                                .report_substream_open_failure(
+                                    protocol,
+                                    substream_id,
+                                    SubstreamError::ConnectionClosed,
+                                )
+                                .await;
+                            return self.on_connection_closed().await;
                         }
                         self.on_open_substream(
                             protocol,
