@@ -1331,10 +1331,7 @@ impl WebRtcConnection {
 
     /// Register an opening-phase deadline for `channel_id`.
     fn add_deadline(&mut self, channel_id: ChannelId) {
-        self.deadlines.push_back((
-            channel_id,
-            std::time::Instant::now() + SUBSTREAM_OPEN_TIMEOUT,
-        ));
+        self.deadlines.push_back((channel_id, Instant::now() + SUBSTREAM_OPEN_TIMEOUT));
     }
 
     /// Close channels whose opening phase exceeded [`SUBSTREAM_OPEN_TIMEOUT`],
@@ -1349,6 +1346,7 @@ impl WebRtcConnection {
                 _ => break,
             };
 
+            self.deadlines.pop_front();
             if !self.pending_outbound.contains_key(&channel_id)
                 && !matches!(
                     self.channels.get(&channel_id),
@@ -1356,7 +1354,6 @@ impl WebRtcConnection {
                         | Some(ChannelState::OutboundOpening { .. })
                 )
             {
-                self.deadlines.pop_front();
                 continue;
             };
 
@@ -1367,7 +1364,6 @@ impl WebRtcConnection {
                 "opening substream reached deadline, shutting down",
             );
 
-            self.deadlines.pop_front();
             self.timed_out.insert(channel_id);
             self.rtc.direct_api().close_data_channel(channel_id);
 
