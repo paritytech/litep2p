@@ -162,11 +162,23 @@ impl Stream for SubstreamHandleSet {
             self.index += 1;
 
             let Some((key, _)) = self.handles.get_index(index) else {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    index,
+                    num_handles = self.handles.len(),
+                    "substream handles index out of bounds",
+                );
                 return Poll::Ready(None);
             };
 
             if !self.pending.contains(key) {
                 let Some((key, stream)) = self.handles.get_index_mut(index) else {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        index,
+                        num_handles = self.handles.len(),
+                        "substream handles index out of bounds",
+                    );
                     return Poll::Ready(None);
                 };
 
@@ -1218,7 +1230,7 @@ impl WebRtcConnection {
                 event = self.handles.next() => match event {
                     None => {
                         tracing::warn!(
-                            target: LOG_TARGET, peer = ?self.peer, "substream handle set terminated"
+                            target: LOG_TARGET, peer = ?self.peer, "substream handle set unexpectedly terminated"
                         );
                         return self.on_connection_closed().await;
                     },
