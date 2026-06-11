@@ -1280,7 +1280,18 @@ impl WebRtcConnection {
                                 is_connected = self.rtc.is_connected(),
                                 "rejecting substream open: connection not healthy",
                             );
-                            continue;
+
+                            // This substream isn't tracked in `pending_outbound`/`channels` yet, so report
+                            // the failure here. Other in-flight substreams are reported during connection close.
+                            let _ = self
+                                .protocol_set
+                                .report_substream_open_failure(
+                                    protocol,
+                                    substream_id,
+                                    SubstreamError::ConnectionClosed,
+                                )
+                                .await;
+                            return self.on_connection_closed().await;
                         }
                         self.on_open_substream(
                             protocol,
