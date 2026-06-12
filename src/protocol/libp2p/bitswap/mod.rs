@@ -786,7 +786,19 @@ fn extract_next_batch<'a>(
 mod tests {
     use cid::multihash::Multihash;
 
+    use crate::{
+        addresses::PublicAddresses,
+        protocol::{ProtocolName, SubstreamKeepAlive},
+        transport::{
+            manager::{handle::InnerTransportManagerCommand, TransportManagerHandle},
+            KEEP_ALIVE_TIMEOUT,
+        },
+    };
+
     use super::*;
+    use parking_lot::RwLock;
+    use std::sync::{atomic::AtomicUsize, Arc};
+    use tokio::sync::mpsc;
 
     fn cid(block: &[u8]) -> Cid {
         let codec = 0x55;
@@ -795,6 +807,90 @@ mod tests {
             Multihash::wrap(multihash.code(), multihash.digest()).expect("to be valid multihash");
 
         Cid::new_v1(codec, multihash)
+    }
+
+    fn bitswap() -> Bitswap {
+        let local_peer = PeerId::random();
+        let (cmd_tx, _cmd_rx) = mpsc::channel::<InnerTransportManagerCommand>(64);
+
+        let handle = TransportManagerHandle::new(
+            local_peer,
+            Arc::new(RwLock::new(HashMap::new())),
+            cmd_tx,
+            HashSet::new(),
+            Default::default(),
+            PublicAddresses::new(local_peer),
+        );
+
+        let (service, _) = TransportService::new(
+            local_peer,
+            ProtocolName::from(config::PROTOCOL_NAME),
+            Vec::new(),
+            Arc::new(AtomicUsize::new(0usize)),
+            handle,
+            KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::No,
+        );
+        let (config, _) = Config::new();
+
+        Bitswap::new(service, config)
+    }
+
+    fn pending_action() -> SubstreamAction {
+        SubstreamAction::SendRequest(vec![(cid(b"test"), WantType::Have)])
+    }
+
+    #[test]
+    fn substream_open_failure_clears_pending_actions() {
+        let peer = PeerId::random();
+        let substream = SubstreamId::from(0usize);
+        let mut bitswap = bitswap();
+
+        bitswap.pending_outbound.insert(peer, vec![pending_action()]);
+        bitswap.pending_substreams.insert(substream, peer);
+
+        bitswap.on_substream_open_failure(substream, SubstreamError::ConnectionClosed);
+
+        assert!(!bitswap.pending_outbound.contains_key(&peer));
+        assert!(!bitswap.pending_substreams.contains_key(&substream));
+    }
+
+    #[test]
+    fn dial_failure_clears_pending_actions() {
+        let peer = PeerId::random();
+        let mut bitswap = bitswap();
+
+        bitswap.pending_outbound.insert(peer, vec![pending_action()]);
+        bitswap.pending_dials.insert(peer);
+
+        bitswap.on_dial_failure(peer);
+
+        assert!(!bitswap.pending_outbound.contains_key(&peer));
+        assert!(!bitswap.pending_dials.contains(&peer));
+    }
+
+    #[test]
+    fn connection_closed_clears_peer_scoped_state() {
+        let peer = PeerId::random();
+        let other = PeerId::random();
+        let substream = SubstreamId::from(0usize);
+        let other_substream = SubstreamId::from(1usize);
+        let mut bitswap = bitswap();
+
+        bitswap.pending_outbound.insert(peer, vec![pending_action()]);
+        bitswap.pending_dials.insert(peer);
+        bitswap.pending_substreams.insert(substream, peer);
+        bitswap.pending_substreams.insert(other_substream, other);
+
+        bitswap.on_connection_closed(peer);
+
+        assert!(!bitswap.pending_outbound.contains_key(&peer));
+        assert!(!bitswap.pending_dials.contains(&peer));
+        assert!(!bitswap.pending_substreams.contains_key(&substream));
+        assert_eq!(
+            bitswap.pending_substreams.get(&other_substream),
+            Some(&other)
+        );
     }
 
     #[test]
