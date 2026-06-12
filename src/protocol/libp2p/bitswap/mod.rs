@@ -21,7 +21,7 @@
 //! [`/ipfs/bitswap/1.2.0`](https://github.com/ipfs/specs/blob/main/BITSWAP.md) implementation.
 
 use crate::{
-    error::{Error, ImmediateDialError},
+    error::{Error, ImmediateDialError, SubstreamError},
     protocol::{Direction, TransportEvent, TransportService},
     substream::Substream,
     types::{
@@ -144,6 +144,11 @@ pub(crate) struct Bitswap {
     /// Pending outbound actions.
     pending_outbound: HashMap<PeerId, Vec<SubstreamAction>>,
 
+    /// Outbound substream opens in flight, mapped back to their target peer so that
+    /// [`TransportEvent::SubstreamOpenFailure`] (which only carries a [`SubstreamId`])
+    /// can be associated with the queued actions in [`Self::pending_outbound`].
+    pending_substreams: HashMap<SubstreamId, PeerId>,
+
     /// Inbound substreams.
     inbound: StreamMap<PeerId, Substream>,
 
@@ -162,6 +167,7 @@ impl Bitswap {
             cmd_rx: config.cmd_rx,
             event_tx: config.event_tx,
             pending_outbound: HashMap::new(),
+            pending_substreams: HashMap::new(),
             inbound: StreamMap::new(),
             outbound: HashMap::new(),
             pending_dials: HashSet::new(),
@@ -305,6 +311,8 @@ impl Bitswap {
         substream_id: SubstreamId,
         mut substream: Substream,
     ) {
+        self.pending_substreams.remove(&substream_id);
+
         let Some(actions) = self.pending_outbound.remove(&peer) else {
             tracing::warn!(target: LOG_TARGET, ?peer, ?substream_id, "pending outbound entry doesn't exist");
             return;
@@ -334,6 +342,81 @@ impl Bitswap {
         self.outbound.insert(peer, substream);
     }
 
+    /// Handle connection closed event.
+    ///
+    /// The outbound substream cached in [`Self::outbound`] now references a dead transport;
+    /// drop it so the next request/response triggers a fresh open. We deliberately do NOT touch
+    /// [`Self::pending_outbound`] or [`Self::pending_substreams`] here: any in-flight open on
+    /// the closed connection will surface as [`TransportEvent::SubstreamOpenFailure`], which
+    /// cleans both maps via [`Self::on_substream_open_failure`].
+    fn on_connection_closed(&mut self, peer: PeerId) {
+        if self.outbound.remove(&peer).is_some() {
+            tracing::debug!(target: LOG_TARGET, ?peer, "dropping outbound substream on connection close");
+        }
+        self.inbound.remove(&peer);
+    }
+
+    /// Dial to remote peer failed.
+    ///
+    /// We only enter `pending_dials` from [`Self::open_substream_or_dial`] when we already had
+    /// queued actions in [`Self::pending_outbound`]. Without this handler, both would stay
+    /// populated forever — same shape as the [`Self::on_substream_open_failure`] bug.
+    fn on_dial_failure(&mut self, peer: PeerId) {
+        if !self.pending_dials.remove(&peer) {
+            return;
+        }
+        let dropped = self
+            .pending_outbound
+            .remove(&peer)
+            .map(|actions| actions.len())
+            .unwrap_or(0);
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            dropped_actions = dropped,
+            "dial failed, dropping queued bitswap actions",
+        );
+    }
+
+    /// Failed to open an outbound substream that we previously requested.
+    ///
+    /// The transport reports failure by [`SubstreamId`] (no [`PeerId`]), so we map it back via
+    /// [`Self::pending_substreams`]. Any actions queued in [`Self::pending_outbound`] for that
+    /// peer are dropped — there is no in-protocol retry — but the queue is cleared so that the
+    /// next request/response for the peer can trigger a fresh open instead of stacking onto a
+    /// queue that will never drain.
+    ///
+    /// Without this handler, [`TransportEvent::SubstreamOpenFailure`] would fall through to the
+    /// catch-all trace log in [`Self::run`] and [`Self::pending_outbound`] would grow forever
+    /// for the affected peer, producing a silent per-peer black hole that only a node restart
+    /// could clear.
+    fn on_substream_open_failure(&mut self, substream_id: SubstreamId, error: SubstreamError) {
+        let Some(peer) = self.pending_substreams.remove(&substream_id) else {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?substream_id,
+                ?error,
+                "outbound substream open failed for unknown substream id",
+            );
+            return;
+        };
+
+        let dropped = self
+            .pending_outbound
+            .remove(&peer)
+            .map(|actions| actions.len())
+            .unwrap_or(0);
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            ?substream_id,
+            ?error,
+            dropped_actions = dropped,
+            "outbound substream open failed, dropping queued bitswap actions",
+        );
+    }
+
     /// Handle connection established event.
     fn on_connection_established(&mut self, peer: PeerId) {
         // If we have pending actions for this peer, open a substream.
@@ -344,16 +427,21 @@ impl Bitswap {
                 "open substream after connection established",
             );
 
-            if let Err(error) = self.service.open_substream(peer) {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?error,
-                    "failed to open substream after connection established",
-                );
-                // Drop all pending actions; they are not going to be handled anyway, and we need
-                // the entry to be empty to properly open subsequent substreams.
-                self.pending_outbound.remove(&peer);
+            match self.service.open_substream(peer) {
+                Ok(substream_id) => {
+                    self.pending_substreams.insert(substream_id, peer);
+                }
+                Err(error) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?error,
+                        "failed to open substream after connection established",
+                    );
+                    // Drop all pending actions; they are not going to be handled anyway, and we
+                    // need the entry to be empty to properly open subsequent substreams.
+                    self.pending_outbound.remove(&peer);
+                }
             }
         }
     }
@@ -362,33 +450,48 @@ impl Bitswap {
     fn open_substream_or_dial(&mut self, peer: PeerId) {
         tracing::trace!(target: LOG_TARGET, ?peer, "open substream");
 
-        if let Err(error) = self.service.open_substream(peer) {
-            tracing::trace!(
-                target: LOG_TARGET,
-                ?peer,
-                ?error,
-                "failed to open substream, dialing peer",
-            );
+        match self.service.open_substream(peer) {
+            Ok(substream_id) => {
+                self.pending_substreams.insert(substream_id, peer);
+            }
+            Err(error) => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?error,
+                    "failed to open substream, dialing peer",
+                );
 
-            // Failed to open substream, try to dial the peer.
-            match self.service.dial(&peer) {
-                Ok(()) => {
-                    // Store the peer to open a substream once it is connected.
-                    self.pending_dials.insert(peer);
-                }
-                Err(ImmediateDialError::AlreadyConnected) => {
-                    // By the time we tried to dial peer, it got connected.
-                    if let Err(error) = self.service.open_substream(peer) {
-                        tracing::trace!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?error,
-                            "failed to open substream for a second time",
-                        );
+                // Failed to open substream, try to dial the peer.
+                match self.service.dial(&peer) {
+                    Ok(()) => {
+                        // Store the peer to open a substream once it is connected.
+                        self.pending_dials.insert(peer);
                     }
-                }
-                Err(error) => {
-                    tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to dial peer");
+                    Err(ImmediateDialError::AlreadyConnected) => {
+                        // By the time we tried to dial peer, it got connected.
+                        match self.service.open_substream(peer) {
+                            Ok(substream_id) => {
+                                self.pending_substreams.insert(substream_id, peer);
+                            }
+                            Err(error) => {
+                                tracing::trace!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    ?error,
+                                    "failed to open substream for a second time",
+                                );
+                                // No event will ever arrive for this attempt; drop the queued
+                                // actions so the next response triggers a fresh open.
+                                self.pending_outbound.remove(&peer);
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to dial peer");
+                        // Same rationale as above: no event will ever arrive.
+                        self.pending_outbound.remove(&peer);
+                    }
                 }
             }
         }
@@ -470,8 +573,16 @@ impl Bitswap {
                         Direction::Outbound(substream_id) =>
                             self.on_outbound_substream(peer, substream_id, substream).await,
                     },
+                    Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
+                        self.on_substream_open_failure(substream, error);
+                    }
+                    Some(TransportEvent::ConnectionClosed { peer }) => {
+                        self.on_connection_closed(peer);
+                    }
+                    Some(TransportEvent::DialFailure { peer, .. }) => {
+                        self.on_dial_failure(peer);
+                    }
                     None => return,
-                    event => tracing::trace!(target: LOG_TARGET, ?event, "unhandled event"),
                 },
                 command = self.cmd_rx.recv() => match command {
                     Some(BitswapCommand::SendRequest { peer, cids }) => {
