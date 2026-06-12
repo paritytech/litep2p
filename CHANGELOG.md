@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.2] - 2026-06-12
+
+This release hardens the Bitswap and WebRTC protocols against silent failure modes that could leave connections or pending work stuck without ever being reported to higher-level protocols.
+
+Bitswap now handles `SubstreamOpenFailure`, `DialFailure`, and `ConnectionClosed` events, bringing it in line with the other protocols. Previously, a failed outbound substream would leave responses stacking onto a dead queue, causing the peer to silently stop being served until the local node was restarted.
+
+WebRTC replaces several `unwrap`/`expect` calls in the connection event loop with proper error propagation, and now reports substream open failures to upper layers when the RTC association is no longer healthy, preventing protocols from hanging on a substream that will never open.
+
+### Fixed
+
+- bitswap: Handle substream open and connection failures to avoid stuck pending responses ([#618](https://github.com/paritytech/litep2p/pull/618))
+- webrtc: Avoid panics and properly close opening substreams ([#616](https://github.com/paritytech/litep2p/pull/616))
+
 ## [0.14.1] - 2026-06-10
 
 This release focuses on advancing the WebRTC transport layer toward production readiness, along with stability patches and CI improvements.
