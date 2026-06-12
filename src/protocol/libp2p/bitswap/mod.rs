@@ -344,23 +344,19 @@ impl Bitswap {
 
     /// Handle connection closed event.
     ///
-    /// The outbound substream cached in [`Self::outbound`] now references a dead transport;
-    /// drop it so the next request/response triggers a fresh open. We deliberately do NOT touch
-    /// [`Self::pending_outbound`] or [`Self::pending_substreams`] here: any in-flight open on
-    /// the closed connection will surface as [`TransportEvent::SubstreamOpenFailure`], which
-    /// cleans both maps via [`Self::on_substream_open_failure`].
+    /// Drop all peer-scoped outbound state so the next request/response can open a fresh
+    /// substream instead of waiting behind state tied to a closed connection.
     fn on_connection_closed(&mut self, peer: PeerId) {
         if self.outbound.remove(&peer).is_some() {
             tracing::debug!(target: LOG_TARGET, ?peer, "dropping outbound substream on connection close");
         }
+        self.pending_outbound.remove(&peer);
+        self.pending_dials.remove(&peer);
+        self.pending_substreams.retain(|_, pending_peer| pending_peer != &peer);
         self.inbound.remove(&peer);
     }
 
     /// Dial to remote peer failed.
-    ///
-    /// We only enter `pending_dials` from [`Self::open_substream_or_dial`] when we already had
-    /// queued actions in [`Self::pending_outbound`]. Without this handler, both would stay
-    /// populated forever — same shape as the [`Self::on_substream_open_failure`] bug.
     fn on_dial_failure(&mut self, peer: PeerId) {
         if !self.pending_dials.remove(&peer) {
             return;
@@ -375,17 +371,6 @@ impl Bitswap {
     }
 
     /// Failed to open an outbound substream that we previously requested.
-    ///
-    /// The transport reports failure by [`SubstreamId`] (no [`PeerId`]), so we map it back via
-    /// [`Self::pending_substreams`]. Any actions queued in [`Self::pending_outbound`] for that
-    /// peer are dropped — there is no in-protocol retry — but the queue is cleared so that the
-    /// next request/response for the peer can trigger a fresh open instead of stacking onto a
-    /// queue that will never drain.
-    ///
-    /// Without this handler, [`TransportEvent::SubstreamOpenFailure`] would fall through to the
-    /// catch-all trace log in [`Self::run`] and [`Self::pending_outbound`] would grow forever
-    /// for the affected peer, producing a silent per-peer black hole that only a node restart
-    /// could clear.
     fn on_substream_open_failure(&mut self, substream_id: SubstreamId, error: SubstreamError) {
         let Some(peer) = self.pending_substreams.remove(&substream_id) else {
             tracing::debug!(
