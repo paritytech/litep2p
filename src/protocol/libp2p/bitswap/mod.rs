@@ -365,11 +365,7 @@ impl Bitswap {
         if !self.pending_dials.remove(&peer) {
             return;
         }
-        let dropped = self
-            .pending_outbound
-            .remove(&peer)
-            .map(|actions| actions.len())
-            .unwrap_or(0);
+        let dropped = self.pending_outbound.remove(&peer).map(|actions| actions.len()).unwrap_or(0);
         tracing::debug!(
             target: LOG_TARGET,
             ?peer,
@@ -401,11 +397,7 @@ impl Bitswap {
             return;
         };
 
-        let dropped = self
-            .pending_outbound
-            .remove(&peer)
-            .map(|actions| actions.len())
-            .unwrap_or(0);
+        let dropped = self.pending_outbound.remove(&peer).map(|actions| actions.len()).unwrap_or(0);
 
         tracing::debug!(
             target: LOG_TARGET,
