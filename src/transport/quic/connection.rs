@@ -20,7 +20,7 @@
 
 //! QUIC connection.
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use crate::{
     config::Role,
@@ -32,7 +32,10 @@ use crate::{
         quic::substream::{NegotiatingSubstream, Substream},
         Endpoint,
     },
-    types::{protocol::ProtocolName, SubstreamId},
+    types::{
+        protocol::{protocol_name_as_str, ProtocolName},
+        SubstreamId,
+    },
     BandwidthSink, PeerId,
 };
 
@@ -137,12 +140,17 @@ impl QuicConnection {
     }
 
     /// Negotiate protocol.
-    async fn negotiate_protocol<S: AsyncRead + AsyncWrite + Unpin>(
+    async fn negotiate_protocol<S, I>(
         stream: S,
         role: &Role,
-        protocols: Vec<&str>,
-    ) -> Result<(Negotiated<S>, ProtocolName), NegotiationError> {
-        tracing::trace!(target: LOG_TARGET, ?protocols, "negotiating protocols");
+        protocols: I,
+    ) -> Result<(Negotiated<S>, ProtocolName), NegotiationError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+        I: IntoIterator,
+        I::Item: AsRef<[u8]> + Clone + std::fmt::Display,
+    {
+        tracing::trace!(target: LOG_TARGET, "negotiating protocols");
 
         let (protocol, socket) = match role {
             Role::Dialer => dialer_select_proto(stream, protocols, Version::V1).await,
@@ -150,34 +158,33 @@ impl QuicConnection {
         }
         .map_err(NegotiationError::MultistreamSelectError)?;
 
-        tracing::trace!(target: LOG_TARGET, ?protocol, "protocol negotiated");
+        tracing::trace!(target: LOG_TARGET, %protocol, "protocol negotiated");
 
         Ok((socket, ProtocolName::from(protocol.to_string())))
     }
 
-    /// Open substream for `protocol`.
+    /// Open substream for `protocols`.
     async fn open_substream(
         handle: QuinnConnection,
         permit: Permit,
         substream_id: SubstreamId,
-        protocol: ProtocolName,
-        fallback_names: Vec<ProtocolName>,
+        protocols: Arc<[ProtocolName]>,
         keep_alive: SubstreamKeepAlive,
     ) -> Result<NegotiatedSubstream, SubstreamError> {
-        tracing::debug!(target: LOG_TARGET, ?protocol, ?substream_id, "open substream");
+        tracing::debug!(
+            target: LOG_TARGET,
+            protocol = %protocols[0],
+            ?substream_id,
+            "open substream",
+        );
 
         let stream = match handle.open_bi().await {
             Ok((send_stream, recv_stream)) => NegotiatingSubstream::new(send_stream, recv_stream),
             Err(error) => return Err(NegotiationError::Quic(error.into()).into()),
         };
 
-        // TODO: https://github.com/paritytech/litep2p/issues/346 protocols don't change after
-        // they've been initialized so this should be done only once
-        let protocols = std::iter::once(&*protocol)
-            .chain(fallback_names.iter().map(|protocol| &**protocol))
-            .collect();
-
-        let (io, protocol) = Self::negotiate_protocol(stream, &Role::Dialer, protocols).await?;
+        let (io, protocol) =
+            Self::negotiate_protocol(stream, &Role::Dialer, protocols.iter().map(protocol_name_as_str)).await?;
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -203,7 +210,7 @@ impl QuicConnection {
     /// Accept bidirectional substream from rmeote peer.
     async fn accept_substream(
         stream: NegotiatingSubstream,
-        protocols: HashMap<ProtocolName, SubstreamKeepAlive>,
+        protocols: Arc<HashMap<ProtocolName, SubstreamKeepAlive>>,
         substream_id: SubstreamId,
         permit: Permit,
     ) -> Result<NegotiatedSubstream, NegotiationError> {
@@ -213,9 +220,9 @@ impl QuicConnection {
             "accept inbound substream"
         );
 
-        let protocol_names = protocols.keys().map(|protocol| &**protocol).collect::<Vec<&str>>();
         let (io, protocol) =
-            Self::negotiate_protocol(stream, &Role::Listener, protocol_names).await?;
+            Self::negotiate_protocol(stream, &Role::Listener, protocols.keys().map(protocol_name_as_str))
+                .await?;
         let keep_alive = *protocols.get(&protocol).expect("protocol to be one of the keys");
 
         tracing::trace!(
@@ -347,8 +354,7 @@ impl QuicConnection {
                         ).await;
                     }
                     Some(ProtocolCommand::OpenSubstream {
-                        protocol,
-                        fallback_names,
+                        protocols,
                         substream_id,
                         permit,
                         keep_alive,
@@ -356,11 +362,11 @@ impl QuicConnection {
                     }) => {
                         let connection = self.connection.clone();
                         let substream_open_timeout = self.substream_open_timeout;
+                        let protocol = protocols[0].clone();
 
                         tracing::trace!(
                             target: LOG_TARGET,
-                            ?protocol,
-                            ?fallback_names,
+                            %protocol,
                             ?substream_id,
                             "open substream"
                         );
@@ -372,8 +378,7 @@ impl QuicConnection {
                                     connection,
                                     permit,
                                     substream_id,
-                                    protocol.clone(),
-                                    fallback_names,
+                                    protocols,
                                     keep_alive,
                                 ),
                             )

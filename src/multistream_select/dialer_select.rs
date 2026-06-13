@@ -39,6 +39,7 @@ use std::{
     convert::TryFrom as _,
     iter, mem,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -320,11 +321,15 @@ enum HandshakeState {
 /// `multistream-select` dialer handshake state.
 #[derive(Debug)]
 pub struct WebRtcDialerState {
-    /// Proposed main protocol.
-    protocol: ProtocolName,
+    /// Protocols to negotiate in preference order.
+    ///
+    /// `protocols[0]` is the main protocol; `protocols[1..]` are fallbacks. The list is
+    /// shared via [`Arc`] so it can be precomputed once per protocol handler and reused
+    /// across substreams without per-substream allocation.
+    protocols: Arc<[ProtocolName]>,
 
-    /// Fallback names of the main protocol.
-    fallback_names: Vec<ProtocolName>,
+    /// Index into [`Self::protocols`] of the protocol currently being proposed.
+    current_index: usize,
 
     /// Dialer handshake state.
     state: HandshakeState,
@@ -333,15 +338,13 @@ pub struct WebRtcDialerState {
 impl WebRtcDialerState {
     /// Propose protocol to remote peer.
     ///
-    /// `fallback_names` must be in preference order, the first element is the
-    /// next protocol to try.
+    /// `protocols[0]` is proposed first; the rest are tried in order via
+    /// [`Self::propose_next_fallback`] when the peer rejects the current one.
     ///
     /// Return [`WebRtcDialerState`] which is used to drive forward the negotiation and an encoded
     /// `multistream-select` message that contains the protocol proposal for the substream.
-    pub fn propose(
-        protocol: ProtocolName,
-        mut fallback_names: Vec<ProtocolName>,
-    ) -> crate::Result<(Self, Vec<u8>)> {
+    pub fn propose(protocols: Arc<[ProtocolName]>) -> crate::Result<(Self, Vec<u8>)> {
+        let protocol = protocols.first().ok_or(Error::InvalidData)?;
         let message = webrtc_encode_multistream_message(
             Message::Protocol(
                 Protocol::try_from(protocol.as_ref()).map_err(|_| Error::InvalidData)?,
@@ -351,17 +354,19 @@ impl WebRtcDialerState {
         .freeze()
         .to_vec();
 
-        // Reverse fallback_names so that we can pop from it.
-        fallback_names.reverse();
-
         Ok((
             Self {
-                protocol,
-                fallback_names,
+                protocols,
+                current_index: 0,
                 state: HandshakeState::WaitingResponse,
             },
             message,
         ))
+    }
+
+    /// Currently proposed protocol.
+    fn current_protocol(&self) -> &ProtocolName {
+        &self.protocols[self.current_index]
     }
 
     /// Propose the next fallback protocol to the remote peer.
@@ -369,15 +374,15 @@ impl WebRtcDialerState {
     /// Returns `None` if there are no more fallback protocols to try.
     /// Returns `Some(message)` with the encoded message to send, containing the protocol name.
     pub fn propose_next_fallback(&mut self) -> crate::Result<Option<Vec<u8>>> {
-        let Some(next) = self.fallback_names.pop() else {
+        if self.current_index + 1 >= self.protocols.len() {
             return Ok(None);
-        };
-
-        self.protocol = next;
+        }
+        self.current_index += 1;
 
         let message = webrtc_encode_multistream_message(
             Message::Protocol(
-                Protocol::try_from(self.protocol.as_ref()).map_err(|_| Error::InvalidData)?,
+                Protocol::try_from(self.current_protocol().as_ref())
+                    .map_err(|_| Error::InvalidData)?,
             ),
             false,
         )?
@@ -460,9 +465,9 @@ impl WebRtcDialerState {
                         return Err(crate::error::NegotiationError::StateMismatch);
                     }
 
-                    if self.protocol.as_bytes() == protocol.as_ref() {
+                    if self.current_protocol().as_bytes() == protocol.as_ref() {
                         check_trailing_bytes(&remaining);
-                        return Ok(HandshakeResult::Succeeded(self.protocol.clone()));
+                        return Ok(HandshakeResult::Succeeded(self.current_protocol().clone()));
                     }
 
                     return Err(crate::error::NegotiationError::MultistreamSelectError(
@@ -835,7 +840,8 @@ mod tests {
     #[test]
     fn propose() {
         let (mut dialer_state, message) =
-            WebRtcDialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
+            WebRtcDialerState::propose(Arc::from([ProtocolName::from("/13371338/proto/1")]))
+                .unwrap();
 
         let mut bytes = BytesMut::with_capacity(32);
         bytes.put_u8(MSG_MULTISTREAM_1_0.len() as u8);
@@ -852,10 +858,10 @@ mod tests {
 
     #[test]
     fn propose_with_fallback() {
-        let (mut dialer_state, message) = WebRtcDialerState::propose(
+        let (mut dialer_state, message) = WebRtcDialerState::propose(Arc::from([
             ProtocolName::from("/13371338/proto/1"),
-            vec![ProtocolName::from("/sup/proto/1")],
-        )
+            ProtocolName::from("/sup/proto/1"),
+        ]))
         .unwrap();
 
         // Initial message should only contain the main protocol, not the fallback.
@@ -874,10 +880,10 @@ mod tests {
 
     #[test]
     fn propose_next_fallback() {
-        let (mut dialer_state, _message) = WebRtcDialerState::propose(
+        let (mut dialer_state, _message) = WebRtcDialerState::propose(Arc::from([
             ProtocolName::from("/13371338/proto/1"),
-            vec![ProtocolName::from("/sup/proto/1")],
-        )
+            ProtocolName::from("/sup/proto/1"),
+        ]))
         .unwrap();
 
         // Simulate receiving header-only response, transitioning to WaitingProtocol.
@@ -943,7 +949,8 @@ mod tests {
         message.encode(&mut bytes).map_err(|_| Error::InvalidData).unwrap();
 
         let (mut dialer_state, _message) =
-            WebRtcDialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
+            WebRtcDialerState::propose(Arc::from([ProtocolName::from("/13371338/proto/1")]))
+                .unwrap();
 
         match dialer_state.register_response(bytes.freeze().to_vec()) {
             Ok(HandshakeResult::NotReady) => {}
@@ -966,7 +973,8 @@ mod tests {
         let response = bytes.freeze().to_vec();
 
         let (mut dialer_state, _message) =
-            WebRtcDialerState::propose(ProtocolName::from("/13371338/proto/1"), vec![]).unwrap();
+            WebRtcDialerState::propose(Arc::from([ProtocolName::from("/13371338/proto/1")]))
+                .unwrap();
 
         match dialer_state.register_response(response) {
             Err(error::NegotiationError::MultistreamSelectError(NegotiationError::Failed)) => {}
@@ -983,10 +991,10 @@ mod tests {
         .unwrap()
         .freeze();
 
-        let (mut dialer_state, _message) = WebRtcDialerState::propose(
+        let (mut dialer_state, _message) = WebRtcDialerState::propose(Arc::from([
             ProtocolName::from("/13371338/proto/1"),
-            vec![ProtocolName::from("/sup/proto/1")],
-        )
+            ProtocolName::from("/sup/proto/1"),
+        ]))
         .unwrap();
 
         match dialer_state.register_response(message.to_vec()) {
@@ -1006,10 +1014,10 @@ mod tests {
         .unwrap()
         .freeze();
 
-        let (mut dialer_state, _message) = WebRtcDialerState::propose(
+        let (mut dialer_state, _message) = WebRtcDialerState::propose(Arc::from([
             ProtocolName::from("/13371338/proto/1"),
-            vec![ProtocolName::from("/sup/proto/1")],
-        )
+            ProtocolName::from("/sup/proto/1"),
+        ]))
         .unwrap();
 
         dialer_state.propose_next_fallback();
@@ -1024,10 +1032,10 @@ mod tests {
 
     #[test]
     fn reject_unproposed_fallback_confirmation() {
-        let (mut dialer_state, _message) = WebRtcDialerState::propose(
+        let (mut dialer_state, _message) = WebRtcDialerState::propose(Arc::from([
             ProtocolName::from("/13371338/proto/1"),
-            vec![ProtocolName::from("/sup/proto/1")],
-        )
+            ProtocolName::from("/sup/proto/1"),
+        ]))
         .unwrap();
 
         // The dialer has only proposed the main protocol. The fallback is stored for a

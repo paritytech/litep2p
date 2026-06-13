@@ -28,6 +28,8 @@ use crate::{
 
 use tokio::sync::mpsc::{error::TrySendError, Sender, WeakSender};
 
+use std::sync::Arc;
+
 /// Connection type, from the point of view of the protocol.
 #[derive(Debug, Clone)]
 enum ConnectionType {
@@ -111,12 +113,14 @@ impl ConnectionHandle {
         }
     }
 
-    /// Open substream to remote peer over `protocol` and send the acquired permit to the
+    /// Open substream to remote peer over `protocols` and send the acquired permit to the
     /// transport so it can be given to the opened substream.
+    ///
+    /// `protocols[0]` is the main protocol; the rest are fallbacks. The list is shared
+    /// via [`Arc`] so callers reuse the same precomputed list for every substream.
     pub fn open_substream(
         &mut self,
-        protocol: ProtocolName,
-        fallback_names: Vec<ProtocolName>,
+        protocols: Arc<[ProtocolName]>,
         substream_id: SubstreamId,
         permit: Permit,
         keep_alive: SubstreamKeepAlive,
@@ -127,8 +131,7 @@ impl ConnectionHandle {
                 inactive.upgrade().ok_or(SubstreamError::ConnectionClosed)?,
         }
         .try_send(ProtocolCommand::OpenSubstream {
-            protocol: protocol.clone(),
-            fallback_names,
+            protocols,
             substream_id,
             connection_id: self.connection_id,
             permit,
@@ -214,8 +217,7 @@ mod tests {
         let permit = handle.try_get_permit().unwrap();
 
         let result = handle.open_substream(
-            ProtocolName::from("/protocol/1"),
-            Vec::new(),
+            Arc::from([ProtocolName::from("/protocol/1")]),
             SubstreamId::new(),
             permit,
             SubstreamKeepAlive::Yes,
@@ -234,8 +236,7 @@ mod tests {
         drop(_rx);
 
         let result = handle.open_substream(
-            ProtocolName::from("/protocol/1"),
-            Vec::new(),
+            Arc::from([ProtocolName::from("/protocol/1")]),
             SubstreamId::new(),
             permit,
             SubstreamKeepAlive::Yes,
@@ -252,8 +253,7 @@ mod tests {
         let permit = handle.try_get_permit().unwrap();
 
         let result = handle.open_substream(
-            ProtocolName::from("/protocol/1"),
-            Vec::new(),
+            Arc::from([ProtocolName::from("/protocol/1")]),
             SubstreamId::new(),
             permit,
             SubstreamKeepAlive::Yes,
@@ -262,8 +262,7 @@ mod tests {
 
         let permit = handle.try_get_permit().unwrap();
         match handle.open_substream(
-            ProtocolName::from("/protocol/1"),
-            Vec::new(),
+            Arc::from([ProtocolName::from("/protocol/1")]),
             SubstreamId::new(),
             permit,
             SubstreamKeepAlive::Yes,
