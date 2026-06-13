@@ -94,11 +94,12 @@ impl Config {
         let (command_tx, command_rx) = channel(DEFAULT_CHANNEL_SIZE);
         let handshake = Arc::new(RwLock::new(handshake));
         let handle = NotificationHandle::new(
+            protocol_name.clone(),
+            sync_channel_size,
             event_rx,
             notif_rx,
             command_tx,
             Arc::clone(&handshake),
-            protocol_name.clone(),
         );
 
         (
