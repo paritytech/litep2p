@@ -500,6 +500,9 @@ impl OpeningWebRtcConnection {
                                 ?channel_id,
                                 "ignoring opened channel",
                             );
+                            // Do not silently ignore channels opened during the noise handshake.
+                            // Close them instead.
+                            self.rtc.direct_api().close_data_channel(channel_id);
                             continue;
                         }
 

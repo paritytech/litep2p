@@ -32,7 +32,7 @@ use crate::{
             substream::{Message, Substream as WebRtcSubstream, SubstreamHandle},
             util::{extract_framed_message, WebRtcMessage},
         },
-        Endpoint,
+        Endpoint, SUBSTREAM_OPEN_TIMEOUT,
     },
     types::{protocol::ProtocolName, SubstreamId},
     PeerId,
@@ -263,6 +263,15 @@ pub struct WebRtcConnection {
     /// at most [`MAX_PENDING_PER_CHANNEL`] per channel.
     pending_messages: HashMap<ChannelId, VecDeque<Vec<u8>>>,
 
+    /// Deadlines of the opening phase of channels.
+    deadlines: VecDeque<(ChannelId, Instant)>,
+
+    /// Channels closed by time out.
+    ///
+    /// Need by [`Self::on_channel_closed`], so that
+    /// `NegotiationError::Timeout` can be reported as error.
+    timed_out: HashSet<ChannelId>,
+
     /// Open channels.
     channels: HashMap<ChannelId, ChannelState>,
 
@@ -305,6 +314,8 @@ impl WebRtcConnection {
             dgram_rx,
             pending_outbound: HashMap::new(),
             pending_messages: HashMap::new(),
+            deadlines: VecDeque::new(),
+            timed_out: HashSet::new(),
             channels: HashMap::new(),
             handles: SubstreamHandleSet::new(),
             recv_buffers: HashMap::new(),
@@ -343,6 +354,7 @@ impl WebRtcConnection {
                 "inbound channel opened, wait for `multistream-select` message",
             );
 
+            self.add_deadline(channel_id);
             self.channels.insert(
                 channel_id,
                 ChannelState::InboundOpening {
@@ -481,6 +493,15 @@ impl WebRtcConnection {
             "channel closed",
         );
 
+        let timed_out = self.timed_out.remove(&channel_id);
+        let substream_error = || {
+            if timed_out {
+                SubstreamError::NegotiationError(crate::error::NegotiationError::Timeout)
+            } else {
+                SubstreamError::ConnectionClosed
+            }
+        };
+
         // If this was a pending outbound channel (waiting for DCEP ACK from remote),
         // report the failure so the protocol handler can retry.
         if let Some(context) = self.pending_outbound.remove(&channel_id) {
@@ -498,7 +519,7 @@ impl WebRtcConnection {
                 .report_substream_open_failure(
                     context.protocol,
                     context.substream_id,
-                    SubstreamError::ConnectionClosed,
+                    substream_error(),
                 )
                 .await;
         }
@@ -520,7 +541,7 @@ impl WebRtcConnection {
                 .report_substream_open_failure(
                     context.protocol,
                     context.substream_id,
-                    SubstreamError::ConnectionClosed,
+                    substream_error(),
                 )
                 .await;
         }
@@ -1013,6 +1034,7 @@ impl WebRtcConnection {
             "open data channel",
         );
 
+        self.add_deadline(channel_id);
         self.pending_outbound.insert(
             channel_id,
             ChannelContext {
@@ -1078,7 +1100,7 @@ impl WebRtcConnection {
                     return self.on_connection_closed().await;
                 }
             };
-            let timeout = match output {
+            let mut timeout = match output {
                 Output::Timeout(v) => v,
                 Output::Transmit(v) => {
                     tracing::trace!(
@@ -1178,6 +1200,16 @@ impl WebRtcConnection {
                     }
                 },
             };
+
+            // If nothing has expired yet, this is a no-op.
+            self.drain_deadlines().await;
+
+            // Update the timeout by comparing it against the next opening-channel deadline.
+            // This way, the next iteration will drain the next deadline.
+            timeout = self
+                .deadlines
+                .front()
+                .map_or(timeout, |(_, deadline)| std::cmp::min(timeout, *deadline));
 
             tokio::select! {
                 biased;
@@ -1326,6 +1358,72 @@ impl WebRtcConnection {
                         return self.on_connection_closed().await;
                     }
                 }
+            }
+        }
+    }
+
+    /// Register an opening-phase deadline for `channel_id`.
+    fn add_deadline(&mut self, channel_id: ChannelId) {
+        self.deadlines.push_back((channel_id, Instant::now() + SUBSTREAM_OPEN_TIMEOUT));
+    }
+
+    /// Close channels whose opening phase exceeded [`SUBSTREAM_OPEN_TIMEOUT`],
+    /// lazily dropping entries for channels that already opened or closed.
+    ///
+    /// If the channel has an SCTP stream, its state is deliberately left untouched so
+    /// the next `on_channel_closed` call will properly handle it.
+    async fn drain_deadlines(&mut self) {
+        loop {
+            let channel_id = match self.deadlines.front() {
+                Some((channel_id, deadline)) if Instant::now() >= *deadline => *channel_id,
+                _ => break,
+            };
+
+            self.deadlines.pop_front();
+            if !self.pending_outbound.contains_key(&channel_id)
+                && !matches!(
+                    self.channels.get(&channel_id),
+                    Some(ChannelState::InboundOpening { .. })
+                        | Some(ChannelState::OutboundOpening { .. })
+                )
+            {
+                continue;
+            };
+
+            tracing::debug!(
+                target: LOG_TARGET,
+                peer = ?self.peer,
+                ?channel_id,
+                "opening substream reached deadline, shutting down",
+            );
+
+            self.timed_out.insert(channel_id);
+            self.rtc.direct_api().close_data_channel(channel_id);
+
+            if let Some(ChannelState::OutboundOpening { context, .. }) =
+                self.channels.insert(channel_id, ChannelState::Closing)
+            {
+                // This requires to be done eagerly becase the state is being update
+                // to discard each message that will arrive to this channel between
+                // now and its closure, but still higher layers needs to be updated
+                // with the closure of the protocol.
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    peer = ?self.peer,
+                    ?channel_id,
+                    protocol = %context.protocol,
+                    substream_id = ?context.substream_id,
+                    "outbound channel closed during negotiation, reporting failure",
+                );
+
+                let _ = self
+                    .protocol_set
+                    .report_substream_open_failure(
+                        context.protocol,
+                        context.substream_id,
+                        SubstreamError::NegotiationError(crate::error::NegotiationError::Timeout),
+                    )
+                    .await;
             }
         }
     }
