@@ -34,7 +34,12 @@ use crate::{
     config::Litep2pConfig,
     error::DialError,
     protocol::{
-        libp2p::{bitswap::Bitswap, identify::Identify, kademlia::Kademlia, ping::Ping},
+        libp2p::{
+            bitswap::Bitswap,
+            identify::Identify,
+            kademlia::{Kademlia, KademliaMode},
+            ping::Ping,
+        },
         mdns::Mdns,
         notification::NotificationProtocol,
         request_response::RequestResponseProtocol,
@@ -265,12 +270,20 @@ impl Litep2p {
         }
 
         // start kademlia protocol event loops
+        //
+        // protocol names of client-mode instances are not advertised via identify
+        let mut unadvertised_protocols = Vec::new();
         for kademlia_config in litep2p_config.kademlia.into_iter() {
             tracing::debug!(
                 target: LOG_TARGET,
                 protocol_names = ?kademlia_config.protocol_names,
+                mode = ?kademlia_config.mode,
                 "enable ipfs kademlia protocol",
             );
+
+            if kademlia_config.mode == KademliaMode::Client {
+                unadvertised_protocols.extend(kademlia_config.protocol_names.iter().cloned());
+            }
 
             let main_protocol =
                 kademlia_config.protocol_names.first().expect("protocol name to exist");
@@ -410,9 +423,14 @@ impl Litep2p {
             }));
         }
 
-        // if identify was enabled, give it the enabled protocols and listen addresses and start it
-        if let Some((service, mut identify_config)) = identify_info.take() {
-            identify_config.protocols = transport_manager.protocols().cloned().collect();
+        // if identify was enabled, give it the advertised protocols and listen addresses and
+        // start it
+        if let Some((service, identify_config)) = identify_info.take() {
+            *identify_config.protocols.write() = transport_manager
+                .protocols()
+                .filter(|protocol| !unadvertised_protocols.contains(protocol))
+                .cloned()
+                .collect();
             let identify = Identify::new(service, identify_config);
 
             litep2p_config.executor.run(Box::pin(async move {
