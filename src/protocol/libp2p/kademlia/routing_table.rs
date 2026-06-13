@@ -113,6 +113,11 @@ impl RoutingTable {
         &self.local_key
     }
 
+    /// Number of routable peers (peers with at least one known address) across all k-buckets.
+    pub fn num_entries(&self) -> usize {
+        self.buckets.iter().map(|bucket| bucket.num_entries()).sum()
+    }
+
     /// Get an entry for `peer` into a k-bucket.
     pub fn entry(&mut self, key: Key<PeerId>) -> KBucketEntry<'_> {
         let Some(index) = BucketIndex::new(&self.local_key.distance(&key)) else {
@@ -303,7 +308,7 @@ impl Iterator for ClosestBucketsIter {
                 self.state = ClosestBucketsIterState::ZoomIn(i);
                 Some(i)
             }
-            ClosestBucketsIterState::ZoomIn(i) =>
+            ClosestBucketsIterState::ZoomIn(i) => {
                 if let Some(i) = self.next_in(i) {
                     self.state = ClosestBucketsIterState::ZoomIn(i);
                     Some(i)
@@ -311,15 +316,17 @@ impl Iterator for ClosestBucketsIter {
                     let i = BucketIndex(0);
                     self.state = ClosestBucketsIterState::ZoomOut(i);
                     Some(i)
-                },
-            ClosestBucketsIterState::ZoomOut(i) =>
+                }
+            }
+            ClosestBucketsIterState::ZoomOut(i) => {
                 if let Some(i) = self.next_out(i) {
                     self.state = ClosestBucketsIterState::ZoomOut(i);
                     Some(i)
                 } else {
                     self.state = ClosestBucketsIterState::Done;
                     None
-                },
+                }
+            }
             ClosestBucketsIterState::Done => None,
         }
     }
