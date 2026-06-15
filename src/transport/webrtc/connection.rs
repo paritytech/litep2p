@@ -248,13 +248,13 @@ pub struct WebRtcConnection {
     pending_messages: HashMap<ChannelId, VecDeque<Vec<u8>>>,
 
     /// Deadlines of the opening phase of channels.
-    deadlines: VecDeque<(ChannelId, Instant)>,
+    opening_deadlines: VecDeque<(ChannelId, Instant)>,
 
     /// Channels closed by time out.
     ///
     /// Need by [`Self::on_channel_closed`], so that
     /// `NegotiationError::Timeout` can be reported as error.
-    timed_out: HashSet<ChannelId>,
+    opening_timed_out: HashSet<ChannelId>,
 
     /// Open channels.
     channels: HashMap<ChannelId, ChannelState>,
@@ -298,8 +298,8 @@ impl WebRtcConnection {
             dgram_rx,
             pending_outbound: HashMap::new(),
             pending_messages: HashMap::new(),
-            deadlines: VecDeque::new(),
-            timed_out: HashSet::new(),
+            opening_deadlines: VecDeque::new(),
+            opening_timed_out: HashSet::new(),
             channels: HashMap::new(),
             handles: SubstreamHandleSet::new(),
             recv_buffers: HashMap::new(),
@@ -338,7 +338,7 @@ impl WebRtcConnection {
                 "inbound channel opened, wait for `multistream-select` message",
             );
 
-            self.add_deadline(channel_id);
+            self.add_opening_deadline(channel_id);
             self.channels.insert(
                 channel_id,
                 ChannelState::InboundOpening {
@@ -477,9 +477,9 @@ impl WebRtcConnection {
             "channel closed",
         );
 
-        let timed_out = self.timed_out.remove(&channel_id);
+        let opening_timed_out = self.opening_timed_out.remove(&channel_id);
         let substream_error = || {
-            if timed_out {
+            if opening_timed_out {
                 SubstreamError::NegotiationError(crate::error::NegotiationError::Timeout)
             } else {
                 SubstreamError::ConnectionClosed
@@ -1017,7 +1017,7 @@ impl WebRtcConnection {
             "open data channel",
         );
 
-        self.add_deadline(channel_id);
+        self.add_opening_deadline(channel_id);
         self.pending_outbound.insert(
             channel_id,
             ChannelContext {
@@ -1185,12 +1185,12 @@ impl WebRtcConnection {
             };
 
             // If nothing has expired yet, this is a no-op.
-            self.drain_deadlines().await;
+            self.drain_opening_deadlines().await;
 
             // Update the timeout by comparing it against the next opening-channel deadline.
             // This way, the next iteration will drain the next deadline.
             timeout = self
-                .deadlines
+                .opening_deadlines
                 .front()
                 .map_or(timeout, |(_, deadline)| std::cmp::min(timeout, *deadline));
 
@@ -1330,8 +1330,9 @@ impl WebRtcConnection {
     }
 
     /// Register an opening-phase deadline for `channel_id`.
-    fn add_deadline(&mut self, channel_id: ChannelId) {
-        self.deadlines.push_back((channel_id, Instant::now() + SUBSTREAM_OPEN_TIMEOUT));
+    fn add_opening_deadline(&mut self, channel_id: ChannelId) {
+        self.opening_deadlines
+            .push_back((channel_id, Instant::now() + SUBSTREAM_OPEN_TIMEOUT));
     }
 
     /// Close channels whose opening phase exceeded [`SUBSTREAM_OPEN_TIMEOUT`],
@@ -1339,14 +1340,14 @@ impl WebRtcConnection {
     ///
     /// If the channel has an SCTP stream, its state is deliberately left untouched so
     /// the next `on_channel_closed` call will properly handle it.
-    async fn drain_deadlines(&mut self) {
+    async fn drain_opening_deadlines(&mut self) {
         loop {
-            let channel_id = match self.deadlines.front() {
+            let channel_id = match self.opening_deadlines.front() {
                 Some((channel_id, deadline)) if Instant::now() >= *deadline => *channel_id,
                 _ => break,
             };
 
-            self.deadlines.pop_front();
+            self.opening_deadlines.pop_front();
             if !self.pending_outbound.contains_key(&channel_id)
                 && !matches!(
                     self.channels.get(&channel_id),
@@ -1364,7 +1365,7 @@ impl WebRtcConnection {
                 "opening substream reached deadline, shutting down",
             );
 
-            self.timed_out.insert(channel_id);
+            self.opening_timed_out.insert(channel_id);
             self.rtc.direct_api().close_data_channel(channel_id);
 
             if let Some(ChannelState::OutboundOpening { context, .. }) =
