@@ -502,6 +502,12 @@ impl OpeningWebRtcConnection {
                             );
                             // Do not silently ignore channels opened during the noise handshake.
                             // Close them instead.
+                            //
+                            // As stated in the spec under the Connection-Security section:
+                            // Implementations MAY open streams before completion of the Noise
+                            // handshake. Applications MUST take special
+                            // care what application data they send,
+                            // since at this point the peer is not yet authenticated.
                             self.rtc.direct_api().close_data_channel(channel_id);
                             continue;
                         }
