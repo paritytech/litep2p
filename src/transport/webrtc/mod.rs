@@ -34,6 +34,7 @@ use crate::{
     PeerId,
 };
 
+use bytes::{Bytes, BytesMut};
 use futures::{future::BoxFuture, stream::FuturesUnordered, Future, Stream, StreamExt};
 use futures_timer::Delay;
 use hickory_resolver::TokioResolver;
@@ -99,7 +100,7 @@ struct ConnectionContext {
     connection_id: ConnectionId,
 
     /// TX channel for sending datagrams to the connection event loop.
-    tx: Sender<Vec<u8>>,
+    tx: Sender<Bytes>,
 }
 
 /// Events received from opening connections that are handled
@@ -165,6 +166,9 @@ pub(crate) struct WebRtcTransport {
 
     /// Pending events.
     pending_events: VecDeque<TransportEvent>,
+
+    /// Read buffer.
+    read_buffer: BytesMut,
 }
 
 impl WebRtcTransport {
@@ -285,7 +289,7 @@ impl WebRtcTransport {
     /// until it timeouts.
     ///
     /// Returns `true` if the client should be polled.
-    fn on_socket_input(&mut self, addrs: AddressPair, buffer: Vec<u8>) -> crate::Result<bool> {
+    fn on_socket_input(&mut self, addrs: AddressPair, buffer: Bytes) -> crate::Result<bool> {
         if let Entry::Occupied(mut entry) = self.open.entry(addrs) {
             let ConnectionContext {
                 peer,
@@ -329,8 +333,7 @@ impl WebRtcTransport {
 
         // if the peer doesn't exist, decode the message and expect to receive `Stun`
         // so that a new connection can be initialized
-        let contents: DatagramRecv =
-            buffer.as_slice().try_into().map_err(|_| Error::InvalidData)?;
+        let contents: DatagramRecv = buffer.as_ref().try_into().map_err(|_| Error::InvalidData)?;
 
         // If an opening connection already exists for this source, route all packets to it
         if let Some(opening_conn) = self.opening.get_mut(&addrs) {
@@ -461,6 +464,7 @@ impl TransportBuilder for WebRtcTransport {
                 timeouts: HashMap::new(),
                 pending_events: VecDeque::new(),
                 datagram_buffer_size: config.datagram_buffer_size,
+                read_buffer: BytesMut::new(),
             },
             listen_multi_addresses,
         ))
@@ -659,8 +663,9 @@ impl Stream for WebRtcTransport {
         }
 
         loop {
-            let mut buf = vec![0u8; 16384];
-            let mut read_buf = ReadBuf::new(&mut buf);
+            // Prepare the buffer to accept up to 16KiB.
+            this.read_buffer.resize(16 * 1024, 0);
+            let mut read_buf = ReadBuf::new(&mut this.read_buffer);
 
             let addrs = match this.listener.poll_recv_from(cx, &mut read_buf) {
                 // No error is expected to be returned by the listener.
@@ -677,7 +682,7 @@ impl Stream for WebRtcTransport {
             };
 
             let nread = read_buf.filled().len();
-            buf.truncate(nread);
+            let buf = this.read_buffer.split_to(nread).freeze();
 
             match this.on_socket_input(addrs, buf) {
                 Ok(false) => {}

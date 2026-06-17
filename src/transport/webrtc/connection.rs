@@ -254,7 +254,7 @@ pub struct WebRtcConnection {
     socket: Arc<UdpSocket>,
 
     /// RX channel for receiving datagrams from the transport.
-    dgram_rx: Receiver<Vec<u8>>,
+    dgram_rx: Receiver<Bytes>,
 
     /// Pending outbound channels.
     pending_outbound: HashMap<ChannelId, ChannelContext>,
@@ -301,7 +301,7 @@ impl WebRtcConnection {
         socket: Arc<UdpSocket>,
         protocol_set: ProtocolSet,
         endpoint: Endpoint,
-        dgram_rx: Receiver<Vec<u8>>,
+        dgram_rx: Receiver<Bytes>,
     ) -> Self {
         Self {
             rtc,
@@ -1215,7 +1215,7 @@ impl WebRtcConnection {
                 biased;
                 datagram = self.dgram_rx.recv() => match datagram {
                     Some(datagram) => {
-                        let contents = match datagram.as_slice().try_into() {
+                        let contents = match datagram.as_ref().try_into() {
                             Ok(contents) => contents,
                             Err(error) => {
                                 tracing::debug!(
