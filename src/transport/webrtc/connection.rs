@@ -581,7 +581,21 @@ impl WebRtcConnection {
         );
 
         // Decode errors are not recoverable.
-        let payload = WebRtcMessage::decode(&data)?.payload.ok_or(Error::InvalidData)?;
+        let WebRtcMessage {
+            payload: Some(payload),
+            flag: None,
+        } = WebRtcMessage::decode(&data)
+            .map_err(|err| SubstreamError::NegotiationError(err.into()))?
+        else {
+            tracing::debug!(
+                target: LOG_TARGET,
+                peer = ?self.peer,
+                ?channel_id,
+                "non-payload frame during inbound opening, closing channel"
+            );
+            return Err(Error::ConnectionClosed);
+        };
+
         let protocols = self.protocol_set.protocols_with_keep_alives();
         let protocol_names = protocols.keys().cloned().collect();
         let (response, negotiated) =
@@ -666,11 +680,21 @@ impl WebRtcConnection {
             "handle opening outbound substream",
         );
 
-        let rtc_message = WebRtcMessage::decode(&data)
-            .map_err(|err| SubstreamError::NegotiationError(err.into()))?;
-        let message = rtc_message.payload.ok_or(SubstreamError::NegotiationError(
-            ParseError::InvalidData.into(),
-        ))?;
+        // Decode errors are not recoverable.
+        let WebRtcMessage {
+            payload: Some(message),
+            flag: None,
+        } = WebRtcMessage::decode(&data)
+            .map_err(|err| SubstreamError::NegotiationError(err.into()))?
+        else {
+            tracing::debug!(
+                target: LOG_TARGET,
+                peer = ?self.peer,
+                ?channel_id,
+                "non-payload frame during outbound opening, closing channel"
+            );
+            return Err(SubstreamError::ConnectionClosed);
+        };
 
         let protocol = match dialer_state.register_response(message)? {
             HandshakeResult::Succeeded(protocol) => protocol,
