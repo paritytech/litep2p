@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    error::{Error, ParseError, SubstreamError},
+    error::{Error, SubstreamError},
     multistream_select::{
         webrtc_listener_negotiate, HandshakeResult, ListenerSelectResult, NegotiationError,
         WebRtcDialerState,
