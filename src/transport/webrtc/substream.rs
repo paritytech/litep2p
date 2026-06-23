@@ -29,7 +29,7 @@ use crate::{
 
 use bytes::{Buf, BufMut, BytesMut};
 use futures::{task::AtomicWaker, Future, Stream};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{channel, error::TrySendError, Receiver, Sender};
 use tokio_util::sync::PollSender;
 
 use std::{
@@ -46,6 +46,10 @@ use std::{
 /// Timeout for waiting on FIN_ACK after sending FIN.
 /// Matches go-libp2p and js-libp2p's 10-second stream close timeout.
 const FIN_ACK_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Maximum number of in flight messages between
+/// [`Substream`] and [`SubstreamHandle`], in both directions.
+const MAX_INFLIGHT_MESSAGES: usize = 256;
 
 /// Substream Message.
 #[derive(PartialEq, Eq, Debug)]
@@ -106,7 +110,8 @@ impl<T: AtomicState> SharedState<T> {
 enum ChannelState {
     /// Substream is fully open.
     Open = 0,
-    /// ResetStream has been received.
+    /// Set when a ResetStream flag is received from the peer,
+    /// or locally when the inbound buffer is exceeded (treated as a DoS).
     ///
     /// This preempts both writer and reader state.
     Reset = 1,
@@ -212,8 +217,16 @@ impl Substream {
     pub fn new() -> (Self, SubstreamHandle) {
         // Tokio channels implement their own backpressure,
         // which solves the Substream <-> SubstreamHandle backpressure problem.
-        let (outbound_message_tx, outbound_message_rx) = channel(256);
-        let (inbound_message_tx, inbound_message_rx) = channel(256);
+        //
+        // Given MAX_FRAME_SIZE as the maximum size of each message, each channel buffers
+        // at most 4 MiB (256 * 16 KiB).
+        //
+        // For inbound messages this capacity is a hard limit used to distinguish a slow
+        // reader (which needs some buffering) from a DoS attempt, unlike the outbound
+        // path, the reader cannot be slowed down, so an over-full inbound
+        // channel is treated as the peer flooding us and the substream is reset.
+        let (inbound_message_tx, inbound_message_rx) = channel(MAX_INFLIGHT_MESSAGES);
+        let (outbound_message_tx, outbound_message_rx) = channel(MAX_INFLIGHT_MESSAGES);
 
         let channel_state = SharedState::new(ChannelState::Open);
         let writer_state = SharedState::new(WriterState::Open);
@@ -287,25 +300,31 @@ impl SubstreamHandle {
                 );
             }
             (Some(message_tx), Some(payload)) if !payload.is_empty() => {
-                // TODO: awaiting here makes the entire connection
-                // rely on the readers to be fast enough, a slow reader
-                // could cause this method to wait and thus stall the entire webrtc
-                // connection. Solution would be to implement reading
-                // backpressure, keeping track of pending incoming messages.
-                // https://github.com/paritytech/litep2p/issues/604
-                let send_result = message_tx
-                    .send(Message {
-                        payload,
-                        flag: None,
-                    })
-                    .await;
+                let send_result = message_tx.try_send(Message {
+                    payload,
+                    flag: None,
+                });
 
-                if let Err(err) = send_result {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?err,
-                        "failed to propagate message to Substream"
-                    );
+                match send_result {
+                    Ok(_) => (),
+                    Err(TrySendError::Closed(_)) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            "substream reader has been closed, skipping payload"
+                        );
+                    }
+                    Err(TrySendError::Full(_)) => {
+                        // If exceeded, the peer is sending faster than the reader can consume
+                        // and thus this can be considered a DoS attack by forcing us to buffer
+                        // those messages.
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            max_pending_inbound_messages_per_channel = MAX_INFLIGHT_MESSAGES,
+                            "max number of pending inbound messages exceeded"
+                        );
+                        self.channel_state.set(ChannelState::Reset);
+                        return Err(Error::ChannelClogged);
+                    }
                 }
             }
             _ => (),
@@ -528,6 +547,8 @@ impl tokio::io::AsyncRead for Substream {
         }
 
         match futures::ready!(self.rx.poll_recv(cx)) {
+            None if matches!(self.channel_state.get(), ChannelState::Reset) =>
+                Poll::Ready(Err(tokio::io::ErrorKind::ConnectionReset.into())),
             None => Poll::Ready(Ok(())),
             Some(Message { payload, flag: _ }) => {
                 if payload.len() > MAX_FRAME_SIZE {
@@ -988,8 +1009,8 @@ mod tests {
         let (mut substream, mut handle) = Substream::new();
 
         // Fill the channel to capacity, same pattern as `backpressure_works`.
-        for _ in 0..128 {
-            substream.write_all(&vec![0u8; 2 * MAX_FRAME_SIZE]).await.unwrap();
+        for _ in 0..MAX_INFLIGHT_MESSAGES {
+            substream.write_all(&vec![0u8; MAX_FRAME_SIZE]).await.unwrap();
         }
 
         // Spawn a writer task that will try to write once more. This should initially block
@@ -1224,7 +1245,7 @@ mod tests {
 
         let mut buf = vec![0u8; 1024];
         match substream.read(&mut buf).await {
-            Ok(0) => (),
+            Err(err) if err.kind() == std::io::ErrorKind::ConnectionReset => (),
             other => panic!("Unexpected result: {:?}", other),
         }
         assert!(substream.shutdown().await.is_ok());
@@ -1342,8 +1363,7 @@ mod tests {
         let (mut substream, mut handle) = Substream::new();
 
         // Fill up the channel to cause poll_write to return Pending
-        // Channel capacity is 256
-        for _ in 0..256 {
+        for _ in 0..MAX_INFLIGHT_MESSAGES {
             substream.write_all(&[1u8; 100]).await.unwrap();
         }
 
@@ -1381,8 +1401,7 @@ mod tests {
         let (mut substream, mut handle) = Substream::new();
 
         // Fill up the channel to cause poll_write to return Pending
-        // Channel capacity is 256
-        for _ in 0..256 {
+        for _ in 0..MAX_INFLIGHT_MESSAGES {
             substream.write_all(&[1u8; 100]).await.unwrap();
         }
 
