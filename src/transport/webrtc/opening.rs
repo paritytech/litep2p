@@ -322,7 +322,20 @@ impl OpeningWebRtcConnection {
             return Err(Error::InvalidState);
         };
 
-        let message = WebRtcMessage::decode(&body)?.payload.ok_or(Error::InvalidData)?;
+        // Decode errors are not recoverable.
+        let WebRtcMessage {
+            payload: Some(message),
+            flag: None,
+        } = WebRtcMessage::decode(&body)?
+        else {
+            tracing::debug!(
+                target: LOG_TARGET,
+                connection_id = ?self.connection_id,
+                peer = ?self.peer_address,
+                "non-payload frame during noise handshake, closing channel"
+            );
+            return Err(Error::ConnectionClosed);
+        };
         let remote_peer_id = context.get_remote_peer_id(&message)?;
 
         tracing::trace!(
