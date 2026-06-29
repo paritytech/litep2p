@@ -69,11 +69,12 @@ const MAX_PENDING_PER_CHANNEL: usize = 16;
 /// Opening channel context.
 #[derive(Debug)]
 struct ChannelContext {
-    /// Protocol name.
-    protocol: ProtocolName,
-
-    /// Fallback names.
-    fallback_names: Vec<ProtocolName>,
+    /// Protocols to negotiate.
+    ///
+    /// `protocols[0]` is the main protocol; `protocols[1..]` are fallbacks. Shared via
+    /// [`Arc`] with the originating protocol handler so opening a substream does not
+    /// require duplicating the list.
+    protocols: Arc<[ProtocolName]>,
 
     /// Substream ID.
     substream_id: SubstreamId,
@@ -346,7 +347,7 @@ impl WebRtcConnection {
             channel.set_buffered_amount_low_threshold(BACKPRESSURE_THRESHOLD);
         }
 
-        let Some(mut context) = self.pending_outbound.remove(&channel_id) else {
+        let Some(context) = self.pending_outbound.remove(&channel_id) else {
             tracing::trace!(
                 target: LOG_TARGET,
                 peer = ?self.peer,
@@ -364,9 +365,7 @@ impl WebRtcConnection {
             return Ok(());
         };
 
-        let fallback_names = std::mem::take(&mut context.fallback_names);
-        let (dialer_state, message) =
-            WebRtcDialerState::propose(context.protocol.clone(), fallback_names)?;
+        let (dialer_state, message) = WebRtcDialerState::propose(Arc::clone(&context.protocols))?;
         let message = WebRtcMessage::encode(message, None);
 
         self.write(channel_id, message)?;
@@ -597,9 +596,8 @@ impl WebRtcConnection {
         };
 
         let protocols = self.protocol_set.protocols_with_keep_alives();
-        let protocol_names = protocols.keys().cloned().collect();
         let (response, negotiated) =
-            match webrtc_listener_negotiate(protocol_names, payload.into(), header_received)? {
+            match webrtc_listener_negotiate(protocols.keys(), payload.into(), header_received)? {
                 ListenerSelectResult::Accepted { protocol, message } => (message, Some(protocol)),
                 ListenerSelectResult::Rejected { message }
                 | ListenerSelectResult::PendingProtocol { message } => (message, None),
@@ -929,7 +927,7 @@ impl WebRtcConnection {
                 context,
                 dialer_state,
             } => {
-                let protocol = context.protocol.clone();
+                let protocol = context.protocols[0].clone();
                 let substream_id = context.substream_id;
                 let lifetime_permit = context.keep_alive.then(|| context.opening_permit.clone());
 
@@ -1034,8 +1032,7 @@ impl WebRtcConnection {
     /// Open outbound substream.
     fn on_open_substream(
         &mut self,
-        protocol: ProtocolName,
-        fallback_names: Vec<ProtocolName>,
+        protocols: Arc<[ProtocolName]>,
         substream_id: SubstreamId,
         opening_permit: Permit,
         keep_alive: SubstreamKeepAlive,
@@ -1045,7 +1042,7 @@ impl WebRtcConnection {
             ordered: false,
             reliability: Default::default(),
             negotiated: None,
-            protocol: protocol.to_string(),
+            protocol: protocols[0].to_string(),
         });
 
         tracing::trace!(
@@ -1053,8 +1050,7 @@ impl WebRtcConnection {
             peer = ?self.peer,
             ?channel_id,
             ?substream_id,
-            ?protocol,
-            ?fallback_names,
+            protocol = %protocols[0],
             "open data channel",
         );
 
@@ -1062,8 +1058,7 @@ impl WebRtcConnection {
         self.pending_outbound.insert(
             channel_id,
             ChannelContext {
-                protocol,
-                fallback_names,
+                protocols,
                 substream_id,
                 opening_permit,
                 keep_alive,
@@ -1329,8 +1324,7 @@ impl WebRtcConnection {
                         return self.on_connection_closed().await;
                     }
                     Some(ProtocolCommand::OpenSubstream {
-                        protocol,
-                        fallback_names,
+                        protocols,
                         substream_id,
                         permit,
                         keep_alive,
@@ -1343,7 +1337,7 @@ impl WebRtcConnection {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 peer = ?self.peer,
-                                ?protocol,
+                                protocol = %protocols[0],
                                 is_alive = self.rtc.is_alive(),
                                 is_connected = self.rtc.is_connected(),
                                 "rejecting substream open: connection not healthy",
@@ -1361,13 +1355,7 @@ impl WebRtcConnection {
                                 .await;
                             return self.on_connection_closed().await;
                         }
-                        self.on_open_substream(
-                            protocol,
-                            fallback_names,
-                            substream_id,
-                            permit,
-                            keep_alive,
-                        );
+                        self.on_open_substream(protocols, substream_id, permit, keep_alive);
                     }
                 },
                 _ = tokio::time::sleep(timeout.saturating_duration_since(Instant::now())) => {
