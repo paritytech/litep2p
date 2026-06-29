@@ -1409,8 +1409,9 @@ impl NotificationProtocol {
                             let (tx, rx) = oneshot::channel();
                             self.pending_validations.push(Box::pin(async move {
                                 match rx.await {
-                                    Ok(ValidationResult::Accept) =>
-                                        (peer, ValidationResult::Accept),
+                                    Ok(ValidationResult::Accept) => {
+                                        (peer, ValidationResult::Accept)
+                                    }
                                     _ => (peer, ValidationResult::Reject),
                                 }
                             }));
@@ -1827,7 +1828,22 @@ impl NotificationProtocol {
                         }
                     }
                     NotificationCommand::ForceClose { peer } => {
-                        let _ = self.service.force_close(peer);
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            protocol = %self.protocol,
+                            "processing force close command after notification channel clog",
+                        );
+
+                        if let Err(error) = self.service.force_close(peer) {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                protocol = %self.protocol,
+                                ?error,
+                                "failed to force close connection after notification channel clog",
+                            );
+                        }
                     }
                     #[cfg(feature = "fuzz")]
                     NotificationCommand::SendNotification{ .. } => unreachable!()
