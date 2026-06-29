@@ -1213,6 +1213,14 @@ impl WebRtcConnection {
                         }
                         continue;
                     }
+                    Event::Closed => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            peer = ?self.peer,
+                            "connection has been closed",
+                        );
+                        return self.on_connection_closed().await;
+                    }
                     event => {
                         tracing::debug!(
                             target: LOG_TARGET,
