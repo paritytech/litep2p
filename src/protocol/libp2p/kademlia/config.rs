@@ -23,7 +23,7 @@ use crate::{
     protocol::libp2p::kademlia::{
         handle::{
             IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle,
-            RoutingTableUpdateMode,
+            KademliaMode, RoutingTableUpdateMode,
         },
         store::MemoryStoreConfig,
     },
@@ -93,6 +93,9 @@ pub struct Config {
     /// Routing table update mode.
     pub(super) update_mode: RoutingTableUpdateMode,
 
+    /// Operating mode.
+    pub(crate) mode: KademliaMode,
+
     /// Incoming records validation mode.
     pub(super) validation_mode: IncomingRecordValidationMode,
 
@@ -118,6 +121,7 @@ impl Config {
         known_peers: HashMap<PeerId, Vec<Multiaddr>>,
         mut protocol_names: Vec<ProtocolName>,
         update_mode: RoutingTableUpdateMode,
+        mode: KademliaMode,
         validation_mode: IncomingRecordValidationMode,
         record_ttl: Duration,
         memory_store_config: MemoryStoreConfig,
@@ -136,6 +140,7 @@ impl Config {
             Config {
                 protocol_names,
                 update_mode,
+                mode,
                 validation_mode,
                 record_ttl,
                 memory_store_config,
@@ -157,6 +162,7 @@ impl Config {
             HashMap::new(),
             Vec::new(),
             RoutingTableUpdateMode::Automatic,
+            KademliaMode::Server,
             IncomingRecordValidationMode::Automatic,
             DEFAULT_TTL,
             Default::default(),
@@ -173,6 +179,9 @@ pub struct ConfigBuilder {
 
     /// Routing table update mode.
     pub(super) update_mode: RoutingTableUpdateMode,
+
+    /// Operating mode.
+    pub(super) mode: KademliaMode,
 
     /// Incoming records validation mode.
     pub(super) validation_mode: IncomingRecordValidationMode,
@@ -207,6 +216,7 @@ impl ConfigBuilder {
             known_peers: HashMap::new(),
             protocol_names: Vec::new(),
             update_mode: RoutingTableUpdateMode::Automatic,
+            mode: KademliaMode::default(),
             validation_mode: IncomingRecordValidationMode::Automatic,
             record_ttl: DEFAULT_TTL,
             memory_store_config: Default::default(),
@@ -229,6 +239,19 @@ impl ConfigBuilder {
     /// Set routing table update mode.
     pub fn with_routing_table_update_mode(mut self, mode: RoutingTableUpdateMode) -> Self {
         self.update_mode = mode;
+        self
+    }
+
+    /// Sets the operating mode.
+    ///
+    /// By default, Substrate nodes operate in server mode.
+    ///
+    /// Light clients, or nodes that need to query DHT information without
+    /// participating in DHT routing, should use client mode.
+    ///
+    /// Defaults to [`KademliaMode::Server`].
+    pub fn with_mode(mut self, mode: KademliaMode) -> Self {
+        self.mode = mode;
         self
     }
 
@@ -335,6 +358,7 @@ impl ConfigBuilder {
             self.known_peers,
             self.protocol_names,
             self.update_mode,
+            self.mode,
             self.validation_mode,
             self.record_ttl,
             self.memory_store_config,
