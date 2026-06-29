@@ -70,6 +70,9 @@ const PROTOCOL_NAME: &str = "/ipfs/kad/1.0.0";
 /// Kademlia replication factor.
 const REPLICATION_FACTOR: usize = 20usize;
 
+/// Kademlia parallelism factor, `α`.
+const PARALLELISM_FACTOR: usize = 3usize;
+
 /// Kademlia maximum message size. Should fit 64 KiB value + 4 KiB key.
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 70 * 1024;
 
@@ -86,6 +89,9 @@ pub struct Config {
 
     /// Replication factor.
     pub(super) replication_factor: usize,
+
+    /// Parallelism factor, `α`.
+    pub(super) parallelism_factor: usize,
 
     /// Known peers.
     pub(super) known_peers: HashMap<PeerId, Vec<Multiaddr>>,
@@ -115,6 +121,7 @@ pub struct Config {
 impl Config {
     fn new(
         replication_factor: usize,
+        parallelism_factor: usize,
         known_peers: HashMap<PeerId, Vec<Multiaddr>>,
         mut protocol_names: Vec<ProtocolName>,
         update_mode: RoutingTableUpdateMode,
@@ -141,6 +148,7 @@ impl Config {
                 memory_store_config,
                 codec: ProtocolCodec::UnsignedVarint(Some(max_message_size)),
                 replication_factor,
+                parallelism_factor,
                 known_peers,
                 cmd_rx,
                 event_tx,
@@ -154,6 +162,7 @@ impl Config {
     pub fn default() -> (Self, KademliaHandle) {
         Self::new(
             REPLICATION_FACTOR,
+            PARALLELISM_FACTOR,
             HashMap::new(),
             Vec::new(),
             RoutingTableUpdateMode::Automatic,
@@ -170,6 +179,9 @@ impl Config {
 pub struct ConfigBuilder {
     /// Replication factor.
     pub(super) replication_factor: usize,
+
+    /// Parallelism factor, `α`.
+    pub(super) parallelism_factor: usize,
 
     /// Routing table update mode.
     pub(super) update_mode: RoutingTableUpdateMode,
@@ -204,6 +216,7 @@ impl ConfigBuilder {
     pub fn new() -> Self {
         Self {
             replication_factor: REPLICATION_FACTOR,
+            parallelism_factor: PARALLELISM_FACTOR,
             known_peers: HashMap::new(),
             protocol_names: Vec::new(),
             update_mode: RoutingTableUpdateMode::Automatic,
@@ -217,6 +230,15 @@ impl ConfigBuilder {
     /// Set replication factor.
     pub fn with_replication_factor(mut self, replication_factor: usize) -> Self {
         self.replication_factor = replication_factor;
+        self
+    }
+
+    /// Set parallelism factor (`α`), the number of in-flight requests an iterative query
+    /// keeps open at a time.
+    ///
+    /// If unspecified, the default parallelism factor is 3.
+    pub fn with_parallelism_factor(mut self, parallelism_factor: usize) -> Self {
+        self.parallelism_factor = parallelism_factor.max(1);
         self
     }
 
@@ -332,6 +354,7 @@ impl ConfigBuilder {
     pub fn build(self) -> (Config, KademliaHandle) {
         Config::new(
             self.replication_factor,
+            self.parallelism_factor,
             self.known_peers,
             self.protocol_names,
             self.update_mode,
