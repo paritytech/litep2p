@@ -1771,4 +1771,77 @@ mod tests {
             other => panic!("Expected BrokenPipe error, got: {:?}", other),
         }
     }
+
+    #[tokio::test]
+    async fn graceful_drop_does_not_reset_substream() {
+        let (mut substream, mut handle) = Substream::new();
+
+        // Drive the write half to FinAck (StopSending -> FIN -> FIN_ACK).
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::StopSending),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::Fin)
+            })
+        );
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::FinAck),
+            })
+            .await
+            .unwrap();
+        assert!(matches!(handle.writer_state.get(), WriterState::FinAck));
+
+        // Drive the read half to FinAck (peer FIN -> we emit FIN_ACK).
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::Fin),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::FinAck)
+            })
+        );
+        assert!(matches!(handle.reader_state.get(), ReaderState::FinAck));
+
+        // Both halves gracefully closed -> stream is done.
+        assert_eq!(handle.next().await, None);
+
+        // Dropping the gracefully-closed handle MUST NOT reset the channel.
+        drop(handle);
+        assert!(matches!(substream.channel_state.get(), ChannelState::Open));
+
+        // The reader observes a clean EOF (Ok(0)), never a ConnectionReset error.
+        let mut buf = vec![0u8; 256];
+        let n = substream.read(&mut buf).await.expect("graceful drop must not surface an error");
+        assert_eq!(n, 0);
+    }
+
+    #[tokio::test]
+    async fn non_graceful_drop_resets_substream() {
+        let (mut substream, handle) = Substream::new();
+
+        // No handshake performed; dropping must force a reset.
+        drop(handle);
+        assert!(matches!(substream.channel_state.get(), ChannelState::Reset));
+
+        let mut buf = vec![0u8; 256];
+        match substream.read(&mut buf).await {
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {}
+            other => panic!("expected ConnectionReset, got {other:?}"),
+        }
+    }
 }
