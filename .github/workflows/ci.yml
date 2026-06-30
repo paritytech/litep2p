@@ -222,6 +222,12 @@ jobs:
       - name: Install Rust stable toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install protoc
+        # litep2p's build.rs runs prost-build, which needs the protobuf
+        # compiler. The repo's other jobs get it from the ci-unified container;
+        # this job runs on bare ubuntu-latest, which does not ship protoc.
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Rust Cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
