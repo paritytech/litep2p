@@ -642,9 +642,14 @@ impl tokio::io::AsyncWrite for Substream {
 
 impl Drop for SubstreamHandle {
     fn drop(&mut self) {
+        let graceful = matches!(self.writer_state.get(), WriterState::FinAck)
+            && matches!(self.reader_state.get(), ReaderState::FinAck);
+
         // This allows to close all the pending channels if the SubstreamHandle
         // has been dropped, if graceful shutdown already happened this is a no-op.
-        self.channel_state.set(ChannelState::Reset);
+        if !graceful {
+            self.channel_state.set(ChannelState::Reset);
+        }
     }
 }
 
