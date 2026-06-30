@@ -280,6 +280,7 @@ jobs:
         run: |
           set -euo pipefail
           SERVER_LOG="$PWD/server.log"
+          CLIENT_LOG="$PWD/client.log"
 
           # Start the litep2p WebRTC perf server in the background.
           RUST_LOG=info ./target/release/litep2p-perf server \
@@ -288,9 +289,12 @@ jobs:
             --transport-layer webrtc > "$SERVER_LOG" 2>&1 &
           SERVER_PID=$!
 
+          # Always surface both sides' logs (on success and failure alike).
           cleanup() {
-            echo "----- server.log -----"
-            cat "$SERVER_LOG" 2>/dev/null || true
+            echo "===== client.log (go-libp2p) ====="
+            cat "$CLIENT_LOG" 2>/dev/null || echo "(no client log)"
+            echo "===== server.log (litep2p) ====="
+            cat "$SERVER_LOG" 2>/dev/null || echo "(no server log)"
             kill "$SERVER_PID" 2>/dev/null || true
           }
           trap cleanup EXIT
@@ -322,13 +326,26 @@ jobs:
 
           # Drive the server with the go-libp2p client. A non-zero exit (failed
           # dial, handshake, or transfer) propagates through `tee` via pipefail
-          # and fails this step.
-          cd libp2p-go
-          go mod download
-          timeout 120 go run . \
-            --server-address "$SERVER_ADDR" \
-            --upload-bytes 1048576 \
-            --download-bytes 1048576 2>&1 | tee client.log
+          # and fails this step. The client log is streamed live and saved.
+          ( cd libp2p-go && go mod download && timeout 120 go run . \
+              --server-address "$SERVER_ADDR" \
+              --upload-bytes 1048576 \
+              --download-bytes 1048576 ) 2>&1 | tee "$CLIENT_LOG"
 
-          # Belt and braces: confirm the perf protocol completed end to end.
-          grep -q "Downloaded" client.log
+          # Confirm the perf protocol completed end to end on the client side.
+          grep -q "Downloaded" "$CLIENT_LOG" \
+            || { echo "ERROR: client did not complete the download"; exit 1; }
+
+          # The server must observe the full connection lifecycle. The close is
+          # reported shortly after the client exits, so poll for it.
+          for _ in $(seq 1 30); do
+            grep -q "Event: ConnectionClosed" "$SERVER_LOG" && break
+            sleep 1
+          done
+
+          echo "Verifying the server logged the connection lifecycle..."
+          grep -q "Event: ConnectionEstablished" "$SERVER_LOG" \
+            || { echo "ERROR: server never logged 'Event: ConnectionEstablished'"; exit 1; }
+          grep -q "Event: ConnectionClosed" "$SERVER_LOG" \
+            || { echo "ERROR: server never logged 'Event: ConnectionClosed'"; exit 1; }
+          echo "OK: server logged ConnectionEstablished and ConnectionClosed, client completed upload+download"
