@@ -110,18 +110,27 @@ impl<T: AtomicState> SharedState<T> {
 enum ChannelState {
     /// Substream is fully open.
     Open = 0,
-    /// Set when a ResetStream flag is received from the peer,
-    /// or locally when the inbound buffer is exceeded (treated as a DoS).
+    /// Set locally when the inbound buffer is exceeded (treated as a DoS).
+    ///
+    /// A `RESET_STREAM` flag is expected to be sent to the other peer,
+    /// after which the channel moves to the `Reset` state.
+    InitReset = 1,
+    /// Terminal reset state, the stream is abruptly torn down.
+    ///
+    /// Entered when a RESET_STREAM is received from the peer, or locally after a
+    /// reset is initiated (`InitReset`), a FIN_ACK times out, an unexpected
+    /// FIN_ACK arrives, or the handle is dropped without a graceful close.
     ///
     /// This preempts both writer and reader state.
-    Reset = 1,
+    Reset = 2,
 }
 
 impl AtomicState for ChannelState {
     fn from_u8(raw_state: u8) -> Self {
         match raw_state {
             0 => ChannelState::Open,
-            1 => ChannelState::Reset,
+            1 => ChannelState::InitReset,
+            2 => ChannelState::Reset,
             // Unreachable in practice: `into_u8` only ever stores a valid variant and the
             // `AtomicU8` only returns a previously-stored byte.
             // Return Reset defensively rather than a panic.
@@ -283,10 +292,12 @@ impl SubstreamHandle {
     /// Payload is processed first (if present), then flags are handled. This ensures that
     /// a FIN message containing final data will deliver that data before signaling closure.
     pub async fn on_message(&mut self, message: WebRtcMessage) -> crate::Result<()> {
-        // If Reset was received then early return discarding messages.
-        // In practice this should never happen because SCTP guarantees the order
-        // of messages, thus no other message is expected after a Reset.
-        if matches!(self.channel_state.get(), ChannelState::Reset) {
+        // Discard inbound once the channel is reset or a reset has been initiated.
+        // After a peer RESET_STREAM, SCTP ordering means nothing more should arrive.
+        if matches!(
+            self.channel_state.get(),
+            ChannelState::Reset | ChannelState::InitReset
+        ) {
             return Ok(());
         }
 
@@ -322,8 +333,10 @@ impl SubstreamHandle {
                             max_pending_inbound_messages_per_channel = MAX_INFLIGHT_MESSAGES,
                             "max number of pending inbound messages exceeded"
                         );
-                        self.channel_state.set(ChannelState::Reset);
-                        return Err(Error::ChannelClogged);
+                        self.channel_state.set(ChannelState::InitReset);
+                        // Do not return an error here, let the Stream and thus
+                        // `poll_next` send out a `RESET_STREAM` flag and then close the channel.
+                        return Ok(());
                     }
                 }
             }
@@ -478,14 +491,25 @@ impl Stream for SubstreamHandle {
         // There are three states which need to be taken into consideration to poll the stream:
         // - channel_state: it preempts any other state if Reset has been entered
         //
-        // NOTE: channel_state's waker is already registered from Substream's writing
-        // half (poll_shutdown), so we don't register it again here. That's fine
-        // because every transition to ChannelState::Reset is driven from this same
-        // task. This match is just an early-out when the channel has already been reset.
-        if matches!(self.channel_state.get(), ChannelState::Reset) {
-            // If something went wrong, RESET_STREAM should have been sent,
-            // in that case the channel is treated as closed.
-            return Poll::Ready(None);
+        // NOTE: a channel_state waker is not needed here. Every transition to it happens
+        // while the connection task is already awake, so the handle is re-polled the same
+        // cycle. The match drives the reset, `InitReset` emits `RESET_STREAM` and advances
+        // to `Reset` wihle once in `Reset`, it just closes the stream.
+        match self.channel_state.get() {
+            ChannelState::Open => (),
+            ChannelState::InitReset => {
+                // A local reset was initiated, emit RESET_STREAM to notify the peer.
+                self.channel_state.set(ChannelState::Reset);
+                return Poll::Ready(Some(Message {
+                    payload: vec![],
+                    flag: Some(Flag::ResetStream),
+                }));
+            }
+            ChannelState::Reset => {
+                // If something went wrong, `RESET_STREAM` should have been sent,
+                // in that case the channel is treated as closed.
+                return Poll::Ready(None);
+            }
         }
 
         // - reader_state: this is mainly driven by the `on_message` function which reacts to
