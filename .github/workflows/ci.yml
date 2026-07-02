@@ -206,10 +206,10 @@ jobs:
       # Address the litep2p WebRTC server listens on. litep2p advertises a
       # server-listenable transport as `/webrtc-direct` (multiaddr code 280).
       SERVER_LISTEN_ADDR: /ip4/127.0.0.1/udp/33333/webrtc-direct
-      # Peer id deterministically derived from `--node-key secret` (see the perf
-      # repo's README / run_bandwidth.sh). Used as a fallback to build the client
-      # address if the server's logged listen address omits the /p2p/<peer-id>.
+      # Starting the server with `--node-key secret` makes its identity fully
+      # deterministic. Both vaulues are therefore stable across runs.
       SERVER_PEER_ID: 12D3KooWBpZHDZu7YSbvPaPXKhkRNJvR7MkTJMQQAVBKx9mCqz3q
+      SERVER_CERTHASH: uEiDQNMVmnSW3qoB31dz_DgLjHsktkWIotqfYTBeKqNO5IQ
     steps:
       - name: Checkout litep2p
         uses: actions/checkout@v7
@@ -299,30 +299,24 @@ jobs:
           }
           trap cleanup EXIT
 
-          # Wait for the server to advertise its /webrtc-direct/certhash address
-          # (current litep2p also appends /p2p/<peer-id>, which we capture too).
-          ADDR=""
+          # The server's identity is fully determined by `--node-key secret`
+          SERVER_ADDR="${SERVER_LISTEN_ADDR}/certhash/${SERVER_CERTHASH}/p2p/${SERVER_PEER_ID}"
+          echo "Server address: $SERVER_ADDR"
+
+          # Wait for the server to actually be listening before the client
+          # dials, so we don't race the UDP socket bind.
           for _ in $(seq 1 60); do
             if ! kill -0 "$SERVER_PID" 2>/dev/null; then
               echo "ERROR: perf server exited before it started listening"
               exit 1
             fi
-            ADDR=$(grep -oE '/ip4/127\.0\.0\.1/udp/[0-9]+/webrtc-direct/certhash/[A-Za-z0-9_-]+(/p2p/[A-Za-z0-9]+)?' "$SERVER_LOG" | head -n1 || true)
-            [ -n "$ADDR" ] && break
+            grep -q "Server listening on address" "$SERVER_LOG" && break
             sleep 1
           done
-          if [ -z "$ADDR" ]; then
-            echo "ERROR: perf server did not advertise a webrtc-direct address in time"
+          if ! grep -q "Server listening on address" "$SERVER_LOG"; then
+            echo "ERROR: perf server did not start listening in time"
             exit 1
           fi
-
-          # The client needs a /p2p/<peer-id> suffix; append the known one
-          # (derived from `--node-key secret`) if the log omitted it.
-          case "$ADDR" in
-            */p2p/*) SERVER_ADDR="$ADDR" ;;
-            *)       SERVER_ADDR="${ADDR}/p2p/${SERVER_PEER_ID}" ;;
-          esac
-          echo "Server address: $SERVER_ADDR"
 
           # Drive the server with the go-libp2p client. A non-zero exit (failed
           # dial, handshake, or transfer) propagates through `tee` via pipefail
