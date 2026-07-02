@@ -29,7 +29,7 @@ use crate::{
 
 use bytes::{Buf, BufMut, BytesMut};
 use futures::{task::AtomicWaker, Future, Stream};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{channel, error::TrySendError, Receiver, Sender};
 use tokio_util::sync::PollSender;
 
 use std::{
@@ -46,6 +46,10 @@ use std::{
 /// Timeout for waiting on FIN_ACK after sending FIN.
 /// Matches go-libp2p and js-libp2p's 10-second stream close timeout.
 const FIN_ACK_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Maximum number of in flight messages between
+/// [`Substream`] and [`SubstreamHandle`], in both directions.
+const MAX_INFLIGHT_MESSAGES: usize = 256;
 
 /// Substream Message.
 #[derive(PartialEq, Eq, Debug)]
@@ -106,17 +110,27 @@ impl<T: AtomicState> SharedState<T> {
 enum ChannelState {
     /// Substream is fully open.
     Open = 0,
-    /// ResetStream has been received.
+    /// Set locally when the inbound buffer is exceeded (treated as a DoS).
+    ///
+    /// A `RESET_STREAM` flag is expected to be sent to the other peer,
+    /// after which the channel moves to the `Reset` state.
+    InitReset = 1,
+    /// Terminal reset state, the stream is abruptly torn down.
+    ///
+    /// Entered when a RESET_STREAM is received from the peer, or locally after a
+    /// reset is initiated (`InitReset`), a FIN_ACK times out, an unexpected
+    /// FIN_ACK arrives, or the handle is dropped without a graceful close.
     ///
     /// This preempts both writer and reader state.
-    Reset = 1,
+    Reset = 2,
 }
 
 impl AtomicState for ChannelState {
     fn from_u8(raw_state: u8) -> Self {
         match raw_state {
             0 => ChannelState::Open,
-            1 => ChannelState::Reset,
+            1 => ChannelState::InitReset,
+            2 => ChannelState::Reset,
             // Unreachable in practice: `into_u8` only ever stores a valid variant and the
             // `AtomicU8` only returns a previously-stored byte.
             // Return Reset defensively rather than a panic.
@@ -212,8 +226,16 @@ impl Substream {
     pub fn new() -> (Self, SubstreamHandle) {
         // Tokio channels implement their own backpressure,
         // which solves the Substream <-> SubstreamHandle backpressure problem.
-        let (outbound_message_tx, outbound_message_rx) = channel(256);
-        let (inbound_message_tx, inbound_message_rx) = channel(256);
+        //
+        // Given MAX_FRAME_SIZE as the maximum size of each message, each channel buffers
+        // at most 4 MiB (256 * 16 KiB).
+        //
+        // For inbound messages this capacity is a hard limit used to distinguish a slow
+        // reader (which needs some buffering) from a DoS attempt, unlike the outbound
+        // path, the reader cannot be slowed down, so an over-full inbound
+        // channel is treated as the peer flooding us and the substream is reset.
+        let (inbound_message_tx, inbound_message_rx) = channel(MAX_INFLIGHT_MESSAGES);
+        let (outbound_message_tx, outbound_message_rx) = channel(MAX_INFLIGHT_MESSAGES);
 
         let channel_state = SharedState::new(ChannelState::Open);
         let writer_state = SharedState::new(WriterState::Open);
@@ -270,10 +292,12 @@ impl SubstreamHandle {
     /// Payload is processed first (if present), then flags are handled. This ensures that
     /// a FIN message containing final data will deliver that data before signaling closure.
     pub async fn on_message(&mut self, message: WebRtcMessage) -> crate::Result<()> {
-        // If Reset was received then early return discarding messages.
-        // In practice this should never happen because SCTP guarantees the order
-        // of messages, thus no other message is expected after a Reset.
-        if matches!(self.channel_state.get(), ChannelState::Reset) {
+        // Discard inbound once the channel is reset or a reset has been initiated.
+        // After a peer RESET_STREAM, SCTP ordering means nothing more should arrive.
+        if matches!(
+            self.channel_state.get(),
+            ChannelState::Reset | ChannelState::InitReset
+        ) {
             return Ok(());
         }
 
@@ -287,25 +311,33 @@ impl SubstreamHandle {
                 );
             }
             (Some(message_tx), Some(payload)) if !payload.is_empty() => {
-                // TODO: awaiting here makes the entire connection
-                // rely on the readers to be fast enough, a slow reader
-                // could cause this method to wait and thus stall the entire webrtc
-                // connection. Solution would be to implement reading
-                // backpressure, keeping track of pending incoming messages.
-                // https://github.com/paritytech/litep2p/issues/604
-                let send_result = message_tx
-                    .send(Message {
-                        payload,
-                        flag: None,
-                    })
-                    .await;
+                let send_result = message_tx.try_send(Message {
+                    payload,
+                    flag: None,
+                });
 
-                if let Err(err) = send_result {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?err,
-                        "failed to propagate message to Substream"
-                    );
+                match send_result {
+                    Ok(_) => (),
+                    Err(TrySendError::Closed(_)) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            "substream reader has been closed, skipping payload"
+                        );
+                    }
+                    Err(TrySendError::Full(_)) => {
+                        // If exceeded, the peer is sending faster than the reader can consume
+                        // and thus this can be considered a DoS attack by forcing us to buffer
+                        // those messages.
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            max_pending_inbound_messages_per_channel = MAX_INFLIGHT_MESSAGES,
+                            "max number of pending inbound messages exceeded"
+                        );
+                        self.channel_state.set(ChannelState::InitReset);
+                        // Do not return an error here, let the Stream and thus
+                        // `poll_next` send out a `RESET_STREAM` flag and then close the channel.
+                        return Ok(());
+                    }
                 }
             }
             _ => (),
@@ -459,14 +491,25 @@ impl Stream for SubstreamHandle {
         // There are three states which need to be taken into consideration to poll the stream:
         // - channel_state: it preempts any other state if Reset has been entered
         //
-        // NOTE: channel_state's waker is already registered from Substream's writing
-        // half (poll_shutdown), so we don't register it again here. That's fine
-        // because every transition to ChannelState::Reset is driven from this same
-        // task. This match is just an early-out when the channel has already been reset.
-        if matches!(self.channel_state.get(), ChannelState::Reset) {
-            // If something went wrong, RESET_STREAM should have been sent,
-            // in that case the channel is treated as closed.
-            return Poll::Ready(None);
+        // NOTE: a channel_state waker is not needed here. Every transition to it happens
+        // while the connection task is already awake, so the handle is re-polled the same
+        // cycle. The match drives the reset, `InitReset` emits `RESET_STREAM` and advances
+        // to `Reset` wihle once in `Reset`, it just closes the stream.
+        match self.channel_state.get() {
+            ChannelState::Open => (),
+            ChannelState::InitReset => {
+                // A local reset was initiated, emit RESET_STREAM to notify the peer.
+                self.channel_state.set(ChannelState::Reset);
+                return Poll::Ready(Some(Message {
+                    payload: vec![],
+                    flag: Some(Flag::ResetStream),
+                }));
+            }
+            ChannelState::Reset => {
+                // If something went wrong, `RESET_STREAM` should have been sent,
+                // in that case the channel is treated as closed.
+                return Poll::Ready(None);
+            }
         }
 
         // - reader_state: this is mainly driven by the `on_message` function which reacts to
@@ -528,6 +571,8 @@ impl tokio::io::AsyncRead for Substream {
         }
 
         match futures::ready!(self.rx.poll_recv(cx)) {
+            None if matches!(self.channel_state.get(), ChannelState::Reset) =>
+                Poll::Ready(Err(tokio::io::ErrorKind::ConnectionReset.into())),
             None => Poll::Ready(Ok(())),
             Some(Message { payload, flag: _ }) => {
                 if payload.len() > MAX_FRAME_SIZE {
@@ -621,9 +666,14 @@ impl tokio::io::AsyncWrite for Substream {
 
 impl Drop for SubstreamHandle {
     fn drop(&mut self) {
+        let graceful = matches!(self.writer_state.get(), WriterState::FinAck)
+            && matches!(self.reader_state.get(), ReaderState::FinAck);
+
         // This allows to close all the pending channels if the SubstreamHandle
         // has been dropped, if graceful shutdown already happened this is a no-op.
-        self.channel_state.set(ChannelState::Reset);
+        if !graceful {
+            self.channel_state.set(ChannelState::Reset);
+        }
     }
 }
 
@@ -988,8 +1038,8 @@ mod tests {
         let (mut substream, mut handle) = Substream::new();
 
         // Fill the channel to capacity, same pattern as `backpressure_works`.
-        for _ in 0..128 {
-            substream.write_all(&vec![0u8; 2 * MAX_FRAME_SIZE]).await.unwrap();
+        for _ in 0..MAX_INFLIGHT_MESSAGES {
+            substream.write_all(&vec![0u8; MAX_FRAME_SIZE]).await.unwrap();
         }
 
         // Spawn a writer task that will try to write once more. This should initially block
@@ -1224,7 +1274,7 @@ mod tests {
 
         let mut buf = vec![0u8; 1024];
         match substream.read(&mut buf).await {
-            Ok(0) => (),
+            Err(err) if err.kind() == std::io::ErrorKind::ConnectionReset => (),
             other => panic!("Unexpected result: {:?}", other),
         }
         assert!(substream.shutdown().await.is_ok());
@@ -1342,8 +1392,7 @@ mod tests {
         let (mut substream, mut handle) = Substream::new();
 
         // Fill up the channel to cause poll_write to return Pending
-        // Channel capacity is 256
-        for _ in 0..256 {
+        for _ in 0..MAX_INFLIGHT_MESSAGES {
             substream.write_all(&[1u8; 100]).await.unwrap();
         }
 
@@ -1381,8 +1430,7 @@ mod tests {
         let (mut substream, mut handle) = Substream::new();
 
         // Fill up the channel to cause poll_write to return Pending
-        // Channel capacity is 256
-        for _ in 0..256 {
+        for _ in 0..MAX_INFLIGHT_MESSAGES {
             substream.write_all(&[1u8; 100]).await.unwrap();
         }
 
@@ -1721,6 +1769,79 @@ mod tests {
         match substream.read(&mut buf).await {
             Ok(0) => (),
             other => panic!("Expected BrokenPipe error, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn graceful_drop_does_not_reset_substream() {
+        let (mut substream, mut handle) = Substream::new();
+
+        // Drive the write half to FinAck (StopSending -> FIN -> FIN_ACK).
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::StopSending),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::Fin)
+            })
+        );
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::FinAck),
+            })
+            .await
+            .unwrap();
+        assert!(matches!(handle.writer_state.get(), WriterState::FinAck));
+
+        // Drive the read half to FinAck (peer FIN -> we emit FIN_ACK).
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::Fin),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::FinAck)
+            })
+        );
+        assert!(matches!(handle.reader_state.get(), ReaderState::FinAck));
+
+        // Both halves gracefully closed -> stream is done.
+        assert_eq!(handle.next().await, None);
+
+        // Dropping the gracefully-closed handle MUST NOT reset the channel.
+        drop(handle);
+        assert!(matches!(substream.channel_state.get(), ChannelState::Open));
+
+        // The reader observes a clean EOF (Ok(0)), never a ConnectionReset error.
+        let mut buf = vec![0u8; 256];
+        let n = substream.read(&mut buf).await.expect("graceful drop must not surface an error");
+        assert_eq!(n, 0);
+    }
+
+    #[tokio::test]
+    async fn non_graceful_drop_resets_substream() {
+        let (mut substream, handle) = Substream::new();
+
+        // No handshake performed; dropping must force a reset.
+        drop(handle);
+        assert!(matches!(substream.channel_state.get(), ChannelState::Reset));
+
+        let mut buf = vec![0u8; 256];
+        match substream.read(&mut buf).await {
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {}
+            other => panic!("expected ConnectionReset, got {other:?}"),
         }
     }
 }
