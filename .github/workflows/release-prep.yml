@@ -176,11 +176,46 @@ jobs:
       - name: Verify crate publishes cleanly (cargo publish --dry-run)
         run: cargo publish --dry-run
 
-      - name: Push release branch
+      - name: Push release branch (as a verified commit)
         env:
-          BRANCH: ${{ steps.validate.outputs.branch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH:   ${{ steps.validate.outputs.branch }}
         shell: bash
-        run: git push origin "$BRANCH"
+        run: |
+          set -euo pipefail
+          REPO="$GITHUB_REPOSITORY"
+
+          # Push the locally-created (unsigned) commit first so its tree and
+          # blobs exist on the server, then replace it with an equivalent commit
+          # created through the GitHub API. API commits made with GITHUB_TOKEN
+          # are signed by GitHub's web-flow key and show as "Verified", which is
+          # what the release process requires -- this removes the manual
+          # re-sign-and-force-push step that was needed for the unsigned
+          # github-actions[bot] commit.
+          git push origin "$BRANCH"
+
+          UNSIGNED_SHA=$(git rev-parse HEAD)
+          MESSAGE=$(git log -1 --pretty=%B "$UNSIGNED_SHA")
+          TREE=$(gh api "repos/$REPO/git/commits/$UNSIGNED_SHA" -q '.tree.sha')
+          PARENT=$(gh api "repos/$REPO/git/commits/$UNSIGNED_SHA" -q '.parents[0].sha')
+
+          # Author/committer default to the token identity (github-actions[bot]);
+          # the commit is signed server-side.
+          SIGNED_SHA=$(gh api "repos/$REPO/git/commits" \
+            -f message="$MESSAGE" \
+            -f tree="$TREE" \
+            -f "parents[]=$PARENT" \
+            -q '.sha')
+
+          # Move the branch to the signed commit. This is not a fast-forward
+          # (same parent, different SHA), so force is required.
+          gh api -X PATCH "repos/$REPO/git/refs/heads/$BRANCH" \
+            -f sha="$SIGNED_SHA" \
+            -F force=true >/dev/null
+
+          echo "Branch $BRANCH now points at verified commit $SIGNED_SHA"
+          echo "Verification status:"
+          gh api "repos/$REPO/git/commits/$SIGNED_SHA" -q '.verification'
 
       - name: Open release PR
         env:
