@@ -190,3 +190,156 @@ jobs:
 
       - name: Run tests
         run: cargo test --all-features --all-targets
+
+  webrtc-interop:
+    # Build the `litep2p-perf` harness against *this* checkout of litep2p, run
+    # its WebRTC server, and drive it with the go-libp2p perf client (see
+    # lexnv/litep2p-perf#4). A failed dial/handshake/transfer fails the job, so
+    # this guards litep2p's WebRTC server against go-libp2p interop regressions.
+    name: WebRTC interop (go-libp2p client)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Performance harness that contains the litep2p server and go-libp2p client.
+      PERF_REPO: https://github.com/lexnv/litep2p-perf
+      PERF_REF: master
+      # Address the litep2p WebRTC server listens on. litep2p advertises a
+      # server-listenable transport as `/webrtc-direct` (multiaddr code 280).
+      SERVER_LISTEN_ADDR: /ip4/127.0.0.1/udp/33333/webrtc-direct
+      # Starting the server with `--node-key secret` makes its identity fully
+      # deterministic. Both vaulues are therefore stable across runs.
+      SERVER_PEER_ID: 12D3KooWBpZHDZu7YSbvPaPXKhkRNJvR7MkTJMQQAVBKx9mCqz3q
+      SERVER_CERTHASH: uEiDQNMVmnSW3qoB31dz_DgLjHsktkWIotqfYTBeKqNO5IQ
+    steps:
+      - name: Checkout litep2p
+        uses: actions/checkout@v7
+        with:
+          path: litep2p
+
+      - name: Clone litep2p-perf
+        run: git clone --depth 1 --branch "$PERF_REF" "$PERF_REPO" litep2p-perf
+
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protoc
+        # litep2p's build.rs runs prost-build, which needs the protobuf
+        # compiler. The repo's other jobs get it from the ci-unified container;
+        # this job runs on bare ubuntu-latest, which does not ship protoc.
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          workspaces: litep2p-perf
+          cache-on-failure: true
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: litep2p-perf/libp2p-go/go.mod
+
+      - name: Point litep2p-perf at the checked-out litep2p
+        working-directory: litep2p-perf
+        run: |
+          set -euo pipefail
+          LITEP2P_SRC="$GITHUB_WORKSPACE/litep2p"
+
+          # The perf workspace also builds a rust-libp2p member we don't need
+          # here; dropping it keeps the build lean and avoids unrelated
+          # dependency-resolution failures from that member.
+          printf '[workspace]\nmembers = ["litep2p", "utils"]\nresolver = "2"\n' > Cargo.toml
+
+          # Re-resolve from scratch: the committed lock pins the published
+          # litep2p and its transitive deps, which can conflict with the source
+          # we are swapping in (e.g. a newer str0m/openssl-sys).
+          rm -f Cargo.lock
+
+          # Replace the published `litep2p` dependency with a path dependency on
+          # this checkout. A path dep carries no version requirement, so it can
+          # never silently fall back to the crates.io release even if the
+          # in-repo version drifts from what the perf manifest pinned.
+          sed -i -E "s|^litep2p = \{.*\}|litep2p = { path = \"${LITEP2P_SRC}\", features = [\"websocket\", \"webrtc\"] }|" litep2p/Cargo.toml
+          echo "litep2p dependency is now:"
+          grep -n '^litep2p = ' litep2p/Cargo.toml
+
+          # Fail if it did not actually resolve to the local checkout.
+          RESOLVED=$(cargo metadata --format-version 1 | jq -r '.packages[] | select(.name=="litep2p") | .manifest_path')
+          echo "litep2p resolved to: $RESOLVED"
+          case "$RESOLVED" in
+            "$LITEP2P_SRC/"*) echo "OK: building against the local litep2p checkout" ;;
+            *) echo "ERROR: litep2p did not resolve to the local checkout"; exit 1 ;;
+          esac
+
+      - name: Build litep2p-perf server
+        working-directory: litep2p-perf
+        run: cargo build --release -p litep2p-perf
+
+      - name: WebRTC interop — litep2p server vs go-libp2p client
+        working-directory: litep2p-perf
+        run: |
+          set -euo pipefail
+          SERVER_LOG="$PWD/server.log"
+          CLIENT_LOG="$PWD/client.log"
+
+          # Start the litep2p WebRTC perf server in the background.
+          RUST_LOG=info ./target/release/litep2p-perf server \
+            --listen-address "$SERVER_LISTEN_ADDR" \
+            --node-key secret \
+            --transport-layer webrtc > "$SERVER_LOG" 2>&1 &
+          SERVER_PID=$!
+
+          # Always surface both sides' logs (on success and failure alike).
+          cleanup() {
+            echo "===== client.log (go-libp2p) ====="
+            cat "$CLIENT_LOG" 2>/dev/null || echo "(no client log)"
+            echo "===== server.log (litep2p) ====="
+            cat "$SERVER_LOG" 2>/dev/null || echo "(no server log)"
+            kill "$SERVER_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          # The server's identity is fully determined by `--node-key secret`
+          SERVER_ADDR="${SERVER_LISTEN_ADDR}/certhash/${SERVER_CERTHASH}/p2p/${SERVER_PEER_ID}"
+          echo "Server address: $SERVER_ADDR"
+
+          # Wait for the server to actually be listening before the client
+          # dials, so we don't race the UDP socket bind.
+          for _ in $(seq 1 60); do
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              echo "ERROR: perf server exited before it started listening"
+              exit 1
+            fi
+            grep -q "Server listening on address" "$SERVER_LOG" && break
+            sleep 1
+          done
+          if ! grep -q "Server listening on address" "$SERVER_LOG"; then
+            echo "ERROR: perf server did not start listening in time"
+            exit 1
+          fi
+
+          # Drive the server with the go-libp2p client. A non-zero exit (failed
+          # dial, handshake, or transfer) propagates through `tee` via pipefail
+          # and fails this step. The client log is streamed live and saved.
+          ( cd libp2p-go && go mod download && timeout 120 go run . \
+              --server-address "$SERVER_ADDR" \
+              --upload-bytes 1048576 \
+              --download-bytes 1048576 ) 2>&1 | tee "$CLIENT_LOG"
+
+          # Confirm the perf protocol completed end to end on the client side.
+          grep -q "Downloaded" "$CLIENT_LOG" \
+            || { echo "ERROR: client did not complete the download"; exit 1; }
+
+          # The server must observe the full connection lifecycle. The close is
+          # reported shortly after the client exits, so poll for it.
+          for _ in $(seq 1 30); do
+            grep -q "Event: ConnectionClosed" "$SERVER_LOG" && break
+            sleep 1
+          done
+
+          echo "Verifying the server logged the connection lifecycle..."
+          grep -q "Event: ConnectionEstablished" "$SERVER_LOG" \
+            || { echo "ERROR: server never logged 'Event: ConnectionEstablished'"; exit 1; }
+          grep -q "Event: ConnectionClosed" "$SERVER_LOG" \
+            || { echo "ERROR: server never logged 'Event: ConnectionClosed'"; exit 1; }
+          echo "OK: server logged ConnectionEstablished and ConnectionClosed, client completed upload+download"
