@@ -1844,4 +1844,65 @@ mod tests {
             other => panic!("expected ConnectionReset, got {other:?}"),
         }
     }
+
+    #[tokio::test]
+    async fn inbound_channel_full_initiates_reset() {
+        let (mut substream, mut handle) = Substream::new();
+
+        // Fill the inbound channel completely. The substream is kept alive but never
+        // read from, so `try_send` fills the channel instead of returning `Closed`.
+        for _ in 0..MAX_INFLIGHT_MESSAGES {
+            handle
+                .on_message(WebRtcMessage {
+                    payload: Some(vec![0u8; 100]),
+                    flag: None,
+                })
+                .await
+                .unwrap();
+        }
+        assert!(matches!(handle.channel_state.get(), ChannelState::Open));
+
+        // The next message finds `message_tx` full and initiates the reset process.
+        // This is not an error: `poll_next` is responsible for emitting RESET_STREAM.
+        handle
+            .on_message(WebRtcMessage {
+                payload: Some(vec![0u8; 100]),
+                flag: None,
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            handle.channel_state.get(),
+            ChannelState::InitReset
+        ));
+
+        // The handle emits RESET_STREAM for the peer, then the stream closes.
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::ResetStream),
+            }),
+        );
+        assert!(matches!(handle.channel_state.get(), ChannelState::Reset));
+        assert!(handle.next().await.is_none());
+
+        // Further inbound messages are silently discarded and don't change state.
+        handle
+            .on_message(WebRtcMessage {
+                payload: Some(vec![0u8; 100]),
+                flag: None,
+            })
+            .await
+            .unwrap();
+        assert!(matches!(handle.channel_state.get(), ChannelState::Reset));
+
+        // Once the handle is gone, the read side reports the reset after draining.
+        drop(handle);
+        let mut remaining = Vec::new();
+        match substream.read_to_end(&mut remaining).await {
+            Err(err) if err.kind() == std::io::ErrorKind::ConnectionReset => (),
+            other => panic!("Unexpected result: {:?}", other),
+        }
+    }
 }
