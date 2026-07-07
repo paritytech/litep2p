@@ -90,6 +90,9 @@ const LOG_TARGET: &str = "litep2p::webrtc";
 const REMOTE_FINGERPRINT: &str =
     "sha-256 FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF";
 
+/// Max Capacity of a WebRtc buffer used to receive a single inbound UDP datagram.
+const WEBRTC_BUFFER_SIZE: usize = 16 * 1024;
+
 /// Connection context.
 struct ConnectionContext {
     /// Remote peer ID.
@@ -165,6 +168,9 @@ pub(crate) struct WebRtcTransport {
 
     /// Pending events.
     pending_events: VecDeque<TransportEvent>,
+
+    /// Read buffer.
+    read_buffer: Vec<u8>,
 }
 
 impl WebRtcTransport {
@@ -461,6 +467,7 @@ impl TransportBuilder for WebRtcTransport {
                 timeouts: HashMap::new(),
                 pending_events: VecDeque::new(),
                 datagram_buffer_size: config.datagram_buffer_size,
+                read_buffer: vec![0; WEBRTC_BUFFER_SIZE],
             },
             listen_multi_addresses,
         ))
@@ -659,9 +666,7 @@ impl Stream for WebRtcTransport {
         }
 
         loop {
-            let mut buf = vec![0u8; 16384];
-            let mut read_buf = ReadBuf::new(&mut buf);
-
+            let mut read_buf = ReadBuf::new(&mut this.read_buffer);
             let addrs = match this.listener.poll_recv_from(cx, &mut read_buf) {
                 // No error is expected to be returned by the listener.
                 Poll::Ready(Err(error)) => {
@@ -676,9 +681,7 @@ impl Stream for WebRtcTransport {
                 Poll::Ready(Ok(addrs)) => addrs,
             };
 
-            let nread = read_buf.filled().len();
-            buf.truncate(nread);
-
+            let buf = read_buf.filled().to_vec();
             match this.on_socket_input(addrs, buf) {
                 Ok(false) => {}
                 Ok(true) => loop {

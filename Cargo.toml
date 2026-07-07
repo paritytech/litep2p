@@ -3,7 +3,7 @@ name = "litep2p"
 description = "Peer-to-peer networking library"
 repository = "https://github.com/paritytech/litep2p"
 license = "MIT"
-version = "0.14.2"
+version = "0.14.3"
 edition = "2021"
 
 # cargo-machete does not detect serde_millis usage, so we ignore the warning
@@ -87,7 +87,7 @@ rcgen = { version = "0.14.5", optional = true }
 # End of Quic related dependencies.
 
 # WebRTC related dependencies. WebRTC is an experimental feature flag. The dependencies must be updated.
-str0m = { version = "0.18.1", default-features = false, features = ["openssl", "vendored"], optional = true }
+str0m = { version = "0.21.0", default-features = false, features = ["openssl", "vendored"], optional = true }
 # End of WebRTC related dependencies.
 
 # Fuzzing related dependencies.
