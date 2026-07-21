@@ -22,7 +22,6 @@ use crate::{error::DialError, PeerId};
 
 use ip_network::IpNetwork;
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 
 use std::collections::{hash_map::Entry, HashMap};
 
@@ -70,9 +69,7 @@ impl AddressRecord {
     /// append the provided `PeerId` to the address.
     pub fn new(peer: &PeerId, address: Multiaddr, score: i32) -> Self {
         let address = if !std::matches!(address.iter().last(), Some(Protocol::P2p(_))) {
-            address.with(Protocol::P2p(
-                Multihash::from_bytes(&peer.to_bytes()).expect("valid peer id"),
-            ))
+            address.with(Protocol::P2p((*peer).into()))
         } else {
             address
         };
@@ -536,9 +533,7 @@ mod tests {
         let address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(8, 8, 8, 8)))
             .with(Protocol::Tcp(9999))
-            .with(Protocol::P2p(
-                multihash::Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(peer.into()));
 
         let record = AddressRecord::from_multiaddr(address.clone()).unwrap();
         assert_eq!(record.score, 0);
@@ -584,9 +579,7 @@ mod tests {
         let address = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(8, 8, 8, 8)))
             .with(Protocol::Tcp(9999))
-            .with(Protocol::P2p(
-                multihash::Multihash::from_bytes(&peer.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(peer.into()));
 
         // First, add the address normally.
         let record = AddressRecord::from_multiaddr(address.clone()).unwrap();
@@ -610,6 +603,29 @@ mod tests {
 
         // Score should still reflect the failure, not 0.
         assert_eq!(store.addresses.get(&address).unwrap().score, failure_score);
+    }
+
+    #[test]
+    fn address_record_new_appends_peer_id_when_missing() {
+        let peer = PeerId::random();
+        let address: Multiaddr = "/ip4/1.2.3.4/tcp/8080".parse().unwrap();
+
+        let record = AddressRecord::new(&peer, address, 0);
+
+        assert_eq!(PeerId::try_from_multiaddr(record.address()), Some(peer));
+    }
+
+    #[test]
+    fn address_record_new_keeps_address_unchanged_when_peer_id_present() {
+        let peer: PeerId = "12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q".parse().unwrap();
+        let address: Multiaddr =
+            "/ip4/1.2.3.4/tcp/8080/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                .parse()
+                .unwrap();
+
+        let record = AddressRecord::new(&peer, address.clone(), 0);
+
+        assert_eq!(record.address(), &address);
     }
 
     #[test]

@@ -900,10 +900,12 @@ impl QueryEngine {
 
 #[cfg(test)]
 mod tests {
-    use multihash::{Code, Multihash};
+    use multihash::Multihash;
 
     use super::*;
-    use crate::protocol::libp2p::kademlia::types::ConnectionType;
+    use crate::{
+        peer_id::MULTIHASH_IDENTITY_CODE, protocol::libp2p::kademlia::types::ConnectionType,
+    };
 
     // make fixed peer id
     fn make_peer_id(first: u8, second: u8) -> PeerId {
@@ -912,7 +914,7 @@ mod tests {
         peer_id[1] = second;
 
         PeerId::from_bytes(
-            &Multihash::wrap(Code::Identity.into(), &peer_id)
+            &Multihash::<64>::wrap(MULTIHASH_IDENTITY_CODE, &peer_id)
                 .expect("The digest size is never too large")
                 .to_bytes(),
         )
