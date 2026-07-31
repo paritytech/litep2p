@@ -417,12 +417,8 @@ impl Litep2p {
 
         // if identify was enabled, give it the advertised protocols and listen addresses and
         // start it
-        if let Some((service, identify_config)) = identify_info.take() {
-            *identify_config.protocols.write() = transport_manager
-                .protocols()
-                .filter(|protocol| !unadvertised_protocols.contains(protocol))
-                .cloned()
-                .collect();
+        if let Some((service, mut identify_config)) = identify_info.take() {
+            identify_config.protocols = transport_manager.protocols().cloned().collect();
             let identify = Identify::new(service, identify_config);
 
             litep2p_config.executor.run(Box::pin(async move {
