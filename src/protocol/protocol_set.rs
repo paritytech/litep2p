@@ -496,7 +496,7 @@ impl Stream for ProtocolSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mock::substream::MockSubstream;
+    use crate::{mock::substream::MockSubstream, transport::manager::AdvertiseProtocol};
     use std::collections::HashSet;
 
     #[tokio::test]
@@ -518,6 +518,7 @@ mod tests {
                         ProtocolName::from("/notif/1/fallback/2"),
                     ],
                     keep_alive: SubstreamKeepAlive::Yes,
+                    advertise: AdvertiseProtocol::Yes,
                 },
             )]),
         );
@@ -568,6 +569,7 @@ mod tests {
                         ProtocolName::from("/notif/1/fallback/2"),
                     ],
                     keep_alive: SubstreamKeepAlive::Yes,
+                    advertise: AdvertiseProtocol::Yes,
                 },
             )]),
         );
@@ -618,6 +620,7 @@ mod tests {
                         ProtocolName::from("/notif/1/fallback/2"),
                     ],
                     keep_alive: SubstreamKeepAlive::Yes,
+                    advertise: AdvertiseProtocol::Yes,
                 },
             )]),
         );

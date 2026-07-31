@@ -639,7 +639,7 @@ mod tests {
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
         protocol::SubstreamKeepAlive,
-        transport::manager::{ProtocolContext, TransportHandle},
+        transport::manager::{AdvertiseProtocol, ProtocolContext, TransportHandle},
         types::protocol::ProtocolName,
         BandwidthSink,
     };
@@ -670,6 +670,7 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
+                    advertise: AdvertiseProtocol::Yes,
                 },
             )]),
         };
@@ -698,6 +699,7 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
+                    advertise: AdvertiseProtocol::Yes,
                 },
             )]),
         };
