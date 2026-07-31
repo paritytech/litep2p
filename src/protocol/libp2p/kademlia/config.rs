@@ -23,7 +23,7 @@ use crate::{
     protocol::libp2p::kademlia::{
         handle::{
             IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle,
-            KademliaMode, RoutingTableUpdateMode,
+            RoutingTableUpdateMode,
         },
         store::MemoryStoreConfig,
     },
@@ -113,6 +113,17 @@ pub struct Config {
 
     /// Next query ID counter shared with the handle.
     pub(super) next_query_id: Arc<AtomicUsize>,
+}
+
+/// Kademlia operating mode.
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+pub enum KademliaMode {
+    /// Don't answer inbound requests and don't advertise the protocol via identify.
+    Client,
+
+    /// Answer inbound requests and participate fully in the DHT.
+    #[default]
+    Server,
 }
 
 impl Config {

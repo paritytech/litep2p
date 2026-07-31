@@ -54,10 +54,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub use config::{Config, ConfigBuilder};
+pub use config::{Config, ConfigBuilder, KademliaMode};
 pub use handle::{
-    IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle, KademliaMode,
-    Quorum, RoutingTableUpdateMode,
+    IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle, Quorum,
+    RoutingTableUpdateMode,
 };
 pub use query::QueryId;
 pub use record::{ContentProvider, Key as RecordKey, PeerRecord, Record};
