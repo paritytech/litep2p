@@ -432,31 +432,30 @@ impl Kademlia {
         self.executor.read_message(peer, None, substream);
     }
 
-    /// Report peers discovered in a query response to the user and register their addresses.
+    /// Register the addresses of the peers discovered in a query response.
     ///
     /// Discovered peers are not inserted into the routing table as they haven't proven
     /// they operate in server mode; they remain usable as query candidates.
-    async fn report_discovered_peers(&mut self, peers: &[KademliaPeer]) {
-        let peers: Vec<_> =
-            peers.iter().filter(|peer| peer.peer != self.service.local_peer_id()).collect();
+    fn register_discovered_peers(&mut self, peers: &[KademliaPeer]) {
+        let local_peer_id = self.service.local_peer_id();
 
-        // inform user about the routing table update, regardless of what the routing table update
-        // mode is
-        let _ = self
-            .event_tx
-            .send(KademliaEvent::RoutingTableUpdate {
-                peers: peers.iter().map(|peer| peer.peer).collect::<Vec<PeerId>>(),
-            })
-            .await;
-
-        for info in peers {
+        for info in peers.iter().filter(|peer| peer.peer != local_peer_id) {
             self.service.add_known_address(&info.peer, info.addresses().into_iter());
         }
     }
 
     /// Insert a peer that answered one of our queries, proving it operates in server mode,
     /// into the routing table if the update mode is automatic.
-    fn insert_proven_server(&mut self, proven: &KademliaPeer) {
+    async fn insert_proven_server(&mut self, proven: &KademliaPeer) {
+        // inform user about the routing table update, regardless of what the routing table update
+        // mode is
+        let _ = self
+            .event_tx
+            .send(KademliaEvent::RoutingTableUpdate {
+                peers: vec![proven.peer],
+            })
+            .await;
+
         if !std::matches!(self.update_mode, RoutingTableUpdateMode::Automatic) {
             return;
         }
@@ -494,15 +493,15 @@ impl Kademlia {
                             "handle `FIND_NODE` response",
                         );
 
-                        // inform user about the discovered peers and update routing table
-                        // with the proven responder
-                        self.report_discovered_peers(&peers).await;
+                        // register the discovered peers and update routing table with the
+                        // proven responder
+                        self.register_discovered_peers(&peers);
                         if let Some(proven) = self.engine.register_response(
                             query_id,
                             peer,
                             KademliaMessage::FindNode { target, peers },
                         ) {
-                            self.insert_proven_server(&proven);
+                            self.insert_proven_server(&proven).await;
                         }
                         substream.close().await;
                     }
@@ -577,15 +576,15 @@ impl Kademlia {
                             "handle `GET_VALUE` response",
                         );
 
-                        // inform user about the discovered peers and update routing table
-                        // with the proven responder
-                        self.report_discovered_peers(&peers).await;
+                        // register the discovered peers and update routing table with the
+                        // proven responder
+                        self.register_discovered_peers(&peers);
                         if let Some(proven) = self.engine.register_response(
                             query_id,
                             peer,
                             KademliaMessage::GetRecord { key, record, peers },
                         ) {
-                            self.insert_proven_server(&proven);
+                            self.insert_proven_server(&proven).await;
                         }
 
                         substream.close().await;
@@ -685,9 +684,9 @@ impl Kademlia {
                             "handle `GET_PROVIDERS` response",
                         );
 
-                        // inform user about the discovered peers and update routing table
-                        // with the proven responder
-                        self.report_discovered_peers(&peers).await;
+                        // register the discovered peers and update routing table with the
+                        // proven responder
+                        self.register_discovered_peers(&peers);
                         if let Some(proven) = self.engine.register_response(
                             query_id,
                             peer,
@@ -697,7 +696,7 @@ impl Kademlia {
                                 providers,
                             },
                         ) {
-                            self.insert_proven_server(&proven);
+                            self.insert_proven_server(&proven).await;
                         }
 
                         substream.close().await;
@@ -1744,7 +1743,7 @@ mod tests {
 
         // simulate handling a `FIND_NODE` response from the responder listing `discovered`
         let peers = vec![discovered.clone()];
-        kademlia.report_discovered_peers(&peers).await;
+        kademlia.register_discovered_peers(&peers);
         let proven = kademlia
             .engine
             .register_response(
@@ -1756,7 +1755,7 @@ mod tests {
                 },
             )
             .expect("responder to be returned as proven server");
-        kademlia.insert_proven_server(&proven);
+        kademlia.insert_proven_server(&proven).await;
 
         // only the responder was inserted into the routing table
         assert!(std::matches!(
@@ -1768,13 +1767,14 @@ mod tests {
             KBucketEntry::Vacant(_)
         ));
 
-        // the discovered peer was still reported to the user
+        // only the routing table update of the proven responder is reported to the user
         match context.event_rx.try_recv() {
             Ok(KademliaEvent::RoutingTableUpdate { peers }) => {
-                assert_eq!(peers, vec![discovered_peer]);
+                assert_eq!(peers, vec![responder_peer]);
             }
             event => panic!("unexpected event: {event:?}"),
         }
+        assert!(context.event_rx.try_recv().is_err());
     }
 
     #[tokio::test]
