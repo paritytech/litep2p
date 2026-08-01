@@ -37,7 +37,7 @@ use crate::{
 };
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, AsyncRead, AsyncWrite, StreamExt};
-use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
+use multiaddr::{Multiaddr, Protocol};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use tokio_util::compat::FuturesAsyncReadCompatExt;
@@ -359,7 +359,7 @@ impl WebSocketConnection {
 
         let address = match role {
             Role::Dialer => address,
-            Role::Listener => address.with(Protocol::P2p(Multihash::from(peer))),
+            Role::Listener => address.with(Protocol::P2p(peer.into())),
         };
 
         Ok(NegotiatedConnection {

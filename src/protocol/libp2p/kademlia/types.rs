@@ -32,12 +32,9 @@ use crate::{
 
 use multiaddr::Multiaddr;
 
-#[allow(deprecated)]
-// TODO: remove `#[allow(deprecated)] once sha2-0.11 is released.
-//       See https://github.com/paritytech/litep2p/issues/449.
-use sha2::digest::generic_array::GenericArray;
+use sha2::digest::array::Array;
 
-use sha2::{digest::generic_array::typenum::U32, Digest, Sha256};
+use sha2::{digest::typenum::U32, Digest, Sha256};
 use uint::*;
 
 use std::{
@@ -153,10 +150,7 @@ impl<T: Clone> Hash for Key<T> {
 
 /// The raw bytes of a key in the DHT keyspace.
 #[derive(PartialEq, Eq, Clone, Debug)]
-#[allow(deprecated)]
-// TODO: remove `#[allow(deprecated)] once sha2-0.11 is released.
-//       See https://github.com/paritytech/litep2p/issues/449.
-pub struct KeyBytes(GenericArray<u8, U32>);
+pub struct KeyBytes(Array<u8, U32>);
 
 impl KeyBytes {
     /// Creates a new key in the DHT keyspace by running the given
@@ -169,9 +163,6 @@ impl KeyBytes {
     }
 
     /// Computes the distance of the keys according to the XOR metric.
-    #[allow(deprecated)]
-    // TODO: remove `#[allow(deprecated)] once sha2-0.11 is released.
-    //       See https://github.com/paritytech/litep2p/issues/449.
     pub fn distance<U>(&self, other: &U) -> Distance
     where
         U: AsRef<KeyBytes>,
@@ -187,12 +178,9 @@ impl KeyBytes {
     ///
     /// `self xor other = distance <==> other = self xor distance`
     #[cfg(test)]
-    #[allow(deprecated)]
-    // TODO: remove `#[allow(deprecated)] once sha2-0.11 is released.
-    //       See https://github.com/paritytech/litep2p/issues/449.
     pub fn for_distance(&self, d: Distance) -> KeyBytes {
         let key_int = U256::from_big_endian(self.0.as_slice()) ^ d.0;
-        KeyBytes(GenericArray::from(key_int.to_big_endian()))
+        KeyBytes(Array::from(key_int.to_big_endian()))
     }
 }
 

@@ -21,9 +21,9 @@
 
 use futures::{Stream, StreamExt};
 use libp2p::{
-    identity, ping,
-    swarm::{keep_alive, NetworkBehaviour, SwarmBuilder, SwarmEvent},
-    PeerId, Swarm,
+    identity, noise, ping,
+    swarm::{NetworkBehaviour, SwarmEvent},
+    tcp, yamux, Swarm, SwarmBuilder,
 };
 use litep2p::{
     config::ConfigBuilder,
@@ -35,7 +35,6 @@ use litep2p::{
 
 #[derive(NetworkBehaviour, Default)]
 struct Behaviour {
-    keep_alive: keep_alive::Behaviour,
     ping: ping::Behaviour,
 }
 
@@ -60,13 +59,22 @@ fn initialize_litep2p() -> (Litep2p, Box<dyn Stream<Item = PingEvent> + Send + U
 
 fn initialize_libp2p() -> Swarm<Behaviour> {
     let local_key = identity::Keypair::generate_ed25519();
-    let local_peer_id = PeerId::from(local_key.public());
 
-    tracing::debug!("Local peer id: {local_peer_id:?}");
+    tracing::debug!("Local peer id: {:?}", local_key.public().to_peer_id());
 
-    let transport = libp2p::tokio_development_transport(local_key).unwrap();
-    let mut swarm =
-        SwarmBuilder::with_tokio_executor(transport, Behaviour::default(), local_peer_id).build();
+    let mut swarm = SwarmBuilder::with_existing_identity(local_key)
+        .with_tokio()
+        .with_tcp(
+            tcp::Config::default(),
+            noise::Config::new,
+            yamux::Config::default,
+        )
+        .unwrap()
+        .with_dns()
+        .unwrap()
+        .with_behaviour(|_| Behaviour::default())
+        .unwrap()
+        .build();
 
     swarm.listen_on("/ip6/::1/tcp/0".parse().unwrap()).unwrap();
 

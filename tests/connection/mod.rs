@@ -37,7 +37,6 @@ use litep2p::{error::AddressError, transport::quic::config::Config as QuicConfig
 
 use futures::{Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use tokio::net::TcpListener;
 #[cfg(feature = "quic")]
@@ -239,9 +238,7 @@ async fn dial_failure(transport1: Transport, transport2: Transport, dial_address
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
 
-    let address = dial_address.with(Protocol::P2p(
-        Multihash::from_bytes(&litep2p2.local_peer_id().to_bytes()).unwrap(),
-    ));
+    let address = dial_address.with(Protocol::P2p((*litep2p2.local_peer_id()).into()));
 
     litep2p1.dial_address(address).await.unwrap();
 
@@ -297,9 +294,7 @@ async fn connect_over_dns() {
     let mut new_address = Multiaddr::empty();
     new_address.push(Protocol::Dns("localhost".into()));
     new_address.push(tcp);
-    new_address.push(Protocol::P2p(
-        Multihash::from_bytes(&peer2.to_bytes()).unwrap(),
-    ));
+    new_address.push(Protocol::P2p(peer2.into()));
 
     litep2p1.dial_address(new_address).await.unwrap();
     let (res1, res2) = tokio::join!(litep2p1.next_event(), litep2p2.next_event());
@@ -322,9 +317,7 @@ async fn connection_timeout_tcp() {
     let address = Multiaddr::empty()
         .with(Protocol::from(address.ip()))
         .with(Protocol::Tcp(address.port()))
-        .with(Protocol::P2p(
-            Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
-        ));
+        .with(Protocol::P2p(PeerId::random().into()));
 
     connection_timeout(
         Transport::Tcp(TcpConfig {
@@ -346,9 +339,7 @@ async fn connection_timeout_quic() {
         .with(Protocol::from(address.ip()))
         .with(Protocol::Udp(address.port()))
         .with(Protocol::QuicV1)
-        .with(Protocol::P2p(
-            Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
-        ));
+        .with(Protocol::P2p(PeerId::random().into()));
 
     connection_timeout(Transport::Quic(Default::default()), address).await;
 }
@@ -363,9 +354,7 @@ async fn connection_timeout_websocket() {
         .with(Protocol::from(address.ip()))
         .with(Protocol::Tcp(address.port()))
         .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())))
-        .with(Protocol::P2p(
-            Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
-        ));
+        .with(Protocol::P2p(PeerId::random().into()));
 
     connection_timeout(
         Transport::WebSocket(WebSocketConfig {
@@ -503,9 +492,7 @@ async fn attempt_to_dial_using_unsupported_transport_tcp() {
         .with(Protocol::from(std::net::Ipv4Addr::new(127, 0, 0, 1)))
         .with(Protocol::Tcp(8888))
         .with(Protocol::Ws(std::borrow::Cow::Borrowed("/")))
-        .with(Protocol::P2p(
-            Multihash::from_bytes(&PeerId::random().to_bytes()).unwrap(),
-        ));
+        .with(Protocol::P2p(PeerId::random().into()));
 
     assert!(std::matches!(
         litep2p.dial_address(address.clone()).await,
@@ -858,9 +845,7 @@ async fn tcp_dns_resolution() {
     let mut new_address = Multiaddr::empty();
     new_address.push(Protocol::Dns("localhost".into()));
     new_address.push(tcp);
-    new_address.push(Protocol::P2p(
-        Multihash::from_bytes(&peer2.to_bytes()).unwrap(),
-    ));
+    new_address.push(Protocol::P2p(peer2.into()));
     litep2p1.dial_address(new_address).await.unwrap();
 
     let mut ping_received1 = false;
@@ -921,9 +906,7 @@ async fn websocket_dns_resolution() {
     new_address.push(Protocol::Dns("localhost".into()));
     new_address.push(tcp);
     new_address.push(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())));
-    new_address.push(Protocol::P2p(
-        Multihash::from_bytes(&peer2.to_bytes()).unwrap(),
-    ));
+    new_address.push(Protocol::P2p(peer2.into()));
     litep2p1.dial_address(new_address).await.unwrap();
 
     let mut ping_received1 = false;
@@ -1234,7 +1217,7 @@ async fn unspecified_listen_address_tcp() {
                         Multiaddr::empty()
                             .with(Protocol::Ip4(record.ip))
                             .with(Protocol::Tcp(ip4_port.unwrap()))
-                            .with(Protocol::P2p(Multihash::from(peer1))),
+                            .with(Protocol::P2p(peer1.into())),
                     )
                 }
                 network_interface::Addr::V6(record) => {
@@ -1249,7 +1232,7 @@ async fn unspecified_listen_address_tcp() {
                         Multiaddr::empty()
                             .with(Protocol::Ip6(record.ip))
                             .with(Protocol::Tcp(ip6_port.unwrap()))
-                            .with(Protocol::P2p(Multihash::from(peer1))),
+                            .with(Protocol::P2p(peer1.into())),
                     )
                 }
             };
@@ -1336,7 +1319,7 @@ async fn unspecified_listen_address_websocket() {
                             .with(Protocol::Ip4(record.ip))
                             .with(Protocol::Tcp(ip4_port.unwrap()))
                             .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())))
-                            .with(Protocol::P2p(Multihash::from(peer1))),
+                            .with(Protocol::P2p(peer1.into())),
                     )
                 }
                 network_interface::Addr::V6(record) => {
@@ -1352,7 +1335,7 @@ async fn unspecified_listen_address_websocket() {
                             .with(Protocol::Ip6(record.ip))
                             .with(Protocol::Tcp(ip6_port.unwrap()))
                             .with(Protocol::Ws(std::borrow::Cow::Owned("/".to_string())))
-                            .with(Protocol::P2p(Multihash::from(peer1))),
+                            .with(Protocol::P2p(peer1.into())),
                     )
                 }
             };
@@ -1528,7 +1511,7 @@ async fn check_multi_dial() {
     // Replace the PeerId in the multiaddrs with random PeerId to simulate invalid addresses.
     litep2p_addresses.iter_mut().for_each(|addr| {
         addr.pop();
-        addr.push(Protocol::P2p(Multihash::from(random_peer)));
+        addr.push(Protocol::P2p(random_peer.into()));
     });
 
     let dialed_addresses: HashSet<_> = litep2p_addresses.clone().into_iter().collect();

@@ -33,7 +33,6 @@ use litep2p::{
 };
 
 use multiaddr::{Multiaddr, Protocol};
-use multihash::Multihash;
 use std::time::Duration;
 use tokio::net::TcpListener;
 
@@ -72,9 +71,7 @@ async fn failed_addresses_reported_on_successful_connection() {
         let address = Multiaddr::empty()
             .with(Protocol::from(addr.ip()))
             .with(Protocol::Tcp(addr.port()))
-            .with(Protocol::P2p(
-                Multihash::from_bytes(&peer2.to_bytes()).unwrap(),
-            ));
+            .with(Protocol::P2p(peer2.into()));
 
         tracing::info!(index = i, ?address, "created failing listener");
 

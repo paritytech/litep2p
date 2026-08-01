@@ -21,6 +21,7 @@
 use crate::{
     crypto::{ed25519::Keypair, tls::make_server_config},
     error::AddressError,
+    transport::common::listener::{AddressType, DnsType},
     PeerId,
 };
 
@@ -56,20 +57,39 @@ impl QuicListener {
         keypair: &Keypair,
         addresses: Vec<Multiaddr>,
     ) -> crate::Result<(Self, Vec<Multiaddr>)> {
-        let mut listeners: Vec<Endpoint> = Vec::new();
-        let mut listen_addresses = Vec::new();
-
-        for address in addresses.into_iter() {
-            let (listen_address, _) = Self::get_socket_address(&address)?;
-            let crypto_config = Arc::new(make_server_config(keypair).expect("to succeed"));
-            let server_config = ServerConfig::with_crypto(crypto_config);
-            let listener = Endpoint::server(server_config, listen_address).unwrap();
-
-            let listen_address = listener.local_addr()?;
-            listen_addresses.push(listen_address);
-            listeners.push(listener);
-            // );
-        }
+        let (mut listeners, listen_addresses): (Vec<Endpoint>, Vec<SocketAddr>) = addresses
+            .into_iter()
+            .filter_map(|address| {
+                let bind_address = match Self::get_socket_address(&address).ok()?.0 {
+                    AddressType::Socket(address) => address,
+                    AddressType::Dns { address, port, .. } => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?address,
+                            ?port,
+                            "dns not supported as bind address",
+                        );
+                        return None;
+                    }
+                };
+                let crypto_config = Arc::new(make_server_config(keypair).expect("to succeed"));
+                let server_config = ServerConfig::with_crypto(crypto_config);
+                let listener = match Endpoint::server(server_config, bind_address) {
+                    Ok(listener) => listener,
+                    Err(error) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?address,
+                            ?error,
+                            "failed to bind quic listener",
+                        );
+                        return None;
+                    }
+                };
+                let local_address = listener.local_addr().ok()?;
+                Some((listener, local_address))
+            })
+            .unzip();
 
         let listen_multi_addresses = listen_addresses
             .iter()
@@ -100,36 +120,68 @@ impl QuicListener {
         ))
     }
 
-    /// Extract socket address and `PeerId`, if found, from `address`.
+    /// Parse a QUIC multiaddress, supporting both IP and DNS addresses.
+    ///
+    /// Accepted formats:
+    /// - `/ip4/<addr>/udp/<port>/quic-v1[/p2p/<peer-id>]`
+    /// - `/ip6/<addr>/udp/<port>/quic-v1[/p2p/<peer-id>]`
+    /// - `/dns/<host>/udp/<port>/quic-v1[/p2p/<peer-id>]`
+    /// - `/dns4/<host>/udp/<port>/quic-v1[/p2p/<peer-id>]`
+    /// - `/dns6/<host>/udp/<port>/quic-v1[/p2p/<peer-id>]`
     pub fn get_socket_address(
         address: &Multiaddr,
-    ) -> Result<(SocketAddr, Option<PeerId>), AddressError> {
-        tracing::trace!(target: LOG_TARGET, ?address, "parse multi address");
+    ) -> Result<(AddressType, Option<PeerId>), AddressError> {
+        tracing::trace!(target: LOG_TARGET, ?address, "parse quic multi address");
 
         let mut iter = address.iter();
-        let socket_address = match iter.next() {
-            Some(Protocol::Ip6(address)) => match iter.next() {
-                Some(Protocol::Udp(port)) => SocketAddr::new(IpAddr::V6(address), port),
+        let handle_dns_type =
+            |address: String, dns_type: DnsType, protocol: Option<Protocol>| match protocol {
+                Some(Protocol::Udp(port)) => Ok(AddressType::Dns {
+                    address,
+                    port,
+                    dns_type,
+                }),
                 protocol => {
                     tracing::error!(
                         target: LOG_TARGET,
                         ?protocol,
-                        "invalid transport protocol, expected `QuicV1`",
+                        "invalid transport protocol, expected `Udp`",
+                    );
+                    Err(AddressError::InvalidProtocol)
+                }
+            };
+
+        let address_type = match iter.next() {
+            Some(Protocol::Ip6(address)) => match iter.next() {
+                Some(Protocol::Udp(port)) =>
+                    AddressType::Socket(SocketAddr::new(IpAddr::V6(address), port)),
+                protocol => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?protocol,
+                        "invalid transport protocol, expected `Udp`",
                     );
                     return Err(AddressError::InvalidProtocol);
                 }
             },
             Some(Protocol::Ip4(address)) => match iter.next() {
-                Some(Protocol::Udp(port)) => SocketAddr::new(IpAddr::V4(address), port),
+                Some(Protocol::Udp(port)) =>
+                    AddressType::Socket(SocketAddr::new(IpAddr::V4(address), port)),
                 protocol => {
                     tracing::error!(
                         target: LOG_TARGET,
                         ?protocol,
-                        "invalid transport protocol, expected `QuicV1`",
+                        "invalid transport protocol, expected `Udp`",
                     );
                     return Err(AddressError::InvalidProtocol);
                 }
             },
+            Some(Protocol::Dns(address)) =>
+                handle_dns_type(address.into(), DnsType::Dns, iter.next())?,
+            Some(Protocol::Dns4(address)) =>
+                handle_dns_type(address.into(), DnsType::Dns4, iter.next())?,
+            Some(Protocol::Dns6(address)) =>
+                handle_dns_type(address.into(), DnsType::Dns6, iter.next())?,
             protocol => {
                 tracing::error!(target: LOG_TARGET, ?protocol, "invalid transport protocol");
                 return Err(AddressError::InvalidProtocol);
@@ -139,23 +191,31 @@ impl QuicListener {
         // verify that quic exists
         match iter.next() {
             Some(Protocol::QuicV1) => {}
-            _ => return Err(AddressError::InvalidProtocol),
+            protocol => {
+                tracing::error!(
+                    target: LOG_TARGET,
+                    ?protocol,
+                    "invalid protocol, expected `QuicV1`",
+                );
+                return Err(AddressError::InvalidProtocol);
+            }
         }
 
         let maybe_peer = match iter.next() {
-            Some(Protocol::P2p(multihash)) => Some(PeerId::from_multihash(multihash)?),
+            Some(Protocol::P2p(multihash)) =>
+                Some(PeerId::from_multihash(multihash).map_err(AddressError::InvalidPeerId)?),
             None => None,
             protocol => {
                 tracing::error!(
                     target: LOG_TARGET,
                     ?protocol,
-                    "invalid protocol, expected `P2p` or `None`"
+                    "invalid protocol, expected `P2p` or `None`",
                 );
-                return Err(AddressError::PeerIdMissing);
+                return Err(AddressError::InvalidProtocol);
             }
         };
 
-        Ok((socket_address, maybe_peer))
+        Ok((address_type, maybe_peer))
     }
 }
 
@@ -191,8 +251,69 @@ mod tests {
     use quinn::ClientConfig;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
+    fn peer_id() -> PeerId {
+        PeerId::from_public_key(&Keypair::generate().public().into())
+    }
+
     #[test]
     fn parse_multiaddresses() {
+        let peer = peer_id();
+
+        // IPv4 with peer ID
+        let address: Multiaddr =
+            format!("/ip4/192.168.1.1/udp/5000/quic-v1/p2p/{peer}").parse().unwrap();
+        let (address_type, parsed_peer) = QuicListener::get_socket_address(&address).unwrap();
+        assert!(
+            matches!(address_type, AddressType::Socket(addr) if addr.port() == 5000 && addr.ip().to_string() == "192.168.1.1")
+        );
+        assert_eq!(parsed_peer, Some(peer));
+
+        // IPv6 with peer ID
+        let address: Multiaddr = format!("/ip6/::1/udp/9000/quic-v1/p2p/{peer}").parse().unwrap();
+        let (address_type, parsed_peer) = QuicListener::get_socket_address(&address).unwrap();
+        assert!(matches!(address_type, AddressType::Socket(addr) if addr.port() == 9000));
+        assert_eq!(parsed_peer, Some(peer));
+
+        // DNS with peer ID
+        let address: Multiaddr =
+            format!("/dns/example.com/udp/5000/quic-v1/p2p/{peer}").parse().unwrap();
+        let (address_type, parsed_peer) = QuicListener::get_socket_address(&address).unwrap();
+        assert!(matches!(
+            address_type,
+            AddressType::Dns { ref address, port: 5000, dns_type: DnsType::Dns }
+            if address == "example.com"
+        ));
+        assert_eq!(parsed_peer, Some(peer));
+
+        // DNS4 with peer ID
+        let address: Multiaddr =
+            format!("/dns4/example.com/udp/8080/quic-v1/p2p/{peer}").parse().unwrap();
+        let (address_type, parsed_peer) = QuicListener::get_socket_address(&address).unwrap();
+        assert!(matches!(
+            address_type,
+            AddressType::Dns { ref address, port: 8080, dns_type: DnsType::Dns4 }
+            if address == "example.com"
+        ));
+        assert_eq!(parsed_peer, Some(peer));
+
+        // DNS6 with peer ID
+        let address: Multiaddr =
+            format!("/dns6/example.com/udp/3000/quic-v1/p2p/{peer}").parse().unwrap();
+        let (address_type, parsed_peer) = QuicListener::get_socket_address(&address).unwrap();
+        assert!(matches!(
+            address_type,
+            AddressType::Dns { ref address, port: 3000, dns_type: DnsType::Dns6 }
+            if address == "example.com"
+        ));
+        assert_eq!(parsed_peer, Some(peer));
+
+        // Without peer ID
+        let address: Multiaddr = "/ip4/192.168.1.1/udp/5000/quic-v1".parse().unwrap();
+        let (address_type, parsed_peer) = QuicListener::get_socket_address(&address).unwrap();
+        assert!(matches!(address_type, AddressType::Socket(_)));
+        assert_eq!(parsed_peer, None);
+
+        // Plain IP variants without peer ID still parse.
         assert!(QuicListener::get_socket_address(
             &"/ip6/::1/udp/8888/quic-v1".parse().expect("valid multiaddress")
         )
@@ -201,46 +322,62 @@ mod tests {
             &"/ip4/127.0.0.1/udp/8888/quic-v1".parse().expect("valid multiaddress")
         )
         .is_ok());
-        assert!(QuicListener::get_socket_address(
-            &"/ip6/::1/udp/8888/quic-v1/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                .parse()
-                .expect("valid multiaddress")
-        )
-        .is_ok());
-        assert!(QuicListener::get_socket_address(
-            &"/ip4/127.0.0.1/udp/8888/quic-v1/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                .parse()
-                .expect("valid multiaddress")
-        )
-        .is_ok());
-        assert!(QuicListener::get_socket_address(
-            &"/ip6/::1/tcp/8888/quic-v1/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                .parse()
-                .expect("valid multiaddress")
-        )
-        .is_err());
-        assert!(QuicListener::get_socket_address(
-            &"/ip4/127.0.0.1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                .parse()
-                .expect("valid multiaddress")
-        )
-        .is_err());
-        assert!(QuicListener::get_socket_address(
-            &"/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                .parse()
-                .expect("valid multiaddress")
-        )
-        .is_err());
-        assert!(QuicListener::get_socket_address(
-            &"/dns/google.com/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
-                .parse()
-                .expect("valid multiaddress")
-        )
-        .is_err());
-        assert!(QuicListener::get_socket_address(
-            &"/ip6/::1/udp/8888/quic-v1/utp".parse().expect("valid multiaddress")
-        )
-        .is_err());
+
+        // Invalid: TCP after IP instead of UDP
+        assert!(matches!(
+            QuicListener::get_socket_address(
+                &"/ip6/::1/tcp/8888/quic-v1/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                    .parse()
+                    .expect("valid multiaddress")
+            ),
+            Err(AddressError::InvalidProtocol)
+        ));
+
+        // Invalid: missing quic-v1
+        assert!(matches!(
+            QuicListener::get_socket_address(
+                &"/ip4/127.0.0.1/udp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                    .parse()
+                    .expect("valid multiaddress")
+            ),
+            Err(AddressError::InvalidProtocol)
+        ));
+
+        // Invalid: TCP after IP, no quic-v1
+        assert!(matches!(
+            QuicListener::get_socket_address(
+                &"/ip4/127.0.0.1/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                    .parse()
+                    .expect("valid multiaddress")
+            ),
+            Err(AddressError::InvalidProtocol)
+        ));
+
+        // Invalid: DNS with TCP instead of UDP
+        assert!(matches!(
+            QuicListener::get_socket_address(
+                &"/dns/google.com/tcp/8888/p2p/12D3KooWT2ouvz5uMmCvHJGzAGRHiqDts5hzXR7NdoQ27pGdzp9Q"
+                    .parse()
+                    .expect("valid multiaddress")
+            ),
+            Err(AddressError::InvalidProtocol)
+        ));
+
+        // Invalid: DNS4 with TCP instead of UDP
+        assert!(matches!(
+            QuicListener::get_socket_address(
+                &"/dns4/example.com/tcp/5000/quic-v1".parse().expect("valid multiaddress")
+            ),
+            Err(AddressError::InvalidProtocol)
+        ));
+
+        // Invalid: extra protocol after quic-v1
+        assert!(matches!(
+            QuicListener::get_socket_address(
+                &"/ip6/::1/udp/8888/quic-v1/utp".parse().expect("valid multiaddress")
+            ),
+            Err(AddressError::InvalidProtocol)
+        ));
     }
 
     #[tokio::test]
