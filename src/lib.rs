@@ -46,9 +46,7 @@ use crate::{
         SubstreamKeepAlive,
     },
     transport::{
-        manager::{
-            AdvertiseProtocol, SupportedTransport, TransportManager, TransportManagerBuilder,
-        },
+        manager::{InboundProtocol, SupportedTransport, TransportManager, TransportManagerBuilder},
         tcp::TcpTransport,
         TransportBuilder, TransportEvent,
     },
@@ -207,7 +205,7 @@ impl Litep2p {
                 config.codec,
                 litep2p_config.keep_alive_timeout,
                 SubstreamKeepAlive::Yes,
-                AdvertiseProtocol::Yes,
+                InboundProtocol::Accept,
             );
             let executor = Arc::clone(&litep2p_config.executor);
             litep2p_config.executor.run(Box::pin(async move {
@@ -229,7 +227,7 @@ impl Litep2p {
                 config.codec,
                 litep2p_config.keep_alive_timeout,
                 SubstreamKeepAlive::Yes,
-                AdvertiseProtocol::Yes,
+                InboundProtocol::Accept,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 RequestResponseProtocol::new(service, config).run().await
@@ -247,7 +245,7 @@ impl Litep2p {
                 litep2p_config.keep_alive_timeout,
                 // TODO: make configurable by user.
                 SubstreamKeepAlive::Yes,
-                AdvertiseProtocol::Yes,
+                InboundProtocol::Accept,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 let _ = protocol.run(service).await;
@@ -268,7 +266,7 @@ impl Litep2p {
                 ping_config.codec,
                 litep2p_config.keep_alive_timeout,
                 SubstreamKeepAlive::No,
-                AdvertiseProtocol::Yes,
+                InboundProtocol::Accept,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 Ping::new(service, ping_config).run().await
@@ -288,11 +286,11 @@ impl Litep2p {
                 kademlia_config.protocol_names.first().expect("protocol name to exist");
             let fallback_names = kademlia_config.protocol_names.iter().skip(1).cloned().collect();
 
-            // client-mode instances don't answer inbound requests, so their protocol names
-            // are not advertised
-            let advertise = match kademlia_config.mode {
-                KademliaMode::Client => AdvertiseProtocol::No,
-                KademliaMode::Server => AdvertiseProtocol::Yes,
+            // client-mode instances don't answer inbound requests, so their protocol names are
+            // neither advertised nor negotiated on substreams opened by remote peers
+            let inbound = match kademlia_config.mode {
+                KademliaMode::Client => InboundProtocol::Deny,
+                KademliaMode::Server => InboundProtocol::Accept,
             };
 
             let service = transport_manager.register_protocol(
@@ -301,7 +299,7 @@ impl Litep2p {
                 kademlia_config.codec,
                 litep2p_config.keep_alive_timeout,
                 SubstreamKeepAlive::Yes,
-                advertise,
+                inbound,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 let _ = Kademlia::new(service, kademlia_config).run().await;
@@ -324,7 +322,7 @@ impl Litep2p {
                     identify_config.codec,
                     litep2p_config.keep_alive_timeout,
                     SubstreamKeepAlive::No,
-                    AdvertiseProtocol::Yes,
+                    InboundProtocol::Accept,
                 );
                 identify_config.public = Some(litep2p_config.keypair.public().into());
 
@@ -346,7 +344,7 @@ impl Litep2p {
                 bitswap_config.codec,
                 litep2p_config.keep_alive_timeout,
                 SubstreamKeepAlive::Yes,
-                AdvertiseProtocol::Yes,
+                InboundProtocol::Accept,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 Bitswap::new(service, bitswap_config).run().await

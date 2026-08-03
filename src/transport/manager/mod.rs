@@ -95,13 +95,15 @@ pub enum TransportManagerEvent {
     },
 }
 
-/// Whether the protocol name is advertised to remote peers via the identify protocol.
+/// Whether the protocol serves substreams opened by remote peers.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum AdvertiseProtocol {
-    /// Protocol is advertised.
-    Yes,
-    /// Protocol is not advertised (ie client mode kademlia).
-    No,
+pub enum InboundProtocol {
+    /// Inbound substreams are negotiated and the protocol name is advertised via identify.
+    Accept,
+
+    /// Inbound substreams are rejected during negotiation and the protocol name is not
+    /// advertised via identify (ie client mode kademlia).
+    Deny,
 }
 
 // Protocol context.
@@ -119,8 +121,8 @@ pub struct ProtocolContext {
     /// Whether this protocol existing substreams should keep connection alive.
     pub keep_alive: SubstreamKeepAlive,
 
-    /// Whether the protocol name is advertised to remote peers.
-    pub advertise: AdvertiseProtocol,
+    /// Whether the protocol serves substreams opened by remote peers.
+    pub inbound: InboundProtocol,
 }
 
 impl ProtocolContext {
@@ -130,14 +132,14 @@ impl ProtocolContext {
         tx: Sender<InnerTransportEvent>,
         fallback_names: Vec<ProtocolName>,
         keep_alive: SubstreamKeepAlive,
-        advertise: AdvertiseProtocol,
+        inbound: InboundProtocol,
     ) -> Self {
         Self {
             tx,
             codec,
             fallback_names,
             keep_alive,
-            advertise,
+            inbound,
         }
     }
 }
@@ -383,7 +385,7 @@ impl TransportManager {
     pub fn advertised_protocols(&self) -> impl Iterator<Item = &ProtocolName> {
         self.protocols
             .iter()
-            .filter(|(_, context)| context.advertise == AdvertiseProtocol::Yes)
+            .filter(|(_, context)| context.inbound == InboundProtocol::Accept)
             .map(|(protocol, _)| protocol)
     }
 
@@ -409,8 +411,8 @@ impl TransportManager {
     /// This allocates new context for the protocol and returns a handle
     /// which the protocol can use the interact with the transport subsystem.
     ///
-    /// `advertise` controls whether the protocol name is exposed to remote peers via the identify
-    /// protocol.
+    /// `inbound` controls whether remote peers can negotiate the protocol on inbound substreams
+    /// and whether the protocol name is exposed to them via the identify protocol.
     pub fn register_protocol(
         &mut self,
         protocol: ProtocolName,
@@ -418,7 +420,7 @@ impl TransportManager {
         codec: ProtocolCodec,
         keep_alive_timeout: Duration,
         substream_keep_alive: SubstreamKeepAlive,
-        advertise: AdvertiseProtocol,
+        inbound: InboundProtocol,
     ) -> TransportService {
         assert!(!self.protocol_names.contains(&protocol));
 
@@ -445,7 +447,7 @@ impl TransportManager {
                 sender,
                 fallback_names.clone(),
                 substream_keep_alive,
-                advertise,
+                inbound,
             ),
         );
         self.protocol_names.insert(protocol);
@@ -1722,7 +1724,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
             SubstreamKeepAlive::Yes,
-            AdvertiseProtocol::Yes,
+            InboundProtocol::Accept,
         );
         manager.register_protocol(
             ProtocolName::from("/local/1"),
@@ -1730,7 +1732,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
             SubstreamKeepAlive::Yes,
-            AdvertiseProtocol::No,
+            InboundProtocol::Deny,
         );
 
         assert_eq!(
@@ -1751,7 +1753,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
             SubstreamKeepAlive::Yes,
-            AdvertiseProtocol::Yes,
+            InboundProtocol::Accept,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/1"),
@@ -1759,7 +1761,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
             SubstreamKeepAlive::Yes,
-            AdvertiseProtocol::Yes,
+            InboundProtocol::Accept,
         );
     }
 
@@ -1775,7 +1777,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
             SubstreamKeepAlive::Yes,
-            AdvertiseProtocol::Yes,
+            InboundProtocol::Accept,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/2"),
@@ -1786,7 +1788,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
             SubstreamKeepAlive::Yes,
-            AdvertiseProtocol::Yes,
+            InboundProtocol::Accept,
         );
     }
 
@@ -1805,7 +1807,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
             SubstreamKeepAlive::Yes,
-            AdvertiseProtocol::Yes,
+            InboundProtocol::Accept,
         );
         manager.register_protocol(
             ProtocolName::from("/notif/2"),
@@ -1816,7 +1818,7 @@ mod tests {
             ProtocolCodec::UnsignedVarint(None),
             KEEP_ALIVE_TIMEOUT,
             SubstreamKeepAlive::Yes,
-            AdvertiseProtocol::Yes,
+            InboundProtocol::Accept,
         );
     }
 

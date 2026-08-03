@@ -732,7 +732,7 @@ mod tests {
         executor::DefaultExecutor,
         protocol::SubstreamKeepAlive,
         transport::manager::{
-            AdvertiseProtocol, ProtocolContext, SupportedTransport, TransportManagerBuilder,
+            InboundProtocol, ProtocolContext, SupportedTransport, TransportManagerBuilder,
         },
         types::protocol::ProtocolName,
         BandwidthSink, PeerId,
@@ -767,7 +767,7 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
-                    advertise: AdvertiseProtocol::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         };
@@ -800,7 +800,7 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
-                    advertise: AdvertiseProtocol::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         };
@@ -865,7 +865,7 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
-                    advertise: AdvertiseProtocol::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         };
@@ -898,7 +898,7 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
-                    advertise: AdvertiseProtocol::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         };
@@ -958,7 +958,7 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
-                    advertise: AdvertiseProtocol::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         };
@@ -998,7 +998,7 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
-                    advertise: AdvertiseProtocol::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         };
