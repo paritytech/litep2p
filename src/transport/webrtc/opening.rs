@@ -194,26 +194,26 @@ impl OpeningWebRtcConnection {
     }
 
     /// Get remote fingerprint to bytes.
-    fn remote_fingerprint(&mut self) -> Vec<u8> {
+    fn remote_fingerprint(&mut self) -> crate::Result<Vec<u8>> {
         let fingerprint = self
             .rtc
             .direct_api()
             .remote_dtls_fingerprint()
-            .expect("fingerprint to exist")
+            .ok_or(Error::Other("fingerprint expected to exist".to_string()))?
             .clone();
         Self::fingerprint_to_bytes(&fingerprint)
     }
 
     /// Get local fingerprint as bytes.
-    fn local_fingerprint(&mut self) -> Vec<u8> {
+    fn local_fingerprint(&mut self) -> crate::Result<Vec<u8>> {
         Self::fingerprint_to_bytes(self.rtc.direct_api().local_dtls_fingerprint())
     }
 
     /// Convert `Fingerprint` to bytes.
-    fn fingerprint_to_bytes(fingerprint: &Fingerprint) -> Vec<u8> {
+    fn fingerprint_to_bytes(fingerprint: &Fingerprint) -> crate::Result<Vec<u8>> {
         multihash::Multihash::<64>::wrap(Code::Sha2_256.into(), &fingerprint.bytes)
-            .expect("fingerprint's len to be 32 bytes")
-            .to_bytes()
+            .map_err(|_| Error::Other("fingerprint's len expected to be 32 bytes".to_string()))
+            .map(|fingerprint| fingerprint.to_bytes())
     }
 
     /// Once a Noise data channel has been opened, even though the light client was the dialer,
@@ -322,7 +322,20 @@ impl OpeningWebRtcConnection {
             return Err(Error::InvalidState);
         };
 
-        let message = WebRtcMessage::decode(&body)?.payload.ok_or(Error::InvalidData)?;
+        // Decode errors are not recoverable.
+        let WebRtcMessage {
+            payload: Some(message),
+            flag: None,
+        } = WebRtcMessage::decode(&body)?
+        else {
+            tracing::debug!(
+                target: LOG_TARGET,
+                connection_id = ?self.connection_id,
+                peer = ?self.peer_address,
+                "non-payload frame during noise handshake, closing channel"
+            );
+            return Err(Error::ConnectionClosed);
+        };
         let remote_peer_id = context.get_remote_peer_id(&message)?;
 
         tracing::trace!(
@@ -339,13 +352,13 @@ impl OpeningWebRtcConnection {
             .rtc
             .direct_api()
             .remote_dtls_fingerprint()
-            .expect("fingerprint to exist")
+            .ok_or(Error::InvalidState)?
             .clone()
             .bytes;
 
         let certificate =
             multihash::Multihash::<64>::wrap(Code::Sha2_256.into(), &remote_fingerprint)
-                .expect("fingerprint's len to be 32 bytes");
+                .map_err(|_| Error::InvalidCertificate)?;
 
         let address = Multiaddr::empty()
             .with(Protocol::from(self.peer_address.ip()))
@@ -500,6 +513,15 @@ impl OpeningWebRtcConnection {
                                 ?channel_id,
                                 "ignoring opened channel",
                             );
+                            // Do not silently ignore channels opened during the noise handshake.
+                            // Close them instead.
+                            //
+                            // As stated in the spec under the Connection-Security section:
+                            // Implementations MAY open streams before completion of the Noise
+                            // handshake. Applications MUST take special
+                            // care what application data they send,
+                            // since at this point the peer is not yet authenticated.
+                            self.rtc.direct_api().close_data_channel(channel_id);
                             continue;
                         }
 
@@ -559,8 +581,33 @@ impl OpeningWebRtcConnection {
                     }
                     Event::Connected => match std::mem::replace(&mut self.state, State::Poisoned) {
                         State::Closed => {
-                            let remote_fingerprint = self.remote_fingerprint();
-                            let local_fingerprint = self.local_fingerprint();
+                            let remote_fingerprint = match self.remote_fingerprint() {
+                                Ok(fingerprint) => fingerprint,
+                                Err(err) => {
+                                    tracing::debug!(
+                                        target: LOG_TARGET,
+                                        connection_id = ?self.connection_id,
+                                        peer = ?self.peer_address,
+                                        ?err,
+                                        "Failed creating remote peer fingerprint"
+                                    );
+                                    return WebRtcEvent::ConnectionClosed;
+                                }
+                            };
+
+                            let local_fingerprint = match self.local_fingerprint() {
+                                Ok(fingerprint) => fingerprint,
+                                Err(err) => {
+                                    tracing::debug!(
+                                        target: LOG_TARGET,
+                                        connection_id = ?self.connection_id,
+                                        peer = ?self.peer_address,
+                                        ?err,
+                                        "Failed creating local peer fingerprint"
+                                    );
+                                    return WebRtcEvent::ConnectionClosed;
+                                }
+                            };
 
                             let context = match NoiseContext::with_prologue(
                                 &self.id_keypair,

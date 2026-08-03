@@ -882,7 +882,7 @@ impl QueryEngine {
 
     /// Get next action from the [`QueryEngine`].
     pub fn next_action(&mut self) -> Option<QueryAction> {
-        for (_, state) in self.queries.iter_mut() {
+        for state in self.queries.values_mut() {
             let action = match state {
                 QueryType::FindNode { context } => context.next_action(),
                 QueryType::PutRecord { context, .. } => context.next_action(),

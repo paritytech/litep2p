@@ -42,8 +42,6 @@ use multihash_codetable::MultihashDigest;
 use str0m::{
     channel::{ChannelConfig, ChannelId},
     config::DtlsCert,
-    crypto::CryptoError,
-    error::DtlsError,
     ice::IceCreds,
     net::{DatagramRecv, Protocol as Str0mProtocol, Receive},
     Candidate, Input, Rtc, RtcError,
@@ -65,6 +63,7 @@ use std::{
 
 pub(crate) use substream::Substream;
 
+mod certificate;
 mod connection;
 mod listener;
 mod opening;
@@ -72,6 +71,7 @@ mod substream;
 mod util;
 
 pub mod config;
+pub use certificate::DtlsCertificate;
 
 pub(super) mod schema {
     pub(super) mod webrtc {
@@ -89,6 +89,9 @@ const LOG_TARGET: &str = "litep2p::webrtc";
 /// Hardcoded remote fingerprint.
 const REMOTE_FINGERPRINT: &str =
     "sha-256 FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF";
+
+/// Max Capacity of a WebRtc buffer used to receive a single inbound UDP datagram.
+const WEBRTC_BUFFER_SIZE: usize = 16 * 1024;
 
 /// Connection context.
 struct ConnectionContext {
@@ -165,6 +168,9 @@ pub(crate) struct WebRtcTransport {
 
     /// Pending events.
     pending_events: VecDeque<TransportEvent>,
+
+    /// Read buffer.
+    read_buffer: Vec<u8>,
 }
 
 impl WebRtcTransport {
@@ -187,8 +193,11 @@ impl WebRtcTransport {
         rtc.add_remote_candidate(
             Candidate::host(source, Str0mProtocol::Udp).map_err(RtcError::Ice)?,
         );
-        rtc.direct_api()
-            .set_remote_fingerprint(REMOTE_FINGERPRINT.parse().expect("parse() to succeed"));
+        rtc.direct_api().set_remote_fingerprint(
+            REMOTE_FINGERPRINT
+                .parse()
+                .map_err(|_| Error::Other("remote fingerprint generation failed".to_string()))?,
+        );
         rtc.direct_api().set_remote_ice_credentials(IceCreds {
             ufrag: ufrag.to_owned(),
             pass: pass.to_owned(),
@@ -432,19 +441,16 @@ impl TransportBuilder for WebRtcTransport {
             "start webrtc transport",
         );
 
-        // OpenSsl as crypto provider is specified through the 'openssl' str0m feature flag.
-        let crypto_provider = str0m::crypto::from_feature_flags();
-        let dtls_cert = crypto_provider.dtls_provider.generate_certificate().ok_or(
-            crate::error::Error::WebRtc(RtcError::Dtls(DtlsError::CryptoError(
-                CryptoError::Other("OpenSsl failed to generate certificate".to_string()),
-            ))),
-        )?;
+        let dtls_cert: DtlsCert = match config.certificate {
+            Some(certificate) => certificate.into(),
+            None => {
+                tracing::debug!(target: LOG_TARGET, "generating temporary WebRtc certificate");
+                DtlsCertificate::new()?.into()
+            }
+        };
 
-        let fingerprint = crypto_provider.sha256_provider.sha256(&dtls_cert.certificate);
-        let cert_hash = multihash_codetable::Code::Sha2_256.wrap(&fingerprint).map_err(|err| {
-            tracing::warn!(target: LOG_TARGET, ?err, "failed to wrap WebRTC certificate");
-            Error::Other("could not compute WebRTC certificate".to_string())
-        })?;
+        // OpenSsl is used as crypto backend to generate the certificate, it uses sha256.
+        let cert_hash = multihash_codetable::Code::Sha2_256.digest(&dtls_cert.certificate);
 
         let (listener, listen_multi_addresses) =
             WebRtcListener::new(config.listen_addresses, cert_hash)?;
@@ -461,6 +467,7 @@ impl TransportBuilder for WebRtcTransport {
                 timeouts: HashMap::new(),
                 pending_events: VecDeque::new(),
                 datagram_buffer_size: config.datagram_buffer_size,
+                read_buffer: vec![0; WEBRTC_BUFFER_SIZE],
             },
             listen_multi_addresses,
         ))
@@ -659,9 +666,7 @@ impl Stream for WebRtcTransport {
         }
 
         loop {
-            let mut buf = vec![0u8; 16384];
-            let mut read_buf = ReadBuf::new(&mut buf);
-
+            let mut read_buf = ReadBuf::new(&mut this.read_buffer);
             let addrs = match this.listener.poll_recv_from(cx, &mut read_buf) {
                 // No error is expected to be returned by the listener.
                 Poll::Ready(Err(error)) => {
@@ -676,9 +681,7 @@ impl Stream for WebRtcTransport {
                 Poll::Ready(Ok(addrs)) => addrs,
             };
 
-            let nread = read_buf.filled().len();
-            buf.truncate(nread);
-
+            let buf = read_buf.filled().to_vec();
             match this.on_socket_input(addrs, buf) {
                 Ok(false) => {}
                 Ok(true) => loop {

@@ -21,7 +21,7 @@
 //! [`/ipfs/bitswap/1.2.0`](https://github.com/ipfs/specs/blob/main/BITSWAP.md) implementation.
 
 use crate::{
-    error::{Error, ImmediateDialError},
+    error::{Error, ImmediateDialError, SubstreamError},
     protocol::{Direction, TransportEvent, TransportService},
     substream::Substream,
     types::{
@@ -144,6 +144,11 @@ pub(crate) struct Bitswap {
     /// Pending outbound actions.
     pending_outbound: HashMap<PeerId, Vec<SubstreamAction>>,
 
+    /// Outbound substream opens in flight, mapped back to their target peer so that
+    /// [`TransportEvent::SubstreamOpenFailure`] (which only carries a [`SubstreamId`])
+    /// can be associated with the queued actions in [`Self::pending_outbound`].
+    pending_substreams: HashMap<SubstreamId, PeerId>,
+
     /// Inbound substreams.
     inbound: StreamMap<PeerId, Substream>,
 
@@ -162,6 +167,7 @@ impl Bitswap {
             cmd_rx: config.cmd_rx,
             event_tx: config.event_tx,
             pending_outbound: HashMap::new(),
+            pending_substreams: HashMap::new(),
             inbound: StreamMap::new(),
             outbound: HashMap::new(),
             pending_dials: HashSet::new(),
@@ -305,6 +311,8 @@ impl Bitswap {
         substream_id: SubstreamId,
         mut substream: Substream,
     ) {
+        self.pending_substreams.remove(&substream_id);
+
         let Some(actions) = self.pending_outbound.remove(&peer) else {
             tracing::warn!(target: LOG_TARGET, ?peer, ?substream_id, "pending outbound entry doesn't exist");
             return;
@@ -334,6 +342,58 @@ impl Bitswap {
         self.outbound.insert(peer, substream);
     }
 
+    /// Handle connection closed event.
+    ///
+    /// Drop all peer-scoped outbound state so the next request/response can open a fresh
+    /// substream instead of waiting behind state tied to a closed connection.
+    fn on_connection_closed(&mut self, peer: PeerId) {
+        if self.outbound.remove(&peer).is_some() {
+            tracing::debug!(target: LOG_TARGET, ?peer, "dropping outbound substream on connection close");
+        }
+        self.pending_outbound.remove(&peer);
+        self.pending_dials.remove(&peer);
+        self.pending_substreams.retain(|_, pending_peer| pending_peer != &peer);
+        self.inbound.remove(&peer);
+    }
+
+    /// Dial to remote peer failed.
+    fn on_dial_failure(&mut self, peer: PeerId) {
+        if !self.pending_dials.remove(&peer) {
+            return;
+        }
+        let dropped = self.pending_outbound.remove(&peer).map(|actions| actions.len()).unwrap_or(0);
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            dropped_actions = dropped,
+            "dial failed, dropping queued bitswap actions",
+        );
+    }
+
+    /// Failed to open an outbound substream that we previously requested.
+    fn on_substream_open_failure(&mut self, substream_id: SubstreamId, error: SubstreamError) {
+        let Some(peer) = self.pending_substreams.remove(&substream_id) else {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?substream_id,
+                ?error,
+                "outbound substream open failed for unknown substream id",
+            );
+            return;
+        };
+
+        let dropped = self.pending_outbound.remove(&peer).map(|actions| actions.len()).unwrap_or(0);
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            ?substream_id,
+            ?error,
+            dropped_actions = dropped,
+            "outbound substream open failed, dropping queued bitswap actions",
+        );
+    }
+
     /// Handle connection established event.
     fn on_connection_established(&mut self, peer: PeerId) {
         // If we have pending actions for this peer, open a substream.
@@ -344,16 +404,21 @@ impl Bitswap {
                 "open substream after connection established",
             );
 
-            if let Err(error) = self.service.open_substream(peer) {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?error,
-                    "failed to open substream after connection established",
-                );
-                // Drop all pending actions; they are not going to be handled anyway, and we need
-                // the entry to be empty to properly open subsequent substreams.
-                self.pending_outbound.remove(&peer);
+            match self.service.open_substream(peer) {
+                Ok(substream_id) => {
+                    self.pending_substreams.insert(substream_id, peer);
+                }
+                Err(error) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?error,
+                        "failed to open substream after connection established",
+                    );
+                    // Drop all pending actions; they are not going to be handled anyway, and we
+                    // need the entry to be empty to properly open subsequent substreams.
+                    self.pending_outbound.remove(&peer);
+                }
             }
         }
     }
@@ -362,33 +427,48 @@ impl Bitswap {
     fn open_substream_or_dial(&mut self, peer: PeerId) {
         tracing::trace!(target: LOG_TARGET, ?peer, "open substream");
 
-        if let Err(error) = self.service.open_substream(peer) {
-            tracing::trace!(
-                target: LOG_TARGET,
-                ?peer,
-                ?error,
-                "failed to open substream, dialing peer",
-            );
+        match self.service.open_substream(peer) {
+            Ok(substream_id) => {
+                self.pending_substreams.insert(substream_id, peer);
+            }
+            Err(error) => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?error,
+                    "failed to open substream, dialing peer",
+                );
 
-            // Failed to open substream, try to dial the peer.
-            match self.service.dial(&peer) {
-                Ok(()) => {
-                    // Store the peer to open a substream once it is connected.
-                    self.pending_dials.insert(peer);
-                }
-                Err(ImmediateDialError::AlreadyConnected) => {
-                    // By the time we tried to dial peer, it got connected.
-                    if let Err(error) = self.service.open_substream(peer) {
-                        tracing::trace!(
-                            target: LOG_TARGET,
-                            ?peer,
-                            ?error,
-                            "failed to open substream for a second time",
-                        );
+                // Failed to open substream, try to dial the peer.
+                match self.service.dial(&peer) {
+                    Ok(()) => {
+                        // Store the peer to open a substream once it is connected.
+                        self.pending_dials.insert(peer);
                     }
-                }
-                Err(error) => {
-                    tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to dial peer");
+                    Err(ImmediateDialError::AlreadyConnected) => {
+                        // By the time we tried to dial peer, it got connected.
+                        match self.service.open_substream(peer) {
+                            Ok(substream_id) => {
+                                self.pending_substreams.insert(substream_id, peer);
+                            }
+                            Err(error) => {
+                                tracing::trace!(
+                                    target: LOG_TARGET,
+                                    ?peer,
+                                    ?error,
+                                    "failed to open substream for a second time",
+                                );
+                                // No event will ever arrive for this attempt; drop the queued
+                                // actions so the next response triggers a fresh open.
+                                self.pending_outbound.remove(&peer);
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        tracing::debug!(target: LOG_TARGET, ?peer, ?error, "failed to dial peer");
+                        // Same rationale as above: no event will ever arrive.
+                        self.pending_outbound.remove(&peer);
+                    }
                 }
             }
         }
@@ -470,8 +550,16 @@ impl Bitswap {
                         Direction::Outbound(substream_id) =>
                             self.on_outbound_substream(peer, substream_id, substream).await,
                     },
+                    Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
+                        self.on_substream_open_failure(substream, error);
+                    }
+                    Some(TransportEvent::ConnectionClosed { peer }) => {
+                        self.on_connection_closed(peer);
+                    }
+                    Some(TransportEvent::DialFailure { peer, .. }) => {
+                        self.on_dial_failure(peer);
+                    }
                     None => return,
-                    event => tracing::trace!(target: LOG_TARGET, ?event, "unhandled event"),
                 },
                 command = self.cmd_rx.recv() => match command {
                     Some(BitswapCommand::SendRequest { peer, cids }) => {
@@ -698,7 +786,19 @@ fn extract_next_batch<'a>(
 mod tests {
     use cid::multihash::Multihash;
 
+    use crate::{
+        addresses::PublicAddresses,
+        protocol::{ProtocolName, SubstreamKeepAlive},
+        transport::{
+            manager::{handle::InnerTransportManagerCommand, TransportManagerHandle},
+            KEEP_ALIVE_TIMEOUT,
+        },
+    };
+
     use super::*;
+    use parking_lot::RwLock;
+    use std::sync::{atomic::AtomicUsize, Arc};
+    use tokio::sync::mpsc;
 
     fn cid(block: &[u8]) -> Cid {
         let codec = 0x55;
@@ -707,6 +807,90 @@ mod tests {
             Multihash::wrap(multihash.code(), multihash.digest()).expect("to be valid multihash");
 
         Cid::new_v1(codec, multihash)
+    }
+
+    fn bitswap() -> Bitswap {
+        let local_peer = PeerId::random();
+        let (cmd_tx, _cmd_rx) = mpsc::channel::<InnerTransportManagerCommand>(64);
+
+        let handle = TransportManagerHandle::new(
+            local_peer,
+            Arc::new(RwLock::new(HashMap::new())),
+            cmd_tx,
+            HashSet::new(),
+            Default::default(),
+            PublicAddresses::new(local_peer),
+        );
+
+        let (service, _) = TransportService::new(
+            local_peer,
+            ProtocolName::from(config::PROTOCOL_NAME),
+            Vec::new(),
+            Arc::new(AtomicUsize::new(0usize)),
+            handle,
+            KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::No,
+        );
+        let (config, _) = Config::new();
+
+        Bitswap::new(service, config)
+    }
+
+    fn pending_action() -> SubstreamAction {
+        SubstreamAction::SendRequest(vec![(cid(b"test"), WantType::Have)])
+    }
+
+    #[test]
+    fn substream_open_failure_clears_pending_actions() {
+        let peer = PeerId::random();
+        let substream = SubstreamId::from(0usize);
+        let mut bitswap = bitswap();
+
+        bitswap.pending_outbound.insert(peer, vec![pending_action()]);
+        bitswap.pending_substreams.insert(substream, peer);
+
+        bitswap.on_substream_open_failure(substream, SubstreamError::ConnectionClosed);
+
+        assert!(!bitswap.pending_outbound.contains_key(&peer));
+        assert!(!bitswap.pending_substreams.contains_key(&substream));
+    }
+
+    #[test]
+    fn dial_failure_clears_pending_actions() {
+        let peer = PeerId::random();
+        let mut bitswap = bitswap();
+
+        bitswap.pending_outbound.insert(peer, vec![pending_action()]);
+        bitswap.pending_dials.insert(peer);
+
+        bitswap.on_dial_failure(peer);
+
+        assert!(!bitswap.pending_outbound.contains_key(&peer));
+        assert!(!bitswap.pending_dials.contains(&peer));
+    }
+
+    #[test]
+    fn connection_closed_clears_peer_scoped_state() {
+        let peer = PeerId::random();
+        let other = PeerId::random();
+        let substream = SubstreamId::from(0usize);
+        let other_substream = SubstreamId::from(1usize);
+        let mut bitswap = bitswap();
+
+        bitswap.pending_outbound.insert(peer, vec![pending_action()]);
+        bitswap.pending_dials.insert(peer);
+        bitswap.pending_substreams.insert(substream, peer);
+        bitswap.pending_substreams.insert(other_substream, other);
+
+        bitswap.on_connection_closed(peer);
+
+        assert!(!bitswap.pending_outbound.contains_key(&peer));
+        assert!(!bitswap.pending_dials.contains(&peer));
+        assert!(!bitswap.pending_substreams.contains_key(&substream));
+        assert_eq!(
+            bitswap.pending_substreams.get(&other_substream),
+            Some(&other)
+        );
     }
 
     #[test]
