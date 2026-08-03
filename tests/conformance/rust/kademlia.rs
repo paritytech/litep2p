@@ -719,3 +719,65 @@ async fn litep2p_in_client_mode_queries_libp2p_server() {
         }
     }
 }
+
+/// Drive `libp2p` until it marks `peer` as a connected DHT server in its routing table, giving
+/// up after ten seconds.
+async fn wait_until_marked_as_dht_server(libp2p: &mut Swarm<Behaviour>, peer: PeerId) -> bool {
+    let deadline = tokio::time::sleep(Duration::from_secs(10));
+    tokio::pin!(deadline);
+
+    let mut sampler = tokio::time::interval(Duration::from_millis(100));
+
+    loop {
+        tokio::select! {
+            _ = libp2p.select_next_some() => {}
+            _ = sampler.tick() => {
+                let connected = libp2p.behaviour_mut().kad.kbuckets().any(|bucket| {
+                    bucket.iter().any(|entry| {
+                        entry.node.key.preimage() == &peer
+                            && entry.status == kad::NodeStatus::Connected
+                    })
+                });
+
+                if connected {
+                    return true;
+                }
+            }
+            _ = &mut deadline => return false,
+        }
+    }
+}
+
+/// Verify that a `libp2p` node only considers litep2p part of the DHT if litep2p accepts inbound
+/// substreams for the Kademlia protocol.
+async fn marked_as_dht_server(mode: KademliaMode) -> bool {
+    let (mut litep2p, _kad_handle) = initialize_litep2p_with_mode(mode);
+    let peer = PeerId::from_bytes(&litep2p.local_peer_id().to_bytes()).unwrap();
+    let address = litep2p.listen_addresses().next().unwrap().to_string().parse().unwrap();
+
+    tokio::spawn(async move { while litep2p.next_event().await.is_some() {} });
+
+    let mut libp2p = initialize_libp2p();
+    libp2p.behaviour_mut().kad.add_address(&peer, address);
+    libp2p.behaviour_mut().kad.get_closest_peers(PeerId::random());
+
+    wait_until_marked_as_dht_server(&mut libp2p, peer).await
+}
+
+#[tokio::test]
+async fn server_mode_accepts_inbound_substreams() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    assert!(marked_as_dht_server(KademliaMode::Server).await);
+}
+
+#[tokio::test]
+async fn client_mode_denies_inbound_substreams() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    assert!(!marked_as_dht_server(KademliaMode::Client).await);
+}
