@@ -491,7 +491,7 @@ impl QueryEngine {
         &mut self,
         query_id: QueryId,
         key: RecordKey,
-        peers: Vec<PeerId>,
+        peers: Vec<KademliaPeer>,
         quorum: Quorum,
     ) {
         tracing::debug!(
@@ -514,7 +514,7 @@ impl QueryEngine {
         &mut self,
         query_id: QueryId,
         provided_key: RecordKey,
-        peers: Vec<PeerId>,
+        peers: Vec<KademliaPeer>,
         quorum: Quorum,
     ) {
         tracing::debug!(
@@ -626,10 +626,7 @@ impl QueryEngine {
                 }
             },
             Some(QueryType::PutRecordToFoundNodes { context }) => match message {
-                KademliaMessage::PutValue { .. } => {
-                    context.register_response(peer);
-                    None
-                }
+                KademliaMessage::PutValue { .. } => context.register_response(peer),
                 message => {
                     tracing::debug!(
                         target: LOG_TARGET,
@@ -669,6 +666,9 @@ impl QueryEngine {
                 }
             },
             Some(QueryType::AddProviderToFoundNodes { context, .. }) => match message {
+                // TODO: the spec defines no response to `ADD_PROVIDER`, so to learn that the peer
+                // operates in server mode we should track the substream opening & message sending
+                // success instead.
                 KademliaMessage::AddProvider { .. } => {
                     context.register_response(peer);
                     None
@@ -1202,7 +1202,7 @@ mod tests {
         engine.start_put_record_to_found_nodes_requests_tracking(
             original_query_id,
             record_key.clone(),
-            peers.iter().map(|p| p.peer).collect(),
+            peers.clone(),
             Quorum::All,
         );
 
@@ -1335,7 +1335,7 @@ mod tests {
         engine.start_put_record_to_found_nodes_requests_tracking(
             original_query_id,
             record_key.clone(),
-            peers.iter().map(|p| p.peer).collect(),
+            peers.clone(),
             Quorum::All,
         );
 
@@ -1534,7 +1534,7 @@ mod tests {
         engine.start_put_record_to_found_nodes_requests_tracking(
             original_query_id,
             record_key.clone(),
-            peers.iter().map(|p| p.peer).collect(),
+            peers.clone(),
             Quorum::One,
         );
 
@@ -1741,7 +1741,7 @@ mod tests {
         engine.start_add_provider_to_found_nodes_requests_tracking(
             original_query_id,
             original_provided_key.clone(),
-            peers.iter().map(|p| p.peer).collect(),
+            peers.clone(),
             Quorum::All,
         );
 
@@ -1880,7 +1880,7 @@ mod tests {
         engine.start_add_provider_to_found_nodes_requests_tracking(
             add_query_id,
             original_provided_key.clone(),
-            peers.iter().map(|p| p.peer).collect(),
+            peers.clone(),
             Quorum::All,
         );
 
@@ -2067,7 +2067,7 @@ mod tests {
         engine.start_add_provider_to_found_nodes_requests_tracking(
             add_query_id,
             original_provided_key.clone(),
-            peers.iter().map(|p| p.peer).collect(),
+            peers.clone(),
             Quorum::One,
         );
 

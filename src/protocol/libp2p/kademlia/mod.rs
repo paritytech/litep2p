@@ -532,11 +532,14 @@ impl Kademlia {
                         "handle `PUT_VALUE` response",
                     );
 
-                    let _ = self.engine.register_response(
+                    // update routing table with the proven responder
+                    if let Some(proven) = self.engine.register_response(
                         query_id,
                         peer,
                         KademliaMessage::PutValue { record },
-                    );
+                    ) {
+                        self.insert_proven_server(&proven).await;
+                    }
                     substream.close().await;
                 }
                 None => {
@@ -924,12 +927,8 @@ impl Kademlia {
                     }
                 }
 
-                self.engine.start_put_record_to_found_nodes_requests_tracking(
-                    query,
-                    key,
-                    peers.into_iter().map(|peer| peer.peer).collect(),
-                    quorum,
-                );
+                self.engine
+                    .start_put_record_to_found_nodes_requests_tracking(query, key, peers, quorum);
 
                 Ok(())
             }
@@ -980,7 +979,7 @@ impl Kademlia {
                 self.engine.start_add_provider_to_found_nodes_requests_tracking(
                     query,
                     provided_key,
-                    peers.into_iter().map(|peer| peer.peer).collect(),
+                    peers,
                     quorum,
                 );
 
@@ -1775,6 +1774,59 @@ mod tests {
             event => panic!("unexpected event: {event:?}"),
         }
         assert!(context.event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn put_value_responder_inserted_into_routing_table() {
+        let (mut kademlia, mut context, _manager) = make_kademlia();
+
+        let responder_peer = PeerId::random();
+        let responder = KademliaPeer::new(
+            responder_peer,
+            vec![Multiaddr::from_str("/dns/responder.com/tcp/30333")
+                .unwrap()
+                .with(Protocol::P2p(responder_peer.into()))],
+            ConnectionType::NotConnected,
+        );
+
+        let query_id = QueryId(0);
+        let record = Record::new(RecordKey::from(vec![1, 2, 3]), vec![4, 5, 6]);
+        kademlia.engine.start_put_record_to_found_nodes_requests_tracking(
+            query_id,
+            record.key.clone(),
+            vec![responder],
+            Quorum::One,
+        );
+
+        // simulate handling the `PUT_VALUE` response of the responder
+        let mut substream = MockSubstream::new();
+        substream.expect_poll_close().times(1).return_once(|_| Poll::Ready(Ok(())));
+        let message = KademliaMessage::put_value_response(record.key.clone(), record.value.clone());
+        kademlia
+            .on_message_received(
+                responder_peer,
+                Some(query_id),
+                BytesMut::from(&message[..]),
+                Substream::new_mock(
+                    responder_peer,
+                    SubstreamId::from(0usize),
+                    Box::new(substream),
+                ),
+            )
+            .await
+            .unwrap();
+
+        // answering the `PUT_VALUE` proves the responder operates in server mode
+        assert!(std::matches!(
+            kademlia.routing_table.entry(Key::from(responder_peer)),
+            KBucketEntry::Occupied(_)
+        ));
+        match context.event_rx.try_recv() {
+            Ok(KademliaEvent::RoutingTableUpdate { peers }) => {
+                assert_eq!(peers, vec![responder_peer]);
+            }
+            event => panic!("unexpected event: {event:?}"),
+        }
     }
 
     #[tokio::test]
