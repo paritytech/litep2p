@@ -34,14 +34,19 @@ use crate::{
     config::Litep2pConfig,
     error::DialError,
     protocol::{
-        libp2p::{bitswap::Bitswap, identify::Identify, kademlia::Kademlia, ping::Ping},
+        libp2p::{
+            bitswap::Bitswap,
+            identify::Identify,
+            kademlia::{Kademlia, KademliaMode},
+            ping::Ping,
+        },
         mdns::Mdns,
         notification::NotificationProtocol,
         request_response::RequestResponseProtocol,
         SubstreamKeepAlive,
     },
     transport::{
-        manager::{SupportedTransport, TransportManager, TransportManagerBuilder},
+        manager::{InboundProtocol, SupportedTransport, TransportManager, TransportManagerBuilder},
         tcp::TcpTransport,
         TransportBuilder, TransportEvent,
     },
@@ -200,6 +205,7 @@ impl Litep2p {
                 config.codec,
                 litep2p_config.keep_alive_timeout,
                 SubstreamKeepAlive::Yes,
+                InboundProtocol::Accept,
             );
             let executor = Arc::clone(&litep2p_config.executor);
             litep2p_config.executor.run(Box::pin(async move {
@@ -221,6 +227,7 @@ impl Litep2p {
                 config.codec,
                 litep2p_config.keep_alive_timeout,
                 SubstreamKeepAlive::Yes,
+                InboundProtocol::Accept,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 RequestResponseProtocol::new(service, config).run().await
@@ -238,6 +245,7 @@ impl Litep2p {
                 litep2p_config.keep_alive_timeout,
                 // TODO: make configurable by user.
                 SubstreamKeepAlive::Yes,
+                InboundProtocol::Accept,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 let _ = protocol.run(service).await;
@@ -258,6 +266,7 @@ impl Litep2p {
                 ping_config.codec,
                 litep2p_config.keep_alive_timeout,
                 SubstreamKeepAlive::No,
+                InboundProtocol::Accept,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 Ping::new(service, ping_config).run().await
@@ -269,6 +278,7 @@ impl Litep2p {
             tracing::debug!(
                 target: LOG_TARGET,
                 protocol_names = ?kademlia_config.protocol_names,
+                mode = ?kademlia_config.mode,
                 "enable ipfs kademlia protocol",
             );
 
@@ -276,12 +286,20 @@ impl Litep2p {
                 kademlia_config.protocol_names.first().expect("protocol name to exist");
             let fallback_names = kademlia_config.protocol_names.iter().skip(1).cloned().collect();
 
+            // client-mode instances don't answer inbound requests, so their protocol names are
+            // neither advertised nor negotiated on substreams opened by remote peers
+            let inbound = match kademlia_config.mode {
+                KademliaMode::Client => InboundProtocol::Deny,
+                KademliaMode::Server => InboundProtocol::Accept,
+            };
+
             let service = transport_manager.register_protocol(
                 main_protocol.clone(),
                 fallback_names,
                 kademlia_config.codec,
                 litep2p_config.keep_alive_timeout,
                 SubstreamKeepAlive::Yes,
+                inbound,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 let _ = Kademlia::new(service, kademlia_config).run().await;
@@ -304,6 +322,7 @@ impl Litep2p {
                     identify_config.codec,
                     litep2p_config.keep_alive_timeout,
                     SubstreamKeepAlive::No,
+                    InboundProtocol::Accept,
                 );
                 identify_config.public = Some(litep2p_config.keypair.public().into());
 
@@ -325,6 +344,7 @@ impl Litep2p {
                 bitswap_config.codec,
                 litep2p_config.keep_alive_timeout,
                 SubstreamKeepAlive::Yes,
+                InboundProtocol::Accept,
             );
             litep2p_config.executor.run(Box::pin(async move {
                 Bitswap::new(service, bitswap_config).run().await
@@ -410,9 +430,10 @@ impl Litep2p {
             }));
         }
 
-        // if identify was enabled, give it the enabled protocols and listen addresses and start it
+        // if identify was enabled, give it the advertised protocols and listen addresses and
+        // start it
         if let Some((service, mut identify_config)) = identify_info.take() {
-            identify_config.protocols = transport_manager.protocols().cloned().collect();
+            identify_config.protocols = transport_manager.advertised_protocols().cloned().collect();
             let identify = Identify::new(service, identify_config);
 
             litep2p_config.executor.run(Box::pin(async move {

@@ -112,6 +112,12 @@ impl QueryExecutor {
         }
     }
 
+    /// Check if the executor has no pending operations.
+    #[cfg(test)]
+    pub fn is_empty(&self) -> bool {
+        self.futures.is_empty()
+    }
+
     /// Send message to remote peer.
     pub fn send_message(
         &mut self,

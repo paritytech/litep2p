@@ -54,7 +54,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub use config::{Config, ConfigBuilder};
+pub use config::{Config, ConfigBuilder, KademliaMode};
 pub use handle::{
     IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle, Quorum,
     RoutingTableUpdateMode,
@@ -169,6 +169,9 @@ pub(crate) struct Kademlia {
     /// Routing table update mode.
     update_mode: RoutingTableUpdateMode,
 
+    /// Operating mode.
+    mode: KademliaMode,
+
     /// Incoming records validation mode.
     validation_mode: IncomingRecordValidationMode,
 
@@ -211,6 +214,7 @@ impl Kademlia {
             executor: QueryExecutor::new(),
             pending_substreams: HashMap::new(),
             update_mode: config.update_mode,
+            mode: config.mode,
             validation_mode: config.validation_mode,
             record_ttl: config.record_ttl,
             replication_factor: config.replication_factor,
@@ -415,6 +419,12 @@ impl Kademlia {
     async fn on_inbound_substream(&mut self, peer: PeerId, substream: Substream) {
         tracing::trace!(target: LOG_TARGET, ?peer, "inbound substream opened");
 
+        if let KademliaMode::Client = self.mode {
+            tracing::trace!(target: LOG_TARGET, ?peer, "ignoring inbound substream in client mode");
+            let _ = substream.close().await;
+            return;
+        }
+
         // Ensure peer entry exists to treat peer as [`ConnectionType::Connected`].
         // when inserting into the routing table.
         self.peers.entry(peer).or_default();
@@ -422,37 +432,41 @@ impl Kademlia {
         self.executor.read_message(peer, None, substream);
     }
 
-    /// Update routing table if the routing table update mode was set to automatic.
+    /// Register the addresses of the peers discovered in a query response.
     ///
-    /// Inform user about the potential routing table, allowing them to update it manually if
-    /// the mode was set to manual.
-    async fn update_routing_table(&mut self, peers: &[KademliaPeer]) {
-        let peers: Vec<_> =
-            peers.iter().filter(|peer| peer.peer != self.service.local_peer_id()).collect();
+    /// Discovered peers are not inserted into the routing table as they haven't proven
+    /// they operate in server mode; they remain usable as query candidates.
+    fn register_discovered_peers(&mut self, peers: &[KademliaPeer]) {
+        let local_peer_id = self.service.local_peer_id();
 
+        for info in peers.iter().filter(|peer| peer.peer != local_peer_id) {
+            self.service.add_known_address(&info.peer, info.addresses().into_iter());
+        }
+    }
+
+    /// Insert a peer that answered one of our queries, proving it operates in server mode,
+    /// into the routing table if the update mode is automatic.
+    async fn insert_proven_server(&mut self, proven: &KademliaPeer) {
         // inform user about the routing table update, regardless of what the routing table update
         // mode is
         let _ = self
             .event_tx
             .send(KademliaEvent::RoutingTableUpdate {
-                peers: peers.iter().map(|peer| peer.peer).collect::<Vec<PeerId>>(),
+                peers: vec![proven.peer],
             })
             .await;
 
-        for info in peers {
-            let addresses = info.addresses();
-            self.service.add_known_address(&info.peer, addresses.clone().into_iter());
-
-            if std::matches!(self.update_mode, RoutingTableUpdateMode::Automatic) {
-                self.routing_table.add_known_peer(
-                    info.peer,
-                    addresses,
-                    self.peers
-                        .get(&info.peer)
-                        .map_or(ConnectionType::NotConnected, |_| ConnectionType::Connected),
-                );
-            }
+        if !std::matches!(self.update_mode, RoutingTableUpdateMode::Automatic) {
+            return;
         }
+
+        self.routing_table.add_known_peer(
+            proven.peer,
+            proven.addresses(),
+            self.peers
+                .get(&proven.peer)
+                .map_or(ConnectionType::NotConnected, |_| ConnectionType::Connected),
+        );
     }
 
     /// Handle received message.
@@ -479,13 +493,16 @@ impl Kademlia {
                             "handle `FIND_NODE` response",
                         );
 
-                        // update routing table and inform user about the update
-                        self.update_routing_table(&peers).await;
-                        self.engine.register_response(
+                        // register the discovered peers and update routing table with the
+                        // proven responder
+                        self.register_discovered_peers(&peers);
+                        if let Some(proven) = self.engine.register_response(
                             query_id,
                             peer,
                             KademliaMessage::FindNode { target, peers },
-                        );
+                        ) {
+                            self.insert_proven_server(&proven).await;
+                        }
                         substream.close().await;
                     }
                     None => {
@@ -515,11 +532,14 @@ impl Kademlia {
                         "handle `PUT_VALUE` response",
                     );
 
-                    self.engine.register_response(
+                    // update routing table with the proven responder
+                    if let Some(proven) = self.engine.register_response(
                         query_id,
                         peer,
                         KademliaMessage::PutValue { record },
-                    );
+                    ) {
+                        self.insert_proven_server(&proven).await;
+                    }
                     substream.close().await;
                 }
                 None => {
@@ -559,14 +579,16 @@ impl Kademlia {
                             "handle `GET_VALUE` response",
                         );
 
-                        // update routing table and inform user about the update
-                        self.update_routing_table(&peers).await;
-
-                        self.engine.register_response(
+                        // register the discovered peers and update routing table with the
+                        // proven responder
+                        self.register_discovered_peers(&peers);
+                        if let Some(proven) = self.engine.register_response(
                             query_id,
                             peer,
                             KademliaMessage::GetRecord { key, record, peers },
-                        );
+                        ) {
+                            self.insert_proven_server(&proven).await;
+                        }
 
                         substream.close().await;
                     }
@@ -665,10 +687,10 @@ impl Kademlia {
                             "handle `GET_PROVIDERS` response",
                         );
 
-                        // update routing table and inform user about the update
-                        self.update_routing_table(&peers).await;
-
-                        self.engine.register_response(
+                        // register the discovered peers and update routing table with the
+                        // proven responder
+                        self.register_discovered_peers(&peers);
+                        if let Some(proven) = self.engine.register_response(
                             query_id,
                             peer,
                             KademliaMessage::GetProviders {
@@ -676,7 +698,9 @@ impl Kademlia {
                                 peers,
                                 providers,
                             },
-                        );
+                        ) {
+                            self.insert_proven_server(&proven).await;
+                        }
 
                         substream.close().await;
                     }
@@ -903,12 +927,8 @@ impl Kademlia {
                     }
                 }
 
-                self.engine.start_put_record_to_found_nodes_requests_tracking(
-                    query,
-                    key,
-                    peers.into_iter().map(|peer| peer.peer).collect(),
-                    quorum,
-                );
+                self.engine
+                    .start_put_record_to_found_nodes_requests_tracking(query, key, peers, quorum);
 
                 Ok(())
             }
@@ -959,7 +979,7 @@ impl Kademlia {
                 self.engine.start_add_provider_to_found_nodes_requests_tracking(
                     query,
                     provided_key,
-                    peers.into_iter().map(|peer| peer.peer).collect(),
+                    peers,
                     quorum,
                 );
 
@@ -1416,6 +1436,7 @@ mod tests {
     use super::*;
     use crate::{
         codec::ProtocolCodec,
+        mock::substream::MockSubstream,
         transport::{
             manager::{SubstreamKeepAlive, TransportManager, TransportManagerBuilder},
             KEEP_ALIVE_TIMEOUT,
@@ -1424,7 +1445,7 @@ mod tests {
         ConnectionId,
     };
     use multiaddr::Protocol;
-    use std::str::FromStr;
+    use std::{collections::VecDeque, str::FromStr, task::Poll};
     use tokio::sync::mpsc::channel;
 
     #[allow(unused)]
@@ -1434,6 +1455,10 @@ mod tests {
     }
 
     fn make_kademlia() -> (Kademlia, Context, TransportManager) {
+        make_kademlia_with_mode(KademliaMode::Server)
+    }
+
+    fn make_kademlia_with_mode(mode: KademliaMode) -> (Kademlia, Context, TransportManager) {
         let manager = TransportManagerBuilder::new().build();
 
         let peer = PeerId::random();
@@ -1456,6 +1481,7 @@ mod tests {
             codec: ProtocolCodec::UnsignedVarint(Some(70 * 1024)),
             replication_factor: 20usize,
             update_mode: RoutingTableUpdateMode::Automatic,
+            mode,
             validation_mode: IncomingRecordValidationMode::Automatic,
             record_ttl: Duration::from_secs(36 * 60 * 60),
             memory_store_config: Default::default(),
@@ -1643,5 +1669,184 @@ mod tests {
             }
             _ => panic!("Peer not found in routing table"),
         };
+    }
+
+    #[tokio::test]
+    async fn client_mode_ignores_inbound_substreams() {
+        let (mut kademlia, _context, _manager) = make_kademlia_with_mode(KademliaMode::Client);
+
+        let peer = PeerId::random();
+        let mut substream = MockSubstream::new();
+        substream.expect_poll_close().times(1).return_once(|_| Poll::Ready(Ok(())));
+        let substream = Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream));
+
+        kademlia.on_inbound_substream(peer, substream).await;
+
+        // the substream was closed without being scheduled for reading and the peer
+        // was not registered
+        assert!(kademlia.peers.is_empty());
+        assert!(kademlia.executor.is_empty());
+    }
+
+    #[tokio::test]
+    async fn server_mode_accepts_inbound_substreams() {
+        let (mut kademlia, _context, _manager) = make_kademlia();
+
+        let peer = PeerId::random();
+        let substream = Substream::new_mock(
+            peer,
+            SubstreamId::from(0usize),
+            Box::new(MockSubstream::new()),
+        );
+
+        kademlia.on_inbound_substream(peer, substream).await;
+
+        assert!(kademlia.peers.contains_key(&peer));
+        assert!(!kademlia.executor.is_empty());
+    }
+
+    #[tokio::test]
+    async fn responder_inserted_into_routing_table_discovered_peers_not() {
+        let (mut kademlia, mut context, _manager) = make_kademlia();
+
+        let responder_peer = PeerId::random();
+        let responder = KademliaPeer::new(
+            responder_peer,
+            vec![Multiaddr::from_str("/dns/responder.com/tcp/30333")
+                .unwrap()
+                .with(Protocol::P2p(responder_peer.into()))],
+            ConnectionType::NotConnected,
+        );
+
+        let discovered_peer = PeerId::random();
+        let discovered = KademliaPeer::new(
+            discovered_peer,
+            vec![Multiaddr::from_str("/dns/discovered.com/tcp/30333")
+                .unwrap()
+                .with(Protocol::P2p(discovered_peer.into()))],
+            ConnectionType::NotConnected,
+        );
+
+        let query_id = QueryId(0);
+        kademlia.engine.start_find_node(
+            query_id,
+            PeerId::random(),
+            VecDeque::from([responder.clone()]),
+        );
+
+        // move the responder to the engine's pending set
+        match kademlia.engine.next_action() {
+            Some(QueryAction::SendMessage { peer, .. }) => assert_eq!(peer, responder_peer),
+            action => panic!("unexpected action: {action:?}"),
+        }
+
+        // simulate handling a `FIND_NODE` response from the responder listing `discovered`
+        let peers = vec![discovered.clone()];
+        kademlia.register_discovered_peers(&peers);
+        let proven = kademlia
+            .engine
+            .register_response(
+                query_id,
+                responder_peer,
+                KademliaMessage::FindNode {
+                    target: Vec::new(),
+                    peers,
+                },
+            )
+            .expect("responder to be returned as proven server");
+        kademlia.insert_proven_server(&proven).await;
+
+        // only the responder was inserted into the routing table
+        assert!(std::matches!(
+            kademlia.routing_table.entry(Key::from(responder_peer)),
+            KBucketEntry::Occupied(_)
+        ));
+        assert!(std::matches!(
+            kademlia.routing_table.entry(Key::from(discovered_peer)),
+            KBucketEntry::Vacant(_)
+        ));
+
+        // only the routing table update of the proven responder is reported to the user
+        match context.event_rx.try_recv() {
+            Ok(KademliaEvent::RoutingTableUpdate { peers }) => {
+                assert_eq!(peers, vec![responder_peer]);
+            }
+            event => panic!("unexpected event: {event:?}"),
+        }
+        assert!(context.event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn put_value_responder_inserted_into_routing_table() {
+        let (mut kademlia, mut context, _manager) = make_kademlia();
+
+        let responder_peer = PeerId::random();
+        let responder = KademliaPeer::new(
+            responder_peer,
+            vec![Multiaddr::from_str("/dns/responder.com/tcp/30333")
+                .unwrap()
+                .with(Protocol::P2p(responder_peer.into()))],
+            ConnectionType::NotConnected,
+        );
+
+        let query_id = QueryId(0);
+        let record = Record::new(RecordKey::from(vec![1, 2, 3]), vec![4, 5, 6]);
+        kademlia.engine.start_put_record_to_found_nodes_requests_tracking(
+            query_id,
+            record.key.clone(),
+            vec![responder],
+            Quorum::One,
+        );
+
+        // simulate handling the `PUT_VALUE` response of the responder
+        let mut substream = MockSubstream::new();
+        substream.expect_poll_close().times(1).return_once(|_| Poll::Ready(Ok(())));
+        let message = KademliaMessage::put_value_response(record.key.clone(), record.value.clone());
+        kademlia
+            .on_message_received(
+                responder_peer,
+                Some(query_id),
+                BytesMut::from(&message[..]),
+                Substream::new_mock(
+                    responder_peer,
+                    SubstreamId::from(0usize),
+                    Box::new(substream),
+                ),
+            )
+            .await
+            .unwrap();
+
+        // answering the `PUT_VALUE` proves the responder operates in server mode
+        assert!(std::matches!(
+            kademlia.routing_table.entry(Key::from(responder_peer)),
+            KBucketEntry::Occupied(_)
+        ));
+        match context.event_rx.try_recv() {
+            Ok(KademliaEvent::RoutingTableUpdate { peers }) => {
+                assert_eq!(peers, vec![responder_peer]);
+            }
+            event => panic!("unexpected event: {event:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn unexpected_responder_not_inserted_into_routing_table() {
+        let (mut kademlia, _context, _manager) = make_kademlia();
+
+        let responder_peer = PeerId::random();
+        kademlia.engine.start_find_node(QueryId(0), PeerId::random(), VecDeque::new());
+
+        // the responder was never queried, so it must not be proven
+        assert!(kademlia
+            .engine
+            .register_response(
+                QueryId(0),
+                responder_peer,
+                KademliaMessage::FindNode {
+                    target: Vec::new(),
+                    peers: Vec::new(),
+                },
+            )
+            .is_none());
     }
 }

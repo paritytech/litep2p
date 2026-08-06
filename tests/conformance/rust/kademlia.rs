@@ -34,7 +34,7 @@ use litep2p::{
     config::ConfigBuilder as Litep2pConfigBuilder,
     crypto::ed25519::Keypair,
     protocol::libp2p::kademlia::{
-        ConfigBuilder, KademliaEvent, KademliaHandle, Quorum, Record, RecordKey,
+        ConfigBuilder, KademliaEvent, KademliaHandle, KademliaMode, Quorum, Record, RecordKey,
     },
     transport::tcp::config::Config as TcpConfig,
     types::multiaddr::{Multiaddr, Protocol},
@@ -50,8 +50,12 @@ struct Behaviour {
 
 // initialize litep2p with ping support
 fn initialize_litep2p() -> (Litep2p, KademliaHandle) {
+    initialize_litep2p_with_mode(KademliaMode::Server)
+}
+
+fn initialize_litep2p_with_mode(mode: KademliaMode) -> (Litep2p, KademliaHandle) {
     let keypair = Keypair::generate();
-    let (kad_config, kad_handle) = ConfigBuilder::new().build();
+    let (kad_config, kad_handle) = ConfigBuilder::new().with_mode(mode).build();
 
     let litep2p = Litep2p::new(
         Litep2pConfigBuilder::new()
@@ -655,4 +659,125 @@ async fn libp2p_get_providers_from_litep2p() {
             _ = litep2p_kad.next() => {}
         }
     }
+}
+
+#[tokio::test]
+async fn litep2p_in_client_mode_queries_libp2p_server() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let mut libp2p = initialize_libp2p();
+    let (mut litep2p, mut kad_handle) = initialize_litep2p_with_mode(KademliaMode::Client);
+
+    #[allow(unused_assignments)]
+    let mut listen_addr = None;
+    let peer_id = *libp2p.local_peer_id();
+
+    loop {
+        if let SwarmEvent::NewListenAddr { address, .. } = libp2p.select_next_some().await {
+            listen_addr = Some(address);
+            break;
+        }
+    }
+
+    tokio::spawn(async move {
+        loop {
+            let _ = libp2p.select_next_some().await;
+        }
+    });
+
+    tokio::spawn(async move {
+        loop {
+            let _ = litep2p.next_event().await;
+        }
+    });
+
+    let listen_addr = listen_addr.unwrap().with(Protocol::P2p(peer_id));
+
+    kad_handle
+        .add_known_peer(
+            litep2p::PeerId::from_bytes(&peer_id.to_bytes()).unwrap(),
+            vec![listen_addr],
+        )
+        .await;
+
+    // the client can still query the libp2p server
+    let target = litep2p::PeerId::random();
+    let _ = kad_handle.find_node(target).await;
+
+    loop {
+        if let Some(KademliaEvent::FindNodeSuccess {
+            target: query_target,
+            peers,
+            ..
+        }) = kad_handle.next().await
+        {
+            assert_eq!(target, query_target);
+            assert!(!peers.is_empty());
+            break;
+        }
+    }
+}
+
+/// Drive `libp2p` until it marks `peer` as a connected DHT server in its routing table, giving
+/// up after ten seconds.
+async fn wait_until_marked_as_dht_server(libp2p: &mut Swarm<Behaviour>, peer: PeerId) -> bool {
+    let deadline = tokio::time::sleep(Duration::from_secs(10));
+    tokio::pin!(deadline);
+
+    let mut sampler = tokio::time::interval(Duration::from_millis(100));
+
+    loop {
+        tokio::select! {
+            _ = libp2p.select_next_some() => {}
+            _ = sampler.tick() => {
+                let connected = libp2p.behaviour_mut().kad.kbuckets().any(|bucket| {
+                    bucket.iter().any(|entry| {
+                        entry.node.key.preimage() == &peer
+                            && entry.status == kad::NodeStatus::Connected
+                    })
+                });
+
+                if connected {
+                    return true;
+                }
+            }
+            _ = &mut deadline => return false,
+        }
+    }
+}
+
+/// Verify that a `libp2p` node only considers litep2p part of the DHT if litep2p accepts inbound
+/// substreams for the Kademlia protocol.
+async fn marked_as_dht_server(mode: KademliaMode) -> bool {
+    let (mut litep2p, _kad_handle) = initialize_litep2p_with_mode(mode);
+    let peer = PeerId::from_bytes(&litep2p.local_peer_id().to_bytes()).unwrap();
+    let address = litep2p.listen_addresses().next().unwrap().to_string().parse().unwrap();
+
+    tokio::spawn(async move { while litep2p.next_event().await.is_some() {} });
+
+    let mut libp2p = initialize_libp2p();
+    libp2p.behaviour_mut().kad.add_address(&peer, address);
+    libp2p.behaviour_mut().kad.get_closest_peers(PeerId::random());
+
+    wait_until_marked_as_dht_server(&mut libp2p, peer).await
+}
+
+#[tokio::test]
+async fn server_mode_accepts_inbound_substreams() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    assert!(marked_as_dht_server(KademliaMode::Server).await);
+}
+
+#[tokio::test]
+async fn client_mode_denies_inbound_substreams() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    assert!(!marked_as_dht_server(KademliaMode::Client).await);
 }
