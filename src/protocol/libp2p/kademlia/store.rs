@@ -207,7 +207,7 @@ impl MemoryStore {
         let can_insert_new_key = self.provider_keys.len() < self.config.max_provider_keys;
 
         match self.provider_keys.entry(provider_record.key.clone()) {
-            Entry::Vacant(entry) =>
+            Entry::Vacant(entry) => {
                 if can_insert_new_key {
                     entry.insert(vec![provider_record]);
 
@@ -220,7 +220,8 @@ impl MemoryStore {
                     );
 
                     false
-                },
+                }
+            }
             Entry::Occupied(mut entry) => {
                 let providers = entry.get_mut();
 
@@ -288,6 +289,26 @@ impl MemoryStore {
         } else {
             false
         }
+    }
+
+    /// Snapshot of store size counters: `(num_records, record_bytes, num_provider_keys,
+    /// num_providers)`.
+    ///
+    /// `record_bytes` accounts for record keys and values only, not in-memory overhead.
+    pub fn stats(&self) -> (usize, usize, usize, usize) {
+        let record_bytes = self
+            .records
+            .iter()
+            .map(|(key, record)| key.as_ref().len() + record.value.len())
+            .sum();
+        let num_providers = self.provider_keys.values().map(Vec::len).sum();
+
+        (
+            self.records.len(),
+            record_bytes,
+            self.provider_keys.len(),
+            num_providers,
+        )
     }
 
     /// Remove local provider for `key`.
