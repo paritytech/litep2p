@@ -389,11 +389,14 @@ fn decode_multistream_message(data: &mut Bytes) -> Result<Message, error::Negoti
 /// Parse the protocol offered by the remote peer and check if it matches any locally available
 /// protocol. The `header_received` parameter indicates whether the multistream-select header
 /// has already been exchanged in a previous round.
-pub fn webrtc_listener_negotiate(
-    supported_protocols: Vec<ProtocolName>,
+pub fn webrtc_listener_negotiate<'a, I>(
+    supported_protocols: I,
     mut payload: Bytes,
     header_received: bool,
-) -> crate::Result<ListenerSelectResult> {
+) -> crate::Result<ListenerSelectResult>
+where
+    I: IntoIterator<Item = &'a ProtocolName>,
+{
     // Save for zero-copy header echo (Bytes::clone is O(1)).
     let raw_payload = payload.clone();
 
@@ -448,7 +451,7 @@ pub fn webrtc_listener_negotiate(
         "listener: checking protocol",
     );
 
-    for supported in supported_protocols.iter() {
+    for supported in supported_protocols {
         if protocol.as_ref() == supported.as_bytes() {
             return Ok(ListenerSelectResult::Accepted {
                 protocol: supported.clone(),
@@ -494,7 +497,7 @@ mod tests {
         .unwrap()
         .freeze();
 
-        match webrtc_listener_negotiate(local_protocols, message, false) {
+        match webrtc_listener_negotiate(&local_protocols, message, false) {
             Err(error) => panic!("error received: {error:?}"),
             Ok(ListenerSelectResult::Rejected { .. }) => panic!("message rejected"),
             Ok(ListenerSelectResult::PendingProtocol { .. }) => panic!("unexpected pending"),
@@ -523,7 +526,7 @@ mod tests {
         .unwrap()
         .freeze();
 
-        match webrtc_listener_negotiate(local_protocols, message, false) {
+        match webrtc_listener_negotiate(&local_protocols, message, false) {
             Err(error) => assert!(std::matches!(
                 error,
                 Error::NegotiationError(error::NegotiationError::ParseError(
@@ -549,7 +552,7 @@ mod tests {
         Message::Header(HeaderLine::V1).encode(&mut bytes).unwrap();
         let payload = Bytes::from(UnsignedVarint::encode(bytes).unwrap());
 
-        match webrtc_listener_negotiate(local_protocols, payload.clone(), false) {
+        match webrtc_listener_negotiate(&local_protocols, payload.clone(), false) {
             Ok(ListenerSelectResult::PendingProtocol { message }) => {
                 assert_eq!(message, payload);
             }
@@ -574,7 +577,7 @@ mod tests {
             .unwrap();
         let payload = Bytes::from(UnsignedVarint::encode(bytes).unwrap());
 
-        match webrtc_listener_negotiate(local_protocols, payload, false) {
+        match webrtc_listener_negotiate(&local_protocols, payload, false) {
             Err(error) => assert!(std::matches!(
                 error,
                 Error::NegotiationError(error::NegotiationError::MultistreamSelectError(
@@ -601,7 +604,7 @@ mod tests {
         .unwrap()
         .freeze();
 
-        match webrtc_listener_negotiate(local_protocols, message, false) {
+        match webrtc_listener_negotiate(&local_protocols, message, false) {
             Err(error) => panic!("error received: {error:?}"),
             Ok(ListenerSelectResult::Rejected { message }) => {
                 assert_eq!(
@@ -625,7 +628,7 @@ mod tests {
         Message::Header(HeaderLine::V1).encode(&mut bytes).unwrap();
         let header_payload = Bytes::from(UnsignedVarint::encode(bytes).unwrap());
 
-        match webrtc_listener_negotiate(local_protocols.clone(), header_payload.clone(), false) {
+        match webrtc_listener_negotiate(&local_protocols, header_payload.clone(), false) {
             Ok(ListenerSelectResult::PendingProtocol { message }) => {
                 assert_eq!(message, header_payload);
             }
@@ -639,7 +642,7 @@ mod tests {
             .unwrap();
         let proto1_payload = Bytes::from(UnsignedVarint::encode(bytes).unwrap());
 
-        match webrtc_listener_negotiate(local_protocols.clone(), proto1_payload, true) {
+        match webrtc_listener_negotiate(&local_protocols, proto1_payload, true) {
             Ok(ListenerSelectResult::Rejected { message }) => {
                 assert_eq!(
                     message,
@@ -658,7 +661,7 @@ mod tests {
             .unwrap();
         let proto2_payload = Bytes::from(UnsignedVarint::encode(bytes).unwrap());
 
-        match webrtc_listener_negotiate(local_protocols, proto2_payload, true) {
+        match webrtc_listener_negotiate(&local_protocols, proto2_payload, true) {
             Ok(ListenerSelectResult::Rejected { message }) => {
                 assert_eq!(
                     message,
@@ -680,7 +683,7 @@ mod tests {
         Message::Header(HeaderLine::V1).encode(&mut bytes).unwrap();
         let header_payload = Bytes::from(UnsignedVarint::encode(bytes).unwrap());
 
-        match webrtc_listener_negotiate(local_protocols.clone(), header_payload.clone(), false) {
+        match webrtc_listener_negotiate(&local_protocols, header_payload.clone(), false) {
             Ok(ListenerSelectResult::PendingProtocol { message }) => {
                 assert_eq!(message, header_payload);
             }
@@ -694,7 +697,7 @@ mod tests {
             .unwrap();
         let proto_payload = Bytes::from(UnsignedVarint::encode(bytes).unwrap());
 
-        match webrtc_listener_negotiate(local_protocols, proto_payload, true) {
+        match webrtc_listener_negotiate(&local_protocols, proto_payload, true) {
             Ok(ListenerSelectResult::Accepted { protocol, .. }) => {
                 assert_eq!(protocol, ProtocolName::from("/13371338/proto/1"));
             }
