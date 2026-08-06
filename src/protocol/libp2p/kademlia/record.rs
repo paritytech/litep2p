@@ -23,7 +23,7 @@ use crate::{
     protocol::libp2p::kademlia::types::{
         ConnectionType, Distance, KademliaPeer, Key as KademliaKey,
     },
-    transport::manager::address::{AddressRecord, AddressStore},
+    transport::manager::address::AddressStoreBuckets,
     Multiaddr, PeerId,
 };
 
@@ -170,15 +170,10 @@ pub struct ContentProvider {
 
 impl From<ContentProvider> for KademliaPeer {
     fn from(provider: ContentProvider) -> Self {
-        let mut address_store = AddressStore::new();
-        for address in provider.addresses.iter() {
-            address_store.insert(AddressRecord::from_raw_multiaddr(address.clone()));
-        }
-
         Self {
             key: KademliaKey::from(provider.peer),
             peer: provider.peer,
-            address_store,
+            address_store: AddressStoreBuckets::from_unknown(provider.addresses),
             connection: ConnectionType::NotConnected,
         }
     }
