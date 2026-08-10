@@ -47,10 +47,7 @@ use str0m::{
     Candidate, Input, Rtc, RtcError,
 };
 
-use tokio::{
-    io::ReadBuf,
-    sync::mpsc::{channel, error::TrySendError, Sender},
-};
+use tokio::sync::mpsc::{channel, error::TrySendError, Sender};
 
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
@@ -90,8 +87,9 @@ const LOG_TARGET: &str = "litep2p::webrtc";
 const REMOTE_FINGERPRINT: &str =
     "sha-256 FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF";
 
-/// Max Capacity of a WebRtc buffer used to receive a single inbound UDP datagram.
-const WEBRTC_BUFFER_SIZE: usize = 16 * 1024;
+/// Capacity of the buffer used for a single socket read. GRO can coalesce
+/// up to 64 KiB of same-flow datagrams into one read.
+const WEBRTC_BUFFER_SIZE: usize = u16::MAX as usize;
 
 /// Connection context.
 struct ConnectionContext {
@@ -655,8 +653,7 @@ impl Stream for WebRtcTransport {
         }
 
         loop {
-            let mut read_buf = ReadBuf::new(&mut this.read_buffer);
-            let addrs = match this.listener.poll_recv_from(cx, &mut read_buf) {
+            let (addrs, meta) = match this.listener.poll_recv_from(cx, &mut this.read_buffer) {
                 // No error is expected to be returned by the listener.
                 Poll::Ready(Err(error)) => {
                     tracing::info!(
@@ -667,13 +664,42 @@ impl Stream for WebRtcTransport {
                     return Poll::Ready(None);
                 }
                 Poll::Pending => break,
-                Poll::Ready(Ok(addrs)) => addrs,
+                Poll::Ready(Ok(res)) => res,
             };
 
-            let buf = read_buf.filled().to_vec();
-            match this.on_socket_input(addrs, buf) {
-                Ok(false) => {}
-                Ok(true) => loop {
+            // `stride == 0` is only possible with `len == 0`
+            // (`quinn-udp` sets `stride = len` when GRO info is absent),
+            // normalize it to keep the loop below finite.
+            let stride = if meta.stride == 0 {
+                meta.len
+            } else {
+                meta.stride
+            };
+
+            // The read may contain multiple GRO-coalesced datagrams,
+            // feed them to the connection one by one.
+            let mut should_poll = false;
+            let mut offset = 0;
+            while offset < meta.len {
+                let len = stride.min(meta.len - offset);
+                let datagram = this.read_buffer[offset..offset + len].to_vec();
+                offset += len;
+
+                match this.on_socket_input(addrs, datagram) {
+                    Ok(poll) => should_poll |= poll,
+                    Err(error) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?addrs,
+                            ?error,
+                            "failed to handle datagram",
+                        );
+                    }
+                }
+            }
+
+            if should_poll {
+                loop {
                     match this.poll_connection(&addrs) {
                         ConnectionEvent::ConnectionEstablished { peer, endpoint } => {
                             this.connections
@@ -701,14 +727,6 @@ impl Stream for WebRtcTransport {
                             break;
                         }
                     }
-                },
-                Err(error) => {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?addrs,
-                        ?error,
-                        "failed to handle datagram",
-                    );
                 }
             }
         }

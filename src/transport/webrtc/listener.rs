@@ -1,6 +1,6 @@
 use std::{
     future::Future,
-    io,
+    io::{self, IoSliceMut},
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::Arc,
@@ -10,8 +10,9 @@ use std::{
 
 use futures_timer::Delay;
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
+use quinn_udp::{RecvMeta, UdpSockRef, UdpSocketState};
 use socket2::{Domain, Socket, Type};
-use tokio::{io::ReadBuf, net::UdpSocket};
+use tokio::{io::Interest, net::UdpSocket};
 
 use super::AddressPair;
 use crate::{error::AddressError, Error};
@@ -20,8 +21,8 @@ const LOG_TARGET: &str = "litep2p::webrtc::listener";
 
 /// WebRtc listener.
 pub(super) struct WebRtcListener {
-    /// Bound sockets paired with their local address.
-    listen_sockets: Vec<(SocketAddr, Arc<UdpSocket>)>,
+    /// Bound sockets paired with their local address and `quinn-udp` socket state.
+    listen_sockets: Vec<(SocketAddr, Arc<UdpSocket>, UdpSocketState)>,
 
     /// Index of the socket to poll first on the next call (round-robin).
     next_listener: usize,
@@ -37,35 +38,39 @@ impl WebRtcListener {
         let mut listen_multi_addresses = Vec::with_capacity(multiaddr_listen_addresses.len());
         let mut listen_sockets = Vec::with_capacity(multiaddr_listen_addresses.len());
 
-        let handle_multiaddr = |listen_socket| -> crate::Result<(UdpSocket, SocketAddr)> {
-            let listen_socket = Self::get_socket_address(&listen_socket)?;
-            // Unspecified addresses (`0.0.0.0` / `[::]`) are rejected,
-            // WebRTC ICE candidates must carry a concrete IP, so the listener must
-            // be bound to a specific address of a local interface.
-            if listen_socket.ip().is_unspecified() {
-                return Err(Error::Other(
-                    "WebRTC cannot listen on an unspecified address".to_string(),
-                ));
-            }
+        let handle_multiaddr =
+            |listen_socket| -> crate::Result<(UdpSocket, UdpSocketState, SocketAddr)> {
+                let listen_socket = Self::get_socket_address(&listen_socket)?;
+                // Unspecified addresses (`0.0.0.0` / `[::]`) are rejected,
+                // WebRTC ICE candidates must carry a concrete IP, so the listener must
+                // be bound to a specific address of a local interface.
+                if listen_socket.ip().is_unspecified() {
+                    return Err(Error::Other(
+                        "WebRTC cannot listen on an unspecified address".to_string(),
+                    ));
+                }
 
-            let socket = if listen_socket.is_ipv4() {
-                Socket::new(Domain::IPV4, Type::DGRAM, Some(socket2::Protocol::UDP))?
-            } else {
-                let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(socket2::Protocol::UDP))?;
-                socket.set_only_v6(true)?;
-                socket
+                let socket = if listen_socket.is_ipv4() {
+                    Socket::new(Domain::IPV4, Type::DGRAM, Some(socket2::Protocol::UDP))?
+                } else {
+                    let socket =
+                        Socket::new(Domain::IPV6, Type::DGRAM, Some(socket2::Protocol::UDP))?;
+                    socket.set_only_v6(true)?;
+                    socket
+                };
+
+                socket.bind(&listen_socket.into())?;
+                socket.set_nonblocking(true)?;
+
+                let socket = UdpSocket::from_std(socket.into())?;
+                // Sets up `IP_PKTINFO`/`IPV6_RECVPKTINFO` & GRO where available.
+                let state = UdpSocketState::new(UdpSockRef::from(&socket))?;
+                let listen_socket = socket.local_addr()?;
+                Ok((socket, state, listen_socket))
             };
 
-            socket.bind(&listen_socket.into())?;
-            socket.set_nonblocking(true)?;
-
-            let socket = UdpSocket::from_std(socket.into())?;
-            let listen_socket = socket.local_addr()?;
-            Ok((socket, listen_socket))
-        };
-
         for listen_socket in multiaddr_listen_addresses {
-            let (socket, listen_socket) = match handle_multiaddr(listen_socket) {
+            let (socket, state, listen_socket) = match handle_multiaddr(listen_socket) {
                 Ok(res) => res,
                 Err(err) => {
                     tracing::warn!(target: LOG_TARGET, ?err, "failed to bind listen address");
@@ -73,7 +78,7 @@ impl WebRtcListener {
                 }
             };
 
-            listen_sockets.push((listen_socket, Arc::new(socket)));
+            listen_sockets.push((listen_socket, Arc::new(socket), state));
             listen_multi_addresses.push(
                 Multiaddr::empty()
                     .with(Protocol::from(listen_socket.ip()))
@@ -102,15 +107,19 @@ impl WebRtcListener {
     pub(super) fn socket(&self, local: &SocketAddr) -> Option<Arc<UdpSocket>> {
         self.listen_sockets
             .iter()
-            .find(|(addr, _)| local == addr)
-            .map(|(_, socket)| socket.clone())
+            .find(|(addr, ..)| local == addr)
+            .map(|(_, socket, _)| socket.clone())
     }
 
+    /// Poll the sockets for an inbound read.
+    ///
+    /// The filled part of `buf` (`meta.len` bytes) may contain multiple GRO-coalesced
+    /// datagrams of `meta.stride` bytes each, with only the last one possibly shorter.
     pub(super) fn poll_recv_from(
         &mut self,
         cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<AddressPair>> {
+        buf: &mut [u8],
+    ) -> Poll<io::Result<(AddressPair, RecvMeta)>> {
         let n_listener = self.listen_sockets.len();
         debug_assert!(n_listener > 0);
 
@@ -127,27 +136,59 @@ impl WebRtcListener {
         let mut any_pending = false;
 
         loop {
-            let (local, socket) = &self.listen_sockets[idx];
+            let (local, socket, state) = &self.listen_sockets[idx];
             idx = (idx + 1) % n_listener;
 
-            match socket.poll_recv_from(cx, buf) {
-                Poll::Ready(Ok(remote)) => {
-                    self.next_listener = idx;
-                    return Poll::Ready(Ok(AddressPair {
-                        local: *local,
-                        remote,
-                    }));
+            loop {
+                match socket.poll_recv_ready(cx) {
+                    Poll::Ready(Ok(())) => {
+                        let mut meta = RecvMeta::default();
+                        let mut iov = [IoSliceMut::new(&mut *buf)];
+                        match socket.try_io(Interest::READABLE, || {
+                            state.recv(
+                                UdpSockRef::from(socket.as_ref()),
+                                &mut iov,
+                                std::slice::from_mut(&mut meta),
+                            )
+                        }) {
+                            Ok(_) => {
+                                self.next_listener = idx;
+                                return Poll::Ready(Ok((
+                                    AddressPair {
+                                        local: *local,
+                                        remote: meta.addr,
+                                    },
+                                    meta,
+                                )));
+                            }
+                            // Readiness was a false positive; re-poll to register the waker
+                            Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                            // All `UdpSocket` errors are transient, no connection to terminate
+                            Err(e) => {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    ?local,
+                                    ?e,
+                                    "failed to receive a datagram",
+                                );
+                                break;
+                            }
+                        }
+                    }
+                    Poll::Ready(Err(e)) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?local,
+                            ?e,
+                            "failed to poll socket readiness",
+                        );
+                        break;
+                    }
+                    Poll::Pending => {
+                        any_pending = true;
+                        break;
+                    }
                 }
-                // All UdpSocket errors are transient and noone
-                // of them implies a complete shutdown of the socket.
-                // Log the error but do not tear down the WebRtc instance.
-                Poll::Ready(Err(e)) => tracing::debug!(
-                    target: LOG_TARGET,
-                    ?local,
-                    ?e,
-                    "failed to receive a datagram",
-                ),
-                Poll::Pending => any_pending = true,
             }
 
             // Each socket that returned Pending registered its waker,

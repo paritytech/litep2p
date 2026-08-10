@@ -1936,6 +1936,7 @@ dependencies = [
  "prost-build",
  "quickcheck",
  "quinn 0.9.4",
+ "quinn-udp 0.6.1",
  "rand 0.8.6",
  "rcgen 0.14.8",
  "ring 0.17.14",
@@ -2846,6 +2847,19 @@ dependencies = [
  "socket2 0.6.4",
  "tracing",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "quinn-udp"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76150b617afc75e6e21ac5f39bc196e80b65415ae48d62dbef8e2519d040ce42"
+dependencies = [
+ "cfg_aliases",
+ "libc",
+ "socket2 0.6.4",
+ "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

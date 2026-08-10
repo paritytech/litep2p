@@ -88,6 +88,7 @@ rcgen = { version = "0.14.5", optional = true }
 
 # WebRTC related dependencies. WebRTC is an experimental feature flag. The dependencies must be updated.
 str0m = { version = "0.21.0", default-features = false, features = ["openssl", "vendored"], optional = true }
+quinn-udp = { version = "0.6.1", default-features = false, features = ["tracing"], optional = true }
 # End of WebRTC related dependencies.
 
 # Fuzzing related dependencies.
@@ -132,7 +133,7 @@ fuzz = [
 # Unstable / experimental feature flags. These features are not guaranteed to be stable and may change in the future.
 # They are not yet suitable for production use-cases and should be used with caution.
 quic = ["dep:webpki", "dep:quinn", "dep:rustls", "dep:ring", "dep:rcgen"]
-webrtc = ["dep:str0m"]
+webrtc = ["dep:str0m", "dep:quinn-udp"]
 rsa = ["dep:ring"]
 
 [profile.release]
