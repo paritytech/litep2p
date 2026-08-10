@@ -1,6 +1,6 @@
 use std::{
     future::Future,
-    io::{self, IoSliceMut},
+    io,
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::Arc,
@@ -11,19 +11,19 @@ use std::{
 use futures_timer::Delay;
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
 use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
-use quinn_udp::{RecvMeta, UdpSockRef, UdpSocketState};
+use quinn_udp::RecvMeta;
 use socket2::{Domain, Socket, Type};
-use tokio::{io::Interest, net::UdpSocket};
+use tokio::net::UdpSocket;
 
 use super::AddressPair;
-use crate::{error::AddressError, Error};
+use crate::{error::AddressError, transport::webrtc::socket::WebRtcSocket, Error};
 
 const LOG_TARGET: &str = "litep2p::webrtc::listener";
 
 /// WebRtc listener.
 pub(super) struct WebRtcListener {
-    /// Bound sockets paired with their local address and `quinn-udp` socket state.
-    listen_sockets: Vec<(SocketAddr, Arc<UdpSocket>, UdpSocketState)>,
+    /// Bound sockets paired with their local address.
+    listen_sockets: Vec<(SocketAddr, Arc<WebRtcSocket>)>,
 
     /// Index of the socket to poll first on the next call (round-robin).
     next_listener: usize,
@@ -39,7 +39,7 @@ impl WebRtcListener {
         let mut listen_multi_addresses = Vec::with_capacity(listen_addresses.len());
         let mut listen_sockets = Vec::with_capacity(listen_addresses.len());
 
-        let handle_multiaddr = |address| -> crate::Result<(UdpSocket, UdpSocketState, SocketAddr)> {
+        let handle_multiaddr = |address| -> crate::Result<(WebRtcSocket, SocketAddr)> {
             let sockaddr = Self::get_socket_address(&address)?;
 
             let socket = if sockaddr.is_ipv4() {
@@ -54,15 +54,13 @@ impl WebRtcListener {
             socket.set_nonblocking(true)?;
 
             let socket = UdpSocket::from_std(socket.into())?;
-            // Sets up `IP_PKTINFO`/`IPV6_RECVPKTINFO` & GRO where available.
-            let socket_state = UdpSocketState::new(UdpSockRef::from(&socket))?;
             // Re-read the bound address to resolve an ephemeral port (`/udp/0`).
             let sockaddr = socket.local_addr()?;
-            Ok((socket, socket_state, sockaddr))
+            Ok((WebRtcSocket::new(socket)?, sockaddr))
         };
 
         for multiaddr in listen_addresses {
-            let (socket, socket_state, sockaddr) = match handle_multiaddr(multiaddr) {
+            let (socket, sockaddr) = match handle_multiaddr(multiaddr) {
                 Ok(res) => res,
                 Err(err) => {
                     tracing::warn!(target: LOG_TARGET, ?err, "failed to bind listen address");
@@ -70,7 +68,7 @@ impl WebRtcListener {
                 }
             };
 
-            listen_sockets.push((sockaddr, Arc::new(socket), socket_state));
+            listen_sockets.push((sockaddr, Arc::new(socket)));
             listen_multi_addresses.extend(Self::build_listen_addresses(sockaddr, certhash)?);
         }
 
@@ -147,7 +145,7 @@ impl WebRtcListener {
         &mut self,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<(AddressPair, RecvMeta, Arc<UdpSocket>)>> {
+    ) -> Poll<io::Result<(AddressPair, RecvMeta, Arc<WebRtcSocket>)>> {
         let n_listener = self.listen_sockets.len();
         debug_assert!(n_listener > 0);
 
@@ -164,70 +162,47 @@ impl WebRtcListener {
         let mut any_pending = false;
 
         loop {
-            let (local, socket, state) = &self.listen_sockets[idx];
+            let (local, socket) = &self.listen_sockets[idx];
             idx = (idx + 1) % n_listener;
 
             loop {
-                match socket.poll_recv_ready(cx) {
-                    Poll::Ready(Ok(())) => {
-                        let mut meta = RecvMeta::default();
-                        let mut iov = [IoSliceMut::new(&mut *buf)];
-                        match socket.try_io(Interest::READABLE, || {
-                            state.recv(
-                                UdpSockRef::from(socket.as_ref()),
-                                &mut iov,
-                                std::slice::from_mut(&mut meta),
-                            )
-                        }) {
-                            Ok(_) => {
-                                // The local IP of the session comes from
-                                // `IP_PKTINFO`/`IPV6_PKTINFO`; fall back to the
-                                // bound address on platforms not reporting it.
-                                let local = SocketAddr::new(
-                                    meta.dst_ip.unwrap_or_else(|| local.ip()),
-                                    local.port(),
-                                );
-                                if local.ip().is_unspecified() {
-                                    // Wildcard socket & no `dst_ip`: the local
-                                    // address is unknown, drop the datagram.
-                                    // Can't happen on *nix.
-                                    tracing::debug!(
-                                        target: LOG_TARGET,
-                                        ?local,
-                                        "dropping datagram without destination address",
-                                    );
-                                    continue;
-                                }
-                                self.next_listener = idx;
-                                return Poll::Ready(Ok((
-                                    AddressPair {
-                                        local,
-                                        remote: meta.addr,
-                                    },
-                                    meta,
-                                    socket.clone(),
-                                )));
-                            }
-                            // Readiness was a false positive; re-poll to register the waker
-                            Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-                            // All `UdpSocket` errors are transient, no connection to terminate
-                            Err(e) => {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?local,
-                                    ?e,
-                                    "failed to receive a datagram",
-                                );
-                                break;
-                            }
+                match socket.poll_recv(cx, buf) {
+                    Poll::Ready(Ok(meta)) => {
+                        // The local IP of the session comes from
+                        // `IP_PKTINFO`/`IPV6_PKTINFO`; fall back to the
+                        // bound address on platforms not reporting it.
+                        let local = SocketAddr::new(
+                            meta.dst_ip.unwrap_or_else(|| local.ip()),
+                            local.port(),
+                        );
+                        if local.ip().is_unspecified() {
+                            // Wildcard socket & no `dst_ip`: the local
+                            // address is unknown, drop the datagram.
+                            // Can't happen on *nix.
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?local,
+                                "dropping datagram without destination address",
+                            );
+                            continue;
                         }
+                        self.next_listener = idx;
+                        return Poll::Ready(Ok((
+                            AddressPair {
+                                local,
+                                remote: meta.addr,
+                            },
+                            meta,
+                            socket.clone(),
+                        )));
                     }
+                    // All `UdpSocket` errors are transient, no connection to terminate
                     Poll::Ready(Err(e)) => {
                         tracing::debug!(
                             target: LOG_TARGET,
                             ?local,
                             ?e,
-                            "failed to poll socket readiness",
+                            "failed to receive a datagram",
                         );
                         break;
                     }

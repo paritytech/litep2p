@@ -25,6 +25,7 @@ use crate::{
     crypto::{ed25519::Keypair, noise::NoiseContext},
     transport::{
         webrtc::{
+            socket::WebRtcSocket,
             util::{extract_framed_message, WebRtcMessage},
             AddressPair,
         },
@@ -43,8 +44,6 @@ use str0m::{
     net::{DatagramRecv, DatagramSend, Protocol as Str0mProtocol, Receive},
     Event, IceConnectionState, Input, Output, Rtc,
 };
-
-use tokio::net::UdpSocket;
 
 use std::{net::SocketAddr, sync::Arc, time::Instant};
 
@@ -119,7 +118,7 @@ pub struct OpeningWebRtcConnection {
     addrs: AddressPair,
 
     /// Socket the session's datagrams are received on and sent from.
-    socket: Arc<UdpSocket>,
+    socket: Arc<WebRtcSocket>,
 
     /// Inbound noise-channel byte buffer for reassembling protobuf frames.
     ///
@@ -172,7 +171,7 @@ impl OpeningWebRtcConnection {
         noise_channel_id: ChannelId,
         id_keypair: Keypair,
         addrs: AddressPair,
-        socket: Arc<UdpSocket>,
+        socket: Arc<WebRtcSocket>,
     ) -> OpeningWebRtcConnection {
         tracing::trace!(
             target: LOG_TARGET,
@@ -199,7 +198,7 @@ impl OpeningWebRtcConnection {
     }
 
     /// Socket the session's datagrams are received on and sent from.
-    pub fn socket(&self) -> &Arc<UdpSocket> {
+    pub fn socket(&self) -> &Arc<WebRtcSocket> {
         &self.socket
     }
 

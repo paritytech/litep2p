@@ -26,7 +26,7 @@ use crate::{
         manager::TransportHandle,
         webrtc::{
             config::Config, connection::WebRtcConnection, listener::WebRtcListener,
-            opening::OpeningWebRtcConnection,
+            opening::OpeningWebRtcConnection, socket::WebRtcSocket,
         },
         Endpoint, Transport, TransportBuilder, TransportEvent,
     },
@@ -47,10 +47,7 @@ use str0m::{
     Candidate, Input, Rtc, RtcError,
 };
 
-use tokio::{
-    net::UdpSocket,
-    sync::mpsc::{channel, error::TrySendError, Sender},
-};
+use tokio::sync::mpsc::{channel, error::TrySendError, Sender};
 
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
@@ -67,6 +64,7 @@ mod certificate;
 mod connection;
 mod listener;
 mod opening;
+mod socket;
 mod substream;
 mod util;
 
@@ -259,7 +257,9 @@ impl WebRtcTransport {
                     destination,
                     datagram,
                 } =>
-                    if let Err(error) = connection.socket().try_send_to(&datagram, destination) {
+                    if let Err(error) =
+                        connection.socket().try_send_to(&datagram, destination, addrs.local.ip())
+                    {
                         tracing::warn!(
                             target: LOG_TARGET,
                             ?addrs,
@@ -286,7 +286,7 @@ impl WebRtcTransport {
     fn on_socket_input(
         &mut self,
         addrs: AddressPair,
-        socket: &Arc<UdpSocket>,
+        socket: &Arc<WebRtcSocket>,
         buffer: Vec<u8>,
     ) -> crate::Result<bool> {
         if let Entry::Occupied(mut entry) = self.open.entry(addrs) {

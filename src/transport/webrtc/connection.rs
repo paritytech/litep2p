@@ -29,6 +29,7 @@ use crate::{
     transport::{
         webrtc::{
             schema::webrtc::message::Flag,
+            socket::WebRtcSocket,
             substream::{Message, Substream as WebRtcSubstream, SubstreamHandle},
             util::{extract_framed_message, WebRtcMessage},
             AddressPair,
@@ -47,7 +48,7 @@ use str0m::{
     net::{Protocol as Str0mProtocol, Receive},
     Event, IceConnectionState, Input, Output, Rtc,
 };
-use tokio::{net::UdpSocket, sync::mpsc::Receiver};
+use tokio::sync::mpsc::Receiver;
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -248,7 +249,7 @@ pub struct WebRtcConnection {
     addrs: AddressPair,
 
     /// Transport socket.
-    socket: Arc<UdpSocket>,
+    socket: Arc<WebRtcSocket>,
 
     /// RX channel for receiving datagrams from the transport.
     dgram_rx: Receiver<Vec<u8>>,
@@ -294,7 +295,7 @@ impl WebRtcConnection {
         rtc: Rtc,
         peer: PeerId,
         addrs: AddressPair,
-        socket: Arc<UdpSocket>,
+        socket: Arc<WebRtcSocket>,
         protocol_set: ProtocolSet,
         endpoint: Endpoint,
         dgram_rx: Receiver<Vec<u8>>,
@@ -1129,7 +1130,9 @@ impl WebRtcConnection {
                         "transmit data",
                     );
 
-                    if let Err(error) = self.socket.try_send_to(&v.contents, v.destination) {
+                    if let Err(error) =
+                        self.socket.try_send_to(&v.contents, v.destination, self.addrs.local.ip())
+                    {
                         if error.kind() == std::io::ErrorKind::WouldBlock {
                             tracing::trace!(
                                 target: LOG_TARGET,
