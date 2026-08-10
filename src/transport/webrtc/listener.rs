@@ -33,37 +33,36 @@ pub(super) struct WebRtcListener {
 
 impl WebRtcListener {
     pub(super) fn new(
-        multiaddr_listen_addresses: Vec<Multiaddr>,
-        certificate: Multihash<64>,
+        listen_addresses: Vec<Multiaddr>,
+        certhash: Multihash<64>,
     ) -> crate::Result<(Self, Vec<Multiaddr>)> {
-        let mut listen_multi_addresses = Vec::with_capacity(multiaddr_listen_addresses.len());
-        let mut listen_sockets = Vec::with_capacity(multiaddr_listen_addresses.len());
+        let mut listen_multi_addresses = Vec::with_capacity(listen_addresses.len());
+        let mut listen_sockets = Vec::with_capacity(listen_addresses.len());
 
-        let handle_multiaddr =
-            |listen_socket| -> crate::Result<(UdpSocket, UdpSocketState, SocketAddr)> {
-                let listen_socket = Self::get_socket_address(&listen_socket)?;
+        let handle_multiaddr = |address| -> crate::Result<(UdpSocket, UdpSocketState, SocketAddr)> {
+            let sockaddr = Self::get_socket_address(&address)?;
 
-                let socket = if listen_socket.is_ipv4() {
-                    Socket::new(Domain::IPV4, Type::DGRAM, Some(socket2::Protocol::UDP))?
-                } else {
-                    let socket =
-                        Socket::new(Domain::IPV6, Type::DGRAM, Some(socket2::Protocol::UDP))?;
-                    socket.set_only_v6(true)?;
-                    socket
-                };
-
-                socket.bind(&listen_socket.into())?;
-                socket.set_nonblocking(true)?;
-
-                let socket = UdpSocket::from_std(socket.into())?;
-                // Sets up `IP_PKTINFO`/`IPV6_RECVPKTINFO` & GRO where available.
-                let state = UdpSocketState::new(UdpSockRef::from(&socket))?;
-                let listen_socket = socket.local_addr()?;
-                Ok((socket, state, listen_socket))
+            let socket = if sockaddr.is_ipv4() {
+                Socket::new(Domain::IPV4, Type::DGRAM, Some(socket2::Protocol::UDP))?
+            } else {
+                let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(socket2::Protocol::UDP))?;
+                socket.set_only_v6(true)?;
+                socket
             };
 
-        for listen_socket in multiaddr_listen_addresses {
-            let (socket, state, listen_socket) = match handle_multiaddr(listen_socket) {
+            socket.bind(&sockaddr.into())?;
+            socket.set_nonblocking(true)?;
+
+            let socket = UdpSocket::from_std(socket.into())?;
+            // Sets up `IP_PKTINFO`/`IPV6_RECVPKTINFO` & GRO where available.
+            let socket_state = UdpSocketState::new(UdpSockRef::from(&socket))?;
+            // Re-read the bound address to resolve an ephemeral port (`/udp/0`).
+            let sockaddr = socket.local_addr()?;
+            Ok((socket, socket_state, sockaddr))
+        };
+
+        for multiaddr in listen_addresses {
+            let (socket, socket_state, sockaddr) = match handle_multiaddr(multiaddr) {
                 Ok(res) => res,
                 Err(err) => {
                     tracing::warn!(target: LOG_TARGET, ?err, "failed to bind listen address");
@@ -71,53 +70,8 @@ impl WebRtcListener {
                 }
             };
 
-            listen_sockets.push((listen_socket, Arc::new(socket), state));
-
-            // A wildcard listen address is advertised as all matching
-            // interface addresses (link-local IPv6 excluded).
-            let advertised: Vec<SocketAddr> = if listen_socket.ip().is_unspecified() {
-                NetworkInterface::show()
-                    .map_err(|error| {
-                        tracing::warn!(
-                            target: LOG_TARGET,
-                            ?error,
-                            "failed to fetch network interfaces",
-                        );
-                        Error::Other("failed to fetch network interfaces".to_string())
-                    })?
-                    .into_iter()
-                    .flat_map(|record| {
-                        record.addr.into_iter().filter_map(|iface_address| {
-                            match (iface_address, listen_socket.is_ipv4()) {
-                                (Addr::V4(inner), true) => Some(SocketAddr::new(
-                                    IpAddr::V4(inner.ip),
-                                    listen_socket.port(),
-                                )),
-                                (Addr::V6(inner), false) => match inner.ip.segments().first() {
-                                    Some(0xfe80) => None,
-                                    _ => Some(SocketAddr::new(
-                                        IpAddr::V6(inner.ip),
-                                        listen_socket.port(),
-                                    )),
-                                },
-                                _ => None,
-                            }
-                        })
-                    })
-                    .collect()
-            } else {
-                vec![listen_socket]
-            };
-
-            for address in advertised {
-                listen_multi_addresses.push(
-                    Multiaddr::empty()
-                        .with(Protocol::from(address.ip()))
-                        .with(Protocol::Udp(address.port()))
-                        .with(Protocol::WebRTCDirect)
-                        .with(Protocol::Certhash(certificate)),
-                );
-            }
+            listen_sockets.push((sockaddr, Arc::new(socket), socket_state));
+            listen_multi_addresses.extend(Self::build_listen_addresses(sockaddr, certhash)?);
         }
 
         if listen_sockets.is_empty() {
@@ -134,6 +88,55 @@ impl WebRtcListener {
             },
             listen_multi_addresses,
         ))
+    }
+
+    /// Build the multiaddresses to advertise for a socket bound to `sockaddr`.
+    ///
+    /// A wildcard listen address is advertised as all matching interface addresses
+    /// (link-local IPv6 excluded).
+    fn build_listen_addresses(
+        sockaddr: SocketAddr,
+        certhash: Multihash<64>,
+    ) -> crate::Result<Vec<Multiaddr>> {
+        let addresses: Vec<SocketAddr> = if sockaddr.ip().is_unspecified() {
+            NetworkInterface::show()
+                .map_err(|error| {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "failed to fetch network interfaces",
+                    );
+                    Error::Other("failed to fetch network interfaces".to_string())
+                })?
+                .into_iter()
+                .flat_map(|iface| {
+                    iface.addr.into_iter().filter_map(|iface_address| {
+                        match (iface_address, sockaddr.is_ipv4()) {
+                            (Addr::V4(addr), true) =>
+                                Some(SocketAddr::new(IpAddr::V4(addr.ip), sockaddr.port())),
+                            (Addr::V6(addr), false) => match addr.ip.segments().first() {
+                                Some(0xfe80) => None,
+                                _ => Some(SocketAddr::new(IpAddr::V6(addr.ip), sockaddr.port())),
+                            },
+                            _ => None,
+                        }
+                    })
+                })
+                .collect()
+        } else {
+            vec![sockaddr]
+        };
+
+        Ok(addresses
+            .into_iter()
+            .map(|address| {
+                Multiaddr::empty()
+                    .with(Protocol::from(address.ip()))
+                    .with(Protocol::Udp(address.port()))
+                    .with(Protocol::WebRTCDirect)
+                    .with(Protocol::Certhash(certhash))
+            })
+            .collect())
     }
 
     /// Poll the sockets for an inbound read.
