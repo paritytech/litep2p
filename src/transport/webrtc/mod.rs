@@ -134,7 +134,7 @@ struct AddressPair {
     /// Address of the local listening socket that received the datagram.
     local: SocketAddr,
     /// Address of the remote peer that sent the datagram.
-    source: SocketAddr,
+    remote: SocketAddr,
 }
 
 /// WebRTC transport.
@@ -174,8 +174,8 @@ pub(crate) struct WebRtcTransport {
 }
 
 impl WebRtcTransport {
-    /// Create RTC client and open channel for Noise handshake.
-    fn make_rtc_client(
+    /// Create [`str0m::Rtc`] object for a new session and open a channel for Noise handshake.
+    fn make_rtc(
         &self,
         ufrag: &str,
         pass: &str,
@@ -387,13 +387,12 @@ impl WebRtcTransport {
         );
 
         // create new `Rtc` object for the peer and give it the received STUN message
-        let (mut rtc, noise_channel_id) =
-            self.make_rtc_client(ufrag, pass, addrs.source, addrs.local)?;
+        let (mut rtc, noise_channel_id) = self.make_rtc(ufrag, pass, addrs.remote, addrs.local)?;
 
         rtc.handle_input(Input::Receive(
             Instant::now(),
             Receive {
-                source: addrs.source,
+                source: addrs.remote,
                 proto: Str0mProtocol::Udp,
                 destination: addrs.local,
                 contents,
@@ -406,7 +405,7 @@ impl WebRtcTransport {
             connection_id,
             noise_channel_id,
             self.context.keypair.clone(),
-            addrs.source,
+            addrs.remote,
             addrs.local,
         );
         self.opening.insert(addrs, connection);
@@ -444,7 +443,7 @@ impl TransportBuilder for WebRtcTransport {
         let dtls_cert: DtlsCert = match config.certificate {
             Some(certificate) => certificate.into(),
             None => {
-                tracing::debug!(target: LOG_TARGET, "generating temporary WebRtc certificate");
+                tracing::debug!(target: LOG_TARGET, "generating temporary WebRTC certificate");
                 DtlsCertificate::new()?.into()
             }
         };
@@ -583,7 +582,7 @@ impl Transport for WebRtcTransport {
             let connection = WebRtcConnection::new(
                 rtc,
                 peer,
-                addrs.source,
+                addrs.remote,
                 addrs.local,
                 socket,
                 protocol_set,

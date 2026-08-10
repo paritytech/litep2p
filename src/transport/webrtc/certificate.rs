@@ -8,9 +8,12 @@
 
 use str0m::{config::DtlsCert, crypto::CryptoError, error::DtlsError, RtcError};
 
+/// Local certificate & key used for DTLS connections.
 #[derive(Debug)]
 pub struct DtlsCertificate {
+    /// Certificate as X.509 DER.
     certificate: Vec<u8>,
+    /// Matching private key as PKCS#8 DER.
     private_key: Vec<u8>,
 }
 
