@@ -125,11 +125,12 @@ enum ConnectionEvent {
     },
 }
 
-/// Endpoints of a received UDP datagram: which local socket received it,
+/// Endpoints of a received UDP datagram: its local destination address,
 /// and the remote socket that sent it.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 struct AddressPair {
-    /// Address of the local listening socket that received the datagram.
+    /// Local destination address of the datagram;
+    /// a concrete IP even for wildcard listening sockets.
     local: SocketAddr,
     /// Address of the remote peer that sent the datagram.
     remote: SocketAddr,

@@ -10,6 +10,7 @@ use std::{
 
 use futures_timer::Delay;
 use multiaddr::{multihash::Multihash, Multiaddr, Protocol};
+use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use quinn_udp::{RecvMeta, UdpSockRef, UdpSocketState};
 use socket2::{Domain, Socket, Type};
 use tokio::{io::Interest, net::UdpSocket};
@@ -41,14 +42,6 @@ impl WebRtcListener {
         let handle_multiaddr =
             |listen_socket| -> crate::Result<(UdpSocket, UdpSocketState, SocketAddr)> {
                 let listen_socket = Self::get_socket_address(&listen_socket)?;
-                // Unspecified addresses (`0.0.0.0` / `[::]`) are rejected,
-                // WebRTC ICE candidates must carry a concrete IP, so the listener must
-                // be bound to a specific address of a local interface.
-                if listen_socket.ip().is_unspecified() {
-                    return Err(Error::Other(
-                        "WebRTC cannot listen on an unspecified address".to_string(),
-                    ));
-                }
 
                 let socket = if listen_socket.is_ipv4() {
                     Socket::new(Domain::IPV4, Type::DGRAM, Some(socket2::Protocol::UDP))?
@@ -79,13 +72,52 @@ impl WebRtcListener {
             };
 
             listen_sockets.push((listen_socket, Arc::new(socket), state));
-            listen_multi_addresses.push(
-                Multiaddr::empty()
-                    .with(Protocol::from(listen_socket.ip()))
-                    .with(Protocol::Udp(listen_socket.port()))
-                    .with(Protocol::WebRTCDirect)
-                    .with(Protocol::Certhash(certificate)),
-            );
+
+            // A wildcard listen address is advertised as all matching
+            // interface addresses (link-local IPv6 excluded).
+            let advertised: Vec<SocketAddr> = if listen_socket.ip().is_unspecified() {
+                NetworkInterface::show()
+                    .map_err(|error| {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?error,
+                            "failed to fetch network interfaces",
+                        );
+                        Error::Other("failed to fetch network interfaces".to_string())
+                    })?
+                    .into_iter()
+                    .flat_map(|record| {
+                        record.addr.into_iter().filter_map(|iface_address| {
+                            match (iface_address, listen_socket.is_ipv4()) {
+                                (Addr::V4(inner), true) => Some(SocketAddr::new(
+                                    IpAddr::V4(inner.ip),
+                                    listen_socket.port(),
+                                )),
+                                (Addr::V6(inner), false) => match inner.ip.segments().first() {
+                                    Some(0xfe80) => None,
+                                    _ => Some(SocketAddr::new(
+                                        IpAddr::V6(inner.ip),
+                                        listen_socket.port(),
+                                    )),
+                                },
+                                _ => None,
+                            }
+                        })
+                    })
+                    .collect()
+            } else {
+                vec![listen_socket]
+            };
+
+            for address in advertised {
+                listen_multi_addresses.push(
+                    Multiaddr::empty()
+                        .with(Protocol::from(address.ip()))
+                        .with(Protocol::Udp(address.port()))
+                        .with(Protocol::WebRTCDirect)
+                        .with(Protocol::Certhash(certificate)),
+                );
+            }
         }
 
         if listen_sockets.is_empty() {
@@ -104,10 +136,17 @@ impl WebRtcListener {
         ))
     }
 
+    /// Get the socket receiving datagrams destined to `local` address,
+    /// either bound to it exactly or to a matching wildcard address.
     pub(super) fn socket(&self, local: &SocketAddr) -> Option<Arc<UdpSocket>> {
         self.listen_sockets
             .iter()
-            .find(|(addr, ..)| local == addr)
+            .find(|(addr, ..)| {
+                addr == local
+                    || (addr.ip().is_unspecified()
+                        && addr.port() == local.port()
+                        && addr.is_ipv4() == local.is_ipv4())
+            })
             .map(|(_, socket, _)| socket.clone())
     }
 
@@ -152,10 +191,28 @@ impl WebRtcListener {
                             )
                         }) {
                             Ok(_) => {
+                                // The local IP of the session comes from
+                                // `IP_PKTINFO`/`IPV6_PKTINFO`; fall back to the
+                                // bound address on platforms not reporting it.
+                                let local = SocketAddr::new(
+                                    meta.dst_ip.unwrap_or_else(|| local.ip()),
+                                    local.port(),
+                                );
+                                if local.ip().is_unspecified() {
+                                    // Wildcard socket & no `dst_ip`: the local
+                                    // address is unknown, drop the datagram.
+                                    // Can't happen on *nix.
+                                    tracing::debug!(
+                                        target: LOG_TARGET,
+                                        ?local,
+                                        "dropping datagram without destination address",
+                                    );
+                                    continue;
+                                }
                                 self.next_listener = idx;
                                 return Poll::Ready(Ok((
                                     AddressPair {
-                                        local: *local,
+                                        local,
                                         remote: meta.addr,
                                     },
                                     meta,
