@@ -136,20 +136,6 @@ impl WebRtcListener {
         ))
     }
 
-    /// Get the socket receiving datagrams destined to `local` address,
-    /// either bound to it exactly or to a matching wildcard address.
-    pub(super) fn socket(&self, local: &SocketAddr) -> Option<Arc<UdpSocket>> {
-        self.listen_sockets
-            .iter()
-            .find(|(addr, ..)| {
-                addr == local
-                    || (addr.ip().is_unspecified()
-                        && addr.port() == local.port()
-                        && addr.is_ipv4() == local.is_ipv4())
-            })
-            .map(|(_, socket, _)| socket.clone())
-    }
-
     /// Poll the sockets for an inbound read.
     ///
     /// The filled part of `buf` (`meta.len` bytes) may contain multiple GRO-coalesced
@@ -158,7 +144,7 @@ impl WebRtcListener {
         &mut self,
         cx: &mut Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<(AddressPair, RecvMeta)>> {
+    ) -> Poll<io::Result<(AddressPair, RecvMeta, Arc<UdpSocket>)>> {
         let n_listener = self.listen_sockets.len();
         debug_assert!(n_listener > 0);
 
@@ -216,6 +202,7 @@ impl WebRtcListener {
                                         remote: meta.addr,
                                     },
                                     meta,
+                                    socket.clone(),
                                 )));
                             }
                             // Readiness was a false positive; re-poll to register the waker

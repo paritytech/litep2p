@@ -44,7 +44,9 @@ use str0m::{
     Event, IceConnectionState, Input, Output, Rtc,
 };
 
-use std::{net::SocketAddr, time::Instant};
+use tokio::net::UdpSocket;
+
+use std::{net::SocketAddr, sync::Arc, time::Instant};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::webrtc::connection";
@@ -116,6 +118,9 @@ pub struct OpeningWebRtcConnection {
     /// Addresses of the session.
     addrs: AddressPair,
 
+    /// Socket the session's datagrams are received on and sent from.
+    socket: Arc<UdpSocket>,
+
     /// Inbound noise-channel byte buffer for reassembling protobuf frames.
     ///
     /// The libp2p-go msgio implementation issues two separate `Write` calls:
@@ -167,6 +172,7 @@ impl OpeningWebRtcConnection {
         noise_channel_id: ChannelId,
         id_keypair: Keypair,
         addrs: AddressPair,
+        socket: Arc<UdpSocket>,
     ) -> OpeningWebRtcConnection {
         tracing::trace!(
             target: LOG_TARGET,
@@ -182,6 +188,7 @@ impl OpeningWebRtcConnection {
             noise_channel_id,
             id_keypair,
             addrs,
+            socket,
             noise_recv_buffer: BytesMut::new(),
         }
     }
@@ -189,6 +196,11 @@ impl OpeningWebRtcConnection {
     /// Returns the [`ConnectionId`] assigned to this opening connection.
     pub fn connection_id(&self) -> &ConnectionId {
         &self.connection_id
+    }
+
+    /// Socket the session's datagrams are received on and sent from.
+    pub fn socket(&self) -> &Arc<UdpSocket> {
+        &self.socket
     }
 
     /// Get remote fingerprint to bytes.

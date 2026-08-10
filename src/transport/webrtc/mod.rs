@@ -47,7 +47,10 @@ use str0m::{
     Candidate, Input, Rtc, RtcError,
 };
 
-use tokio::sync::mpsc::{channel, error::TrySendError, Sender};
+use tokio::{
+    net::UdpSocket,
+    sync::mpsc::{channel, error::TrySendError, Sender},
+};
 
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
@@ -255,24 +258,15 @@ impl WebRtcTransport {
                 opening::WebRtcEvent::Transmit {
                     destination,
                     datagram,
-                } => {
-                    let Some(socket) = self.listener.socket(&addrs.local) else {
-                        tracing::warn!(
-                            target: LOG_TARGET,
-                            ?addrs,
-                            "no socket bound to local address in listener, dropping outbound datagram",
-                        );
-                        continue;
-                    };
-                    if let Err(error) = socket.try_send_to(&datagram, destination) {
+                } =>
+                    if let Err(error) = connection.socket().try_send_to(&datagram, destination) {
                         tracing::warn!(
                             target: LOG_TARGET,
                             ?addrs,
                             ?error,
                             "failed to send datagram",
                         );
-                    }
-                }
+                    },
                 opening::WebRtcEvent::ConnectionClosed => return ConnectionEvent::ConnectionClosed,
                 opening::WebRtcEvent::ConnectionOpened { peer, endpoint } => {
                     return ConnectionEvent::ConnectionEstablished { peer, endpoint };
@@ -289,7 +283,12 @@ impl WebRtcTransport {
     /// until it timeouts.
     ///
     /// Returns `true` if the client should be polled.
-    fn on_socket_input(&mut self, addrs: AddressPair, buffer: Vec<u8>) -> crate::Result<bool> {
+    fn on_socket_input(
+        &mut self,
+        addrs: AddressPair,
+        socket: &Arc<UdpSocket>,
+        buffer: Vec<u8>,
+    ) -> crate::Result<bool> {
         if let Entry::Occupied(mut entry) = self.open.entry(addrs) {
             let ConnectionContext {
                 peer,
@@ -404,6 +403,7 @@ impl WebRtcTransport {
             noise_channel_id,
             self.context.keypair.clone(),
             addrs,
+            socket.clone(),
         );
         self.opening.insert(addrs, connection);
 
@@ -539,6 +539,7 @@ impl Transport for WebRtcTransport {
             Error::InvalidState
         })?;
 
+        let socket = connection.socket().clone();
         let rtc = connection.on_accept()?;
         let (tx, rx) = channel(self.datagram_buffer_size);
         let mut protocol_set = self.context.protocol_set(connection_id);
@@ -561,15 +562,6 @@ impl Transport for WebRtcTransport {
                 connection_id,
             },
         );
-
-        let Some(socket) = self.listener.socket(&addrs.local) else {
-            tracing::warn!(
-                target: LOG_TARGET,
-                ?addrs,
-                "no socket for local address; aborting connection"
-            );
-            return Err(Error::InvalidState);
-        };
 
         Ok(Box::pin(async move {
             // First, notify all protocols about the connection establishment
@@ -654,19 +646,20 @@ impl Stream for WebRtcTransport {
         }
 
         loop {
-            let (addrs, meta) = match this.listener.poll_recv_from(cx, &mut this.read_buffer) {
-                // No error is expected to be returned by the listener.
-                Poll::Ready(Err(error)) => {
-                    tracing::info!(
-                        target: LOG_TARGET,
-                        ?error,
-                        "webrtc udp socket closed",
-                    );
-                    return Poll::Ready(None);
-                }
-                Poll::Pending => break,
-                Poll::Ready(Ok(res)) => res,
-            };
+            let (addrs, meta, socket) =
+                match this.listener.poll_recv_from(cx, &mut this.read_buffer) {
+                    // No error is expected to be returned by the listener.
+                    Poll::Ready(Err(error)) => {
+                        tracing::info!(
+                            target: LOG_TARGET,
+                            ?error,
+                            "webrtc udp socket closed",
+                        );
+                        return Poll::Ready(None);
+                    }
+                    Poll::Pending => break,
+                    Poll::Ready(Ok(res)) => res,
+                };
 
             // `stride == 0` is only possible with `len == 0`
             // (`quinn-udp` sets `stride = len` when GRO info is absent),
@@ -686,7 +679,7 @@ impl Stream for WebRtcTransport {
                 let datagram = this.read_buffer[offset..offset + len].to_vec();
                 offset += len;
 
-                match this.on_socket_input(addrs, datagram) {
+                match this.on_socket_input(addrs, &socket, datagram) {
                     Ok(poll) => should_poll |= poll,
                     Err(error) => {
                         tracing::debug!(
