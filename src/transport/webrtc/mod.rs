@@ -179,8 +179,7 @@ impl WebRtcTransport {
         &self,
         ufrag: &str,
         pass: &str,
-        source: SocketAddr,
-        destination: SocketAddr,
+        addrs: &AddressPair,
     ) -> crate::Result<(Rtc, ChannelId)> {
         let mut rtc = Rtc::builder()
             .set_ice_lite(true)
@@ -188,10 +187,10 @@ impl WebRtcTransport {
             .set_fingerprint_verification(false)
             .build(std::time::Instant::now());
         rtc.add_local_candidate(
-            Candidate::host(destination, Str0mProtocol::Udp).map_err(RtcError::Ice)?,
+            Candidate::host(addrs.local, Str0mProtocol::Udp).map_err(RtcError::Ice)?,
         );
         rtc.add_remote_candidate(
-            Candidate::host(source, Str0mProtocol::Udp).map_err(RtcError::Ice)?,
+            Candidate::host(addrs.remote, Str0mProtocol::Udp).map_err(RtcError::Ice)?,
         );
         rtc.direct_api().set_remote_fingerprint(
             REMOTE_FINGERPRINT
@@ -387,7 +386,7 @@ impl WebRtcTransport {
         );
 
         // create new `Rtc` object for the peer and give it the received STUN message
-        let (mut rtc, noise_channel_id) = self.make_rtc(ufrag, pass, addrs.remote, addrs.local)?;
+        let (mut rtc, noise_channel_id) = self.make_rtc(ufrag, pass, &addrs)?;
 
         rtc.handle_input(Input::Receive(
             Instant::now(),
@@ -405,8 +404,7 @@ impl WebRtcTransport {
             connection_id,
             noise_channel_id,
             self.context.keypair.clone(),
-            addrs.remote,
-            addrs.local,
+            addrs,
         );
         self.opening.insert(addrs, connection);
 
@@ -579,16 +577,8 @@ impl Transport for WebRtcTransport {
             protocol_set.report_connection_established(peer, endpoint_clone).await?;
 
             // After protocols are notified, create connection and spawn event loop
-            let connection = WebRtcConnection::new(
-                rtc,
-                peer,
-                addrs.remote,
-                addrs.local,
-                socket,
-                protocol_set,
-                endpoint,
-                rx,
-            );
+            let connection =
+                WebRtcConnection::new(rtc, peer, addrs, socket, protocol_set, endpoint, rx);
 
             executor.run(Box::pin(async move {
                 connection.run_event_loop().await;

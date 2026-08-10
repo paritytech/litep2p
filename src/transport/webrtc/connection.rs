@@ -31,6 +31,7 @@ use crate::{
             schema::webrtc::message::Flag,
             substream::{Message, Substream as WebRtcSubstream, SubstreamHandle},
             util::{extract_framed_message, WebRtcMessage},
+            AddressPair,
         },
         Endpoint, SUBSTREAM_OPEN_TIMEOUT,
     },
@@ -50,7 +51,6 @@ use tokio::{net::UdpSocket, sync::mpsc::Receiver};
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -244,11 +244,8 @@ pub struct WebRtcConnection {
     /// Endpoint.
     endpoint: Endpoint,
 
-    /// Peer address
-    peer_address: SocketAddr,
-
-    /// Local address.
-    local_address: SocketAddr,
+    /// Addresses of the session.
+    addrs: AddressPair,
 
     /// Transport socket.
     socket: Arc<UdpSocket>,
@@ -296,8 +293,7 @@ impl WebRtcConnection {
     pub fn new(
         rtc: Rtc,
         peer: PeerId,
-        peer_address: SocketAddr,
-        local_address: SocketAddr,
+        addrs: AddressPair,
         socket: Arc<UdpSocket>,
         protocol_set: ProtocolSet,
         endpoint: Endpoint,
@@ -307,8 +303,7 @@ impl WebRtcConnection {
             rtc,
             protocol_set,
             peer,
-            peer_address,
-            local_address,
+            addrs,
             socket,
             endpoint,
             dgram_rx,
@@ -1266,8 +1261,8 @@ impl WebRtcConnection {
                             Instant::now(),
                             Receive {
                                 proto: Str0mProtocol::Udp,
-                                source: self.peer_address,
-                                destination: self.local_address,
+                                source: self.addrs.remote,
+                                destination: self.addrs.local,
                                 contents,
                             },
                         );
