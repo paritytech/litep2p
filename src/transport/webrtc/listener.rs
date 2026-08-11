@@ -73,7 +73,7 @@ impl WebRtcListener {
             };
 
             listen_sockets.push((sockaddr, Arc::new(socket)));
-            listen_multi_addresses.extend(Self::build_listen_addresses(sockaddr, certhash)?);
+            listen_multi_addresses.extend(Self::build_listen_addresses(sockaddr, certhash));
         }
 
         if listen_sockets.is_empty() {
@@ -94,22 +94,19 @@ impl WebRtcListener {
 
     /// Build the multiaddresses to advertise for a socket bound to `sockaddr`.
     ///
-    /// A wildcard listen address is advertised as all matching interface addresses
-    /// (link-local IPv6 excluded).
-    fn build_listen_addresses(
-        sockaddr: SocketAddr,
-        certhash: Multihash<64>,
-    ) -> crate::Result<Vec<Multiaddr>> {
+    /// A wildcard listen address is advertised as all matching interface addresses (link-local IPv6
+    /// excluded).
+    fn build_listen_addresses(sockaddr: SocketAddr, certhash: Multihash<64>) -> Vec<Multiaddr> {
         let addresses: Vec<SocketAddr> = if sockaddr.ip().is_unspecified() {
             NetworkInterface::show()
-                .map_err(|error| {
+                .unwrap_or_else(|error| {
                     tracing::warn!(
                         target: LOG_TARGET,
                         ?error,
                         "failed to fetch network interfaces",
                     );
-                    Error::Other("failed to fetch network interfaces".to_string())
-                })?
+                    Vec::new()
+                })
                 .into_iter()
                 .flat_map(|iface| {
                     iface.addr.into_iter().filter_map(|iface_address| {
@@ -129,7 +126,15 @@ impl WebRtcListener {
             vec![sockaddr]
         };
 
-        Ok(addresses
+        if addresses.is_empty() {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?sockaddr,
+                "no interface addresses to advertise for the listen address",
+            );
+        }
+
+        addresses
             .into_iter()
             .map(|address| {
                 Multiaddr::empty()
@@ -138,7 +143,7 @@ impl WebRtcListener {
                     .with(Protocol::WebRTCDirect)
                     .with(Protocol::Certhash(certhash))
             })
-            .collect())
+            .collect()
     }
 
     /// Buffer size [`Self::poll_recv_from`] needs to never truncate a read, i.e. the largest
@@ -324,7 +329,7 @@ mod tests {
     #[test]
     fn concrete_listen_address_is_advertised_as_is() {
         let sockaddr: SocketAddr = "192.0.2.1:1234".parse().unwrap();
-        let addresses = WebRtcListener::build_listen_addresses(sockaddr, certhash()).unwrap();
+        let addresses = WebRtcListener::build_listen_addresses(sockaddr, certhash());
 
         assert_eq!(addresses.len(), 1);
         assert_eq!(unpack_address(&addresses[0]), (sockaddr, certhash()));
@@ -333,8 +338,7 @@ mod tests {
     #[test]
     fn wildcard_v4_expands_to_interface_addresses() {
         let addresses =
-            WebRtcListener::build_listen_addresses("0.0.0.0:1234".parse().unwrap(), certhash())
-                .unwrap();
+            WebRtcListener::build_listen_addresses("0.0.0.0:1234".parse().unwrap(), certhash());
 
         assert!(!addresses.is_empty());
         for address in &addresses {
@@ -349,8 +353,7 @@ mod tests {
     #[test]
     fn wildcard_v6_expands_without_link_local() {
         let addresses =
-            WebRtcListener::build_listen_addresses("[::]:1234".parse().unwrap(), certhash())
-                .unwrap();
+            WebRtcListener::build_listen_addresses("[::]:1234".parse().unwrap(), certhash());
 
         assert!(!addresses.is_empty());
         for address in &addresses {
