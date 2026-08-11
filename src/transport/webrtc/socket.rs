@@ -72,7 +72,7 @@ impl WebRtcSocket {
     }
 
     /// Send `datagram` to `destination` from `src_ip`.
-    pub(super) fn try_send_to(
+    pub(crate) fn try_send_to(
         &self,
         datagram: &[u8],
         destination: SocketAddr,

@@ -88,9 +88,9 @@ const LOG_TARGET: &str = "litep2p::webrtc";
 const REMOTE_FINGERPRINT: &str =
     "sha-256 FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF";
 
-/// Capacity of the buffer used for a single socket read. GRO can coalesce
-/// up to 64 KiB of same-flow datagrams into one read.
-const WEBRTC_BUFFER_SIZE: usize = u16::MAX as usize;
+/// Capacity of the buffer used for a single socket read. GRO can coalesce up to
+/// (64 KiB - IP/UDP headers) of same-flow datagrams into one read.
+const WEBRTC_BUFFER_SIZE: usize = 64 * 1024;
 
 /// Connection context.
 struct ConnectionContext {
