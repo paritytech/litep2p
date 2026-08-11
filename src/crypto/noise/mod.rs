@@ -161,7 +161,8 @@ impl NoiseContext {
         Self::assemble(noise, keypair, id_keys, Role::Dialer)
     }
 
-    /// Get remote peer ID from the received Noise payload.
+    /// Get remote peer ID from the received Noise payload and verify that the remote
+    /// identity key has signed the remote Noise static key.
     #[cfg(feature = "webrtc")]
     pub fn get_remote_peer_id(&mut self, reply: &[u8]) -> Result<PeerId, NegotiationError> {
         if reply.len() < 2 {
@@ -190,8 +191,7 @@ impl NoiseContext {
         let payload = handshake_schema::NoiseHandshakePayload::decode(buffer.as_slice())
             .map_err(|err| NegotiationError::ParseError(err.into()))?;
 
-        let identity = payload.identity_key.ok_or(NegotiationError::PeerIdMissing)?;
-        Ok(PeerId::from_public_key_protobuf(&identity))
+        parse_and_verify_peer_id(payload, self.get_handshake_dh_remote_pubkey()?)
     }
 
     /// Get first message.
@@ -999,6 +999,83 @@ mod tests {
         match parse_and_verify_peer_id(payload, &[0]).unwrap_err() {
             NegotiationError::ParseError(_) => {}
             _ => panic!("invalid error"),
+        }
+    }
+
+    /// Run the remote (responder) side of a WebRTC Noise handshake up to the second message,
+    /// with `identity_sig` produced by `sign(responder_id_keys, responder_noise_static_pub)`.
+    ///
+    /// Returns the local dialer context, the responder's identity keypair and the raw reply
+    /// to be passed to [`NoiseContext::get_remote_peer_id()`].
+    #[cfg(feature = "webrtc")]
+    fn webrtc_handshake_reply(
+        sign: impl FnOnce(&Keypair, &[u8]) -> Vec<u8>,
+    ) -> (NoiseContext, Keypair, Vec<u8>) {
+        let dialer_id_keys = Keypair::generate();
+        let responder_id_keys = Keypair::generate();
+        let prologue = b"libp2p-webrtc-noise:prologue".to_vec();
+
+        let mut dialer = NoiseContext::with_prologue(&dialer_id_keys, prologue.clone()).unwrap();
+
+        let builder: Builder<'_> = Builder::with_resolver(
+            NOISE_PARAMETERS.parse().expect("qed; Valid noise pattern"),
+            Box::new(protocol::Resolver),
+        );
+        let dh_keypair = builder.generate_keypair().unwrap();
+        let mut responder = builder
+            .local_private_key(&dh_keypair.private)
+            .prologue(&prologue)
+            .build_responder()
+            .unwrap();
+
+        let first_message = dialer.first_message(Role::Dialer).unwrap();
+        let mut buffer = vec![0u8; 256];
+        responder.read_message(&first_message[2..], &mut buffer).unwrap();
+
+        let payload = handshake_schema::NoiseHandshakePayload {
+            identity_key: Some(
+                PublicKey::Ed25519(responder_id_keys.public()).to_protobuf_encoding(),
+            ),
+            identity_sig: Some(sign(&responder_id_keys, &dh_keypair.public)),
+            ..Default::default()
+        };
+        let mut payload_buf = Vec::with_capacity(payload.encoded_len());
+        payload.encode(&mut payload_buf).unwrap();
+
+        let mut message = vec![0u8; 2048];
+        let nwritten = responder.write_message(&payload_buf, &mut message).unwrap();
+        message.truncate(nwritten);
+
+        let mut reply = (nwritten as u16).to_be_bytes().to_vec();
+        reply.extend_from_slice(&message);
+
+        (dialer, responder_id_keys, reply)
+    }
+
+    #[cfg(feature = "webrtc")]
+    #[test]
+    fn webrtc_handshake_verifies_identity_signature() {
+        let (mut dialer, responder_id_keys, reply) =
+            webrtc_handshake_reply(|id_keys, noise_static_pub| {
+                id_keys.sign(&[STATIC_KEY_DOMAIN.as_bytes(), noise_static_pub].concat())
+            });
+
+        let peer = dialer.get_remote_peer_id(&reply).unwrap();
+        assert_eq!(
+            peer,
+            PeerId::from_public_key(&responder_id_keys.public().into())
+        );
+    }
+
+    #[cfg(feature = "webrtc")]
+    #[test]
+    fn webrtc_handshake_rejects_bad_identity_signature() {
+        let (mut dialer, _responder_id_keys, reply) =
+            webrtc_handshake_reply(|id_keys, _noise_static_pub| id_keys.sign(b"wrong data"));
+
+        match dialer.get_remote_peer_id(&reply).unwrap_err() {
+            NegotiationError::BadSignature => {}
+            error => panic!("invalid error: {error:?}"),
         }
     }
 
