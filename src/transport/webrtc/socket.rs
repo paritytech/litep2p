@@ -29,6 +29,13 @@ use std::{
 use quinn_udp::{RecvMeta, Transmit, UdpSockRef, UdpSocketState};
 use tokio::{io::Interest, net::UdpSocket};
 
+/// Upper bound of a GRO segment size. Segments are bounded by the path MTU;
+/// assume a conventional Ethernet MTU.
+const MAX_GRO_SEGMENT_SIZE: usize = 1500;
+
+/// Upper bound of a UDP payload size.
+pub(crate) const MAX_DATAGRAM_SIZE: usize = 64 * 1024;
+
 /// UDP socket with API for getting/setting local packet address & GRO support.
 pub(crate) struct WebRtcSocket {
     /// Tokio UDP socket.
@@ -42,6 +49,12 @@ impl WebRtcSocket {
     pub(crate) fn new(socket: UdpSocket) -> io::Result<Self> {
         let state = UdpSocketState::new(UdpSockRef::from(&socket))?;
         Ok(Self { socket, state })
+    }
+
+    /// Buffer size [`Self::poll_recv`] needs to never truncate a read: enough for the largest
+    /// GRO list the kernel can coalesce, and for a maximum-size datagram when GRO is off.
+    pub(crate) fn max_read_size(&self) -> usize {
+        (self.state.gro_segments() * MAX_GRO_SEGMENT_SIZE).max(MAX_DATAGRAM_SIZE)
     }
 
     /// Poll a single read. The filled part of `buf` (`meta.len` bytes) may contain

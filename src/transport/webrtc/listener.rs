@@ -16,7 +16,11 @@ use socket2::{Domain, Socket, Type};
 use tokio::net::UdpSocket;
 
 use super::AddressPair;
-use crate::{error::AddressError, transport::webrtc::socket::WebRtcSocket, Error};
+use crate::{
+    error::AddressError,
+    transport::webrtc::socket::{WebRtcSocket, MAX_DATAGRAM_SIZE},
+    Error,
+};
 
 const LOG_TARGET: &str = "litep2p::webrtc::listener";
 
@@ -135,6 +139,16 @@ impl WebRtcListener {
                     .with(Protocol::Certhash(certhash))
             })
             .collect())
+    }
+
+    /// Buffer size [`Self::poll_recv_from`] needs to never truncate a read, i.e. the largest
+    /// read any of the bound sockets can produce.
+    pub(super) fn max_read_size(&self) -> usize {
+        self.listen_sockets
+            .iter()
+            .map(|(_, socket)| socket.max_read_size())
+            .max()
+            .unwrap_or(MAX_DATAGRAM_SIZE)
     }
 
     /// Poll the sockets for an inbound read.

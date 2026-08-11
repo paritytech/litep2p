@@ -88,10 +88,6 @@ const LOG_TARGET: &str = "litep2p::webrtc";
 const REMOTE_FINGERPRINT: &str =
     "sha-256 FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF";
 
-/// Capacity of the buffer used for a single socket read. GRO can coalesce up to
-/// (64 KiB - IP/UDP headers) of same-flow datagrams into one read.
-const WEBRTC_BUFFER_SIZE: usize = 64 * 1024;
-
 /// Connection context.
 struct ConnectionContext {
     /// Remote peer ID.
@@ -450,6 +446,7 @@ impl TransportBuilder for WebRtcTransport {
 
         let (listener, listen_multi_addresses) =
             WebRtcListener::new(config.listen_addresses, cert_hash)?;
+        let read_buffer = vec![0; listener.max_read_size()];
 
         Ok((
             Self {
@@ -463,7 +460,7 @@ impl TransportBuilder for WebRtcTransport {
                 timeouts: HashMap::new(),
                 pending_events: VecDeque::new(),
                 datagram_buffer_size: config.datagram_buffer_size,
-                read_buffer: vec![0; WEBRTC_BUFFER_SIZE],
+                read_buffer,
             },
             listen_multi_addresses,
         ))
