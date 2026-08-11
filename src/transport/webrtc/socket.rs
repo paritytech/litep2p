@@ -145,7 +145,7 @@ mod tests {
         loop {
             match sender.try_send_to(b"litep2p", destination, src_ip) {
                 Ok(()) => break,
-                // Freshly registered socket may not have observed writability yet
+                // `sendmsg` hit a full send buffer, wait for the socket to drain
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock =>
                     sender.socket.writable().await.unwrap(),
                 Err(e) => panic!("send failed: {e}"),
