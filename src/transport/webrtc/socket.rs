@@ -29,7 +29,7 @@ use std::{
 use quinn_udp::{RecvMeta, Transmit, UdpSockRef, UdpSocketState};
 use tokio::{io::Interest, net::UdpSocket};
 
-/// UDP socket paired with its `quinn-udp` state.
+/// UDP socket with API for getting/setting local packet address & GRO support.
 pub(crate) struct WebRtcSocket {
     /// Tokio UDP socket.
     socket: UdpSocket,
@@ -88,5 +88,61 @@ impl WebRtcSocket {
         self.socket.try_io(Interest::WRITABLE, || {
             self.state.try_send(UdpSockRef::from(&self.socket), &transmit)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::future::poll_fn;
+    use std::net::Ipv4Addr;
+
+    async fn webrtc_socket() -> WebRtcSocket {
+        WebRtcSocket::new(UdpSocket::bind("0.0.0.0:0").await.expect("bind socket"))
+            .expect("wrap socket")
+    }
+
+    #[tokio::test]
+    async fn wildcard_recv_reports_destination_address() {
+        let receiver = webrtc_socket().await;
+        let port = receiver.socket.local_addr().unwrap().port();
+
+        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        sender.send_to(b"litep2p", (Ipv4Addr::LOCALHOST, port)).await.unwrap();
+
+        let mut buf = [0u8; 1500];
+        let meta = poll_fn(|cx| receiver.poll_recv(cx, &mut buf)).await.unwrap();
+
+        assert_eq!(meta.dst_ip, Some(IpAddr::V4(Ipv4Addr::LOCALHOST)));
+        assert_eq!(meta.addr, sender.local_addr().unwrap());
+        assert_eq!(&buf[..meta.len], b"litep2p");
+    }
+
+    // MacOS does not support binding to anything other than 127.0.0.1 in the loopback range.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn send_sets_source_address() {
+        let src_ip = IpAddr::V4(Ipv4Addr::new(127, 3, 3, 7));
+        let sender = webrtc_socket().await;
+        let port = sender.socket.local_addr().unwrap().port();
+
+        let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let destination = receiver.local_addr().unwrap();
+
+        loop {
+            match sender.try_send_to(b"litep2p", destination, src_ip) {
+                Ok(()) => break,
+                // Freshly registered socket may not have observed writability yet
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock =>
+                    sender.socket.writable().await.unwrap(),
+                Err(e) => panic!("send failed: {e}"),
+            }
+        }
+
+        let mut buf = [0u8; 1500];
+        let (len, from) = receiver.recv_from(&mut buf).await.unwrap();
+
+        assert_eq!(from, SocketAddr::new(src_ip, port));
+        assert_eq!(&buf[..len], b"litep2p");
     }
 }
