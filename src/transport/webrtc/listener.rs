@@ -277,3 +277,102 @@ impl WebRtcListener {
         Ok(socket_address)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::future::poll_fn;
+    use multihash_codetable::MultihashDigest;
+    use std::net::Ipv4Addr;
+
+    fn certhash() -> Multihash<64> {
+        multihash_codetable::Code::Sha2_256.digest(b"certificate")
+    }
+
+    fn unpack_address(address: &Multiaddr) -> (SocketAddr, Multihash<64>) {
+        let mut iter = address.iter();
+        let ip = match iter.next() {
+            Some(Protocol::Ip4(ip)) => IpAddr::V4(ip),
+            Some(Protocol::Ip6(ip)) => IpAddr::V6(ip),
+            protocol => panic!("unexpected protocol: {protocol:?}"),
+        };
+        let Some(Protocol::Udp(port)) = iter.next() else {
+            panic!("expected `Udp`");
+        };
+        assert!(matches!(iter.next(), Some(Protocol::WebRTCDirect)));
+        let Some(Protocol::Certhash(hash)) = iter.next() else {
+            panic!("expected `Certhash`");
+        };
+        assert!(iter.next().is_none());
+        (SocketAddr::new(ip, port), hash)
+    }
+
+    #[test]
+    fn concrete_listen_address_is_advertised_as_is() {
+        let sockaddr: SocketAddr = "192.0.2.1:1234".parse().unwrap();
+        let addresses = WebRtcListener::build_listen_addresses(sockaddr, certhash()).unwrap();
+
+        assert_eq!(addresses.len(), 1);
+        assert_eq!(unpack_address(&addresses[0]), (sockaddr, certhash()));
+    }
+
+    #[test]
+    fn wildcard_v4_expands_to_interface_addresses() {
+        let addresses =
+            WebRtcListener::build_listen_addresses("0.0.0.0:1234".parse().unwrap(), certhash())
+                .unwrap();
+
+        assert!(!addresses.is_empty());
+        for address in &addresses {
+            let (sockaddr, hash) = unpack_address(address);
+            assert!(sockaddr.is_ipv4());
+            assert!(!sockaddr.ip().is_unspecified());
+            assert_eq!(sockaddr.port(), 1234);
+            assert_eq!(hash, certhash());
+        }
+    }
+
+    #[test]
+    fn wildcard_v6_expands_without_link_local() {
+        let addresses =
+            WebRtcListener::build_listen_addresses("[::]:1234".parse().unwrap(), certhash())
+                .unwrap();
+
+        assert!(!addresses.is_empty());
+        for address in &addresses {
+            let (sockaddr, hash) = unpack_address(address);
+            let IpAddr::V6(ip) = sockaddr.ip() else {
+                panic!("expected IPv6, got {sockaddr}");
+            };
+            assert!(!ip.is_unspecified());
+            assert_ne!(ip.segments()[0], 0xfe80);
+            assert_eq!(sockaddr.port(), 1234);
+            assert_eq!(hash, certhash());
+        }
+    }
+
+    #[tokio::test]
+    async fn wildcard_listener_reports_address_pair() {
+        let (mut listener, _) = WebRtcListener::new(
+            vec!["/ip4/0.0.0.0/udp/0/webrtc-direct".parse().unwrap()],
+            certhash(),
+        )
+        .unwrap();
+        let port = listener.listen_sockets[0].0.port();
+
+        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        sender.send_to(b"litep2p", (Ipv4Addr::LOCALHOST, port)).await.unwrap();
+
+        let mut buf = [0u8; 1500];
+        let (addrs, meta, _) = poll_fn(|cx| listener.poll_recv_from(cx, &mut buf)).await.unwrap();
+
+        assert_eq!(
+            addrs,
+            AddressPair {
+                local: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+                remote: sender.local_addr().unwrap(),
+            }
+        );
+        assert_eq!(&buf[..meta.len], b"litep2p");
+    }
+}
