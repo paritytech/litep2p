@@ -256,12 +256,20 @@ impl WebRtcTransport {
                     if let Err(error) =
                         connection.socket().try_send_to(&datagram, destination, addrs.local.ip())
                     {
-                        tracing::warn!(
-                            target: LOG_TARGET,
-                            ?addrs,
-                            ?error,
-                            "failed to send datagram",
-                        );
+                        if error.kind() == std::io::ErrorKind::WouldBlock {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?addrs,
+                                "UDP send buffer full, dropping datagram (str0m will retransmit)",
+                            );
+                        } else {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                ?addrs,
+                                ?error,
+                                "failed to send datagram",
+                            );
+                        }
                     },
                 opening::WebRtcEvent::ConnectionClosed => return ConnectionEvent::ConnectionClosed,
                 opening::WebRtcEvent::ConnectionOpened { peer, endpoint } => {
