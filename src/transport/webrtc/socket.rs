@@ -36,7 +36,7 @@ const MAX_GRO_SEGMENT_SIZE: usize = 1500;
 /// Upper bound of a UDP payload size.
 pub(crate) const MAX_DATAGRAM_SIZE: usize = 64 * 1024;
 
-/// UDP socket with API for getting/setting local packet address & GRO support.
+/// Local packet address aware UDP socket with GRO support.
 pub(crate) struct WebRtcSocket {
     /// Tokio UDP socket.
     socket: UdpSocket,
