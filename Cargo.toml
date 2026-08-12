@@ -29,9 +29,6 @@ multiaddr = "0.18.2"
 multihash = { version = "0.19.4", default-features = false, features = ["std"] }
 multihash-codetable = { version = "0.2.1", default-features = false, features = [
     "sha2",
-    # Bitswap peers may hash blocks with BLAKE2b-256 (0xb220) or Keccak-256
-    # (0x1b, gated behind `sha3`). Without these, the inbound path cannot
-    # rebuild such CIDs and silently drops the blocks.
     "blake2b",
     "sha3",
 ] }
