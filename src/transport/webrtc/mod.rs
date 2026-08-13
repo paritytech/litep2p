@@ -38,7 +38,6 @@ use futures::{future::BoxFuture, stream::FuturesUnordered, Future, Stream, Strea
 use futures_timer::Delay;
 use hickory_resolver::TokioResolver;
 use multiaddr::Multiaddr;
-use multihash_codetable::MultihashDigest;
 use str0m::{
     channel::{ChannelConfig, ChannelId},
     config::DtlsCert,
