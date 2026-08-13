@@ -441,25 +441,22 @@ impl TransportBuilder for WebRtcTransport {
             "start webrtc transport",
         );
 
-        let dtls_cert: DtlsCert = match config.certificate {
-            Some(certificate) => certificate.into(),
+        let dtls_cert = match config.certificate {
+            Some(certificate) => certificate,
             None => {
                 tracing::debug!(target: LOG_TARGET, "generating temporary WebRTC certificate");
-                DtlsCertificate::new()?.into()
+                DtlsCertificate::new()?
             }
         };
 
-        // OpenSsl is used as crypto backend to generate the certificate, it uses sha256.
-        let cert_hash = multihash_codetable::Code::Sha2_256.digest(&dtls_cert.certificate);
-
         let (listener, listen_multi_addresses) =
-            WebRtcListener::new(config.listen_addresses, cert_hash)?;
+            WebRtcListener::new(config.listen_addresses, dtls_cert.certhash())?;
         let read_buffer = vec![0; listener.max_read_size()];
 
         Ok((
             Self {
                 context,
-                dtls_cert,
+                dtls_cert: dtls_cert.into(),
                 listener,
                 open: HashMap::new(),
                 closed_connections: FuturesUnordered::new(),

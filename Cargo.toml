@@ -26,6 +26,7 @@ ip_network = "0.4"
 libc = "0.2.158"
 mockall = "0.13.1"
 multiaddr = "0.18.2"
+multibase = "0.9.2"
 multihash = { version = "0.19.4", default-features = false, features = ["std"] }
 multihash-codetable = { version = "0.2.1", default-features = false, features = [
     "sha2",

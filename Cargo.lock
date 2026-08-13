@@ -1927,6 +1927,7 @@ dependencies = [
  "libp2p",
  "mockall",
  "multiaddr",
+ "multibase",
  "multihash",
  "multihash-codetable",
  "network-interface",

@@ -43,6 +43,16 @@ impl DtlsCertificate {
         })
     }
 
+    /// Get the certificate certhash for WebRTC multiaddress.
+    pub fn certhash() -> Multihash<64> {
+        multihash_codetable::Code::Sha2_256.digest(&dtls_cert.certificate)
+    }
+
+    /// Certhash string representation as in multiaddress.
+    pub fn certhash_b64() -> String {
+        multibase::encode(multibase::Base::Base64Url, self.certhash())
+    }
+
     /// Returns the raw certificate and private-key bytes.
     pub fn as_parts(&self) -> (&Vec<u8>, &Vec<u8>) {
         (&self.certificate, &self.private_key)
