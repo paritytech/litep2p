@@ -434,7 +434,7 @@ impl TransportBuilder for WebRtcTransport {
             ));
         }
 
-        tracing::info!(
+        tracing::debug!(
             target: LOG_TARGET,
             listen_addresses = ?config.listen_addresses,
             "start webrtc transport",
