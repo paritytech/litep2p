@@ -868,7 +868,13 @@ mod tests {
         }
         .to_bytes();
 
-        (expected, schema::bitswap::Block { prefix, data: data.to_vec() })
+        (
+            expected,
+            schema::bitswap::Block {
+                prefix,
+                data: data.to_vec(),
+            },
+        )
     }
 
     // Regression test for silently-dropped inbound blocks: the bulletin/Substrate Bitswap
@@ -914,7 +920,10 @@ mod tests {
             multihash_len: 20,
         }
         .to_bytes();
-        let block = schema::bitswap::Block { prefix, data: b"whatever".to_vec() };
+        let block = schema::bitswap::Block {
+            prefix,
+            data: b"whatever".to_vec(),
+        };
 
         assert!(block_to_response(&peer, block).is_none());
     }
