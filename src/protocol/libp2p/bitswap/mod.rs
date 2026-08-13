@@ -229,54 +229,8 @@ impl Bitswap {
 
             // Process payload (blocks).
             for block in message.payload {
-                let Some(Prefix {
-                    version,
-                    codec,
-                    multihash_type,
-                    multihash_len: _,
-                }) = Prefix::from_bytes(&block.prefix)
-                else {
-                    tracing::trace!(target: LOG_TARGET, ?peer, "invalid CID prefix received");
-                    continue;
-                };
-
-                // Create multihash from the block data.
-                let Ok(code) = Code::try_from(multihash_type) else {
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        multihash_type,
-                        "usupported multihash type",
-                    );
-                    continue;
-                };
-
-                let multihash = code.digest(&block.data);
-
-                // We need to convert multihash to version supported by `cid` crate.
-                let Ok(multihash) =
-                    cid::multihash::Multihash::wrap(multihash.code(), multihash.digest())
-                else {
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        multihash_type,
-                        "multihash size > 64 unsupported",
-                    );
-                    continue;
-                };
-
-                match Cid::new(version, codec, multihash) {
-                    Ok(cid) => responses.push(ResponseType::Block {
-                        cid,
-                        block: block.data,
-                    }),
-                    Err(error) => tracing::trace!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        ?error,
-                        "invalid CID received",
-                    ),
+                if let Some(response) = block_to_response(&peer, block) {
+                    responses.push(response);
                 }
             }
 
@@ -597,6 +551,63 @@ impl Bitswap {
     }
 }
 
+/// Reconstruct an inbound block's [`Cid`] by re-hashing its payload with the multihash
+/// algorithm named in the block prefix, returning it as a [`ResponseType::Block`].
+///
+/// Returns `None` (silently dropping the block) when the prefix is malformed or names a
+/// multihash this build cannot compute. The set of computable hashers is governed by the
+/// `multihash-codetable` features in `Cargo.toml`: a served block whose hasher is not
+/// compiled in cannot be verified here and is discarded with no response to the requester,
+/// so that feature set must cover every hash the peers we talk to may use.
+fn block_to_response(peer: &PeerId, block: schema::bitswap::Block) -> Option<ResponseType> {
+    let Some(Prefix {
+        version,
+        codec,
+        multihash_type,
+        multihash_len: _,
+    }) = Prefix::from_bytes(&block.prefix)
+    else {
+        tracing::trace!(target: LOG_TARGET, ?peer, "invalid CID prefix received");
+        return None;
+    };
+
+    // Create multihash from the block data.
+    let Ok(code) = Code::try_from(multihash_type) else {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            multihash_type,
+            "unsupported multihash type",
+        );
+        return None;
+    };
+
+    let multihash = code.digest(&block.data);
+
+    // We need to convert multihash to version supported by `cid` crate.
+    let Ok(multihash) = cid::multihash::Multihash::wrap(multihash.code(), multihash.digest())
+    else {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            multihash_type,
+            "multihash size > 64 unsupported",
+        );
+        return None;
+    };
+
+    match Cid::new(version, codec, multihash) {
+        Ok(cid) => Some(ResponseType::Block {
+            cid,
+            block: block.data,
+        }),
+        Err(error) => {
+            tracing::trace!(target: LOG_TARGET, ?peer, ?error, "invalid CID received");
+            None
+        }
+    }
+}
+
 async fn send_request(substream: &mut Substream, cids: Vec<(Cid, WantType)>) -> Result<(), Error> {
     let request = schema::bitswap::Message {
         wantlist: Some(schema::bitswap::Wantlist {
@@ -838,6 +849,83 @@ mod tests {
 
     fn pending_action() -> SubstreamAction {
         SubstreamAction::SendRequest(vec![(cid(b"test"), WantType::Have)])
+    }
+
+    /// Build the wire block a peer would send for `data` hashed with multihash `code`,
+    /// paired with the CID we expect [`block_to_response`] to reconstruct for it.
+    fn served_block(multihash_code: u64, data: &[u8]) -> (Cid, schema::bitswap::Block) {
+        let code = Code::try_from(multihash_code)
+            .expect("hasher must be compiled into multihash-codetable");
+        let digest = code.digest(data);
+        let multihash =
+            Multihash::wrap(digest.code(), digest.digest()).expect("to be valid multihash");
+        let expected = Cid::new_v1(0x55, multihash);
+        let prefix = Prefix {
+            version: expected.version(),
+            codec: expected.codec(),
+            multihash_type: multihash_code,
+            multihash_len: expected.hash().size(),
+        }
+        .to_bytes();
+
+        (
+            expected,
+            schema::bitswap::Block {
+                prefix,
+                data: data.to_vec(),
+            },
+        )
+    }
+
+    // Regression test for silently-dropped inbound blocks: the bulletin/Substrate Bitswap
+    // server advertises SHA2-256 (0x12), Keccak-256 (0x1b) and BLAKE2b-256 (0xb220), so the
+    // receive path must be able to reconstruct the CID for a block hashed with any of them.
+    // Previously `multihash-codetable` was built with only the `sha2` feature, so
+    // `Code::try_from` failed for the latter two and those blocks were dropped with no
+    // response, showing up at the requester as timeouts. Keep this in lockstep with the
+    // codetable feature set in `Cargo.toml`.
+    #[test]
+    fn inbound_block_reconstructed_for_every_served_hasher() {
+        let peer = PeerId::random();
+        let data = b"indexed transaction payload";
+
+        for multihash_code in [
+            0x12u64, // sha2-256
+            0x1b,    // keccak-256
+            0xb220,  // blake2b-256
+        ] {
+            let (expected, block) = served_block(multihash_code, data);
+
+            match block_to_response(&peer, block) {
+                Some(ResponseType::Block { cid, block }) => {
+                    assert_eq!(cid, expected, "wrong CID for multihash {multihash_code:#x}");
+                    assert_eq!(block, data, "wrong payload for multihash {multihash_code:#x}");
+                }
+                other => panic!(
+                    "block hashed with multihash {multihash_code:#x} was not reconstructed: {other:?}",
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn inbound_block_with_uncomputable_hasher_is_dropped() {
+        let peer = PeerId::random();
+        // 0x11 = SHA-1, deliberately not in the codetable feature set: the block cannot be
+        // verified, so it is dropped rather than delivered under an unverified CID.
+        let prefix = Prefix {
+            version: Version::V1,
+            codec: 0x55,
+            multihash_type: 0x11,
+            multihash_len: 20,
+        }
+        .to_bytes();
+        let block = schema::bitswap::Block {
+            prefix,
+            data: b"whatever".to_vec(),
+        };
+
+        assert!(block_to_response(&peer, block).is_none());
     }
 
     #[test]

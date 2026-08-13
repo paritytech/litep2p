@@ -29,6 +29,8 @@ multiaddr = "0.18.2"
 multihash = { version = "0.19.4", default-features = false, features = ["std"] }
 multihash-codetable = { version = "0.2.1", default-features = false, features = [
     "sha2",
+    "blake2b",
+    "sha3",
 ] }
 network-interface = "2.0.1"
 parking_lot = "0.12.3"
