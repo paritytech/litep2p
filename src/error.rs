@@ -127,7 +127,9 @@ pub enum Error {
     #[error("Failed to dial peer immediately")]
     ImmediateDialError(#[from] ImmediateDialError),
     #[error("Cannot read system DNS config: `{0}`")]
-    CannotReadSystemDnsConfig(hickory_resolver::ResolveError),
+    CannotReadSystemDnsConfig(hickory_resolver::net::NetError),
+    #[error("Failed to build DNS resolver: `{0}`")]
+    DnsResolverInit(hickory_resolver::net::NetError),
 }
 
 /// Error type for address parsing.

@@ -780,7 +780,7 @@ mod tests {
     use crate::transport::tcp::TcpTransport;
 
     use super::*;
-    use hickory_resolver::{name_server::TokioConnectionProvider, TokioResolver};
+    use hickory_resolver::{net::runtime::TokioRuntimeProvider, TokioResolver};
     use tokio::{io::AsyncWriteExt, net::TcpListener};
 
     #[tokio::test]
@@ -807,9 +807,10 @@ mod tests {
             Arc::new(
                 TokioResolver::builder_with_config(
                     Default::default(),
-                    TokioConnectionProvider::default(),
+                    TokioRuntimeProvider::default(),
                 )
-                .build(),
+                .build()
+                .unwrap(),
             ),
         )
         .await
@@ -909,9 +910,10 @@ mod tests {
             Arc::new(
                 TokioResolver::builder_with_config(
                     Default::default(),
-                    TokioConnectionProvider::default(),
+                    TokioRuntimeProvider::default(),
                 )
-                .build(),
+                .build()
+                .unwrap(),
             ),
         )
         .await
@@ -1058,9 +1060,10 @@ mod tests {
             Arc::new(
                 TokioResolver::builder_with_config(
                     Default::default(),
-                    TokioConnectionProvider::default(),
+                    TokioRuntimeProvider::default(),
                 )
-                .build(),
+                .build()
+                .unwrap(),
             ),
         )
         .await
@@ -1111,9 +1114,10 @@ mod tests {
             Arc::new(
                 TokioResolver::builder_with_config(
                     Default::default(),
-                    TokioConnectionProvider::default(),
+                    TokioRuntimeProvider::default(),
                 )
-                .build(),
+                .build()
+                .unwrap(),
             ),
         )
         .await
@@ -1291,9 +1295,10 @@ mod tests {
             Arc::new(
                 TokioResolver::builder_with_config(
                     Default::default(),
-                    TokioConnectionProvider::default(),
+                    TokioRuntimeProvider::default(),
                 )
-                .build(),
+                .build()
+                .unwrap(),
             ),
         )
         .await
@@ -1426,9 +1431,10 @@ mod tests {
             Arc::new(
                 TokioResolver::builder_with_config(
                     Default::default(),
-                    TokioConnectionProvider::default(),
+                    TokioRuntimeProvider::default(),
                 )
-                .build(),
+                .build()
+                .unwrap(),
             ),
         )
         .await
