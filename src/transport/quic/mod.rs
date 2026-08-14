@@ -41,7 +41,9 @@ use futures::{
 };
 use hickory_resolver::TokioResolver;
 use multiaddr::{Multiaddr, Protocol};
-use quinn::{ClientConfig, Connecting, Connection, Endpoint, IdleTimeout};
+use quinn::{
+    crypto::rustls::QuicClientConfig, ClientConfig, Connecting, Connection, Endpoint, IdleTimeout,
+};
 
 use std::{
     collections::HashMap,
@@ -134,7 +136,7 @@ pub(crate) struct QuicTransport {
 impl QuicTransport {
     /// Attempt to extract `PeerId` from connection certificates.
     fn extract_peer_id(connection: &Connection) -> Option<PeerId> {
-        let certificates: Box<Vec<rustls::Certificate>> =
+        let certificates: Box<Vec<rustls::pki_types::CertificateDer<'static>>> =
             connection.peer_identity()?.downcast().ok()?;
         let p2p_cert = crate::crypto::tls::certificate::parse(certificates.first()?)
             .expect("the certificate was validated during TLS handshake; qed");
@@ -288,12 +290,15 @@ impl Transport for QuicTransport {
                 Ok(Ok(address)) => address,
             };
 
-            let crypto_config =
-                Arc::new(make_client_config(&keypair, Some(peer)).expect("to succeed"));
+            let crypto_config = make_client_config(&keypair, Some(peer)).expect("to succeed");
+            let quic_crypto = Arc::new(
+                QuicClientConfig::try_from(crypto_config)
+                    .expect("TLS config to be valid for QUIC; qed"),
+            );
             let mut transport_config = quinn::TransportConfig::default();
             let timeout = IdleTimeout::try_from(connection_open_timeout).expect("to succeed");
             transport_config.max_idle_timeout(Some(timeout));
-            let mut client_config = ClientConfig::new(crypto_config);
+            let mut client_config = ClientConfig::new(quic_crypto);
             client_config.transport_config(Arc::new(transport_config));
 
             let client_listen_address = if socket_address.is_ipv4() {
@@ -428,12 +433,16 @@ impl Transport for QuicTransport {
                     };
 
                     let crypto_config =
-                        Arc::new(make_client_config(&keypair, Some(peer)).expect("to succeed"));
+                        make_client_config(&keypair, Some(peer)).expect("to succeed");
+                    let quic_crypto = Arc::new(
+                        QuicClientConfig::try_from(crypto_config)
+                            .expect("TLS config to be valid for QUIC; qed"),
+                    );
                     let mut transport_config = quinn::TransportConfig::default();
                     let timeout =
                         IdleTimeout::try_from(connection_open_timeout).expect("to succeed");
                     transport_config.max_idle_timeout(Some(timeout));
-                    let mut client_config = ClientConfig::new(crypto_config);
+                    let mut client_config = ClientConfig::new(quic_crypto);
                     client_config.transport_config(Arc::new(transport_config));
 
                     let client_listen_address = if socket_address.is_ipv4() {
@@ -673,7 +682,7 @@ mod tests {
                 },
             )]),
         };
-        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
 
         let (mut transport1, listen_addresses) =
             QuicTransport::new(handle1, Default::default(), resolver.clone()).unwrap();
