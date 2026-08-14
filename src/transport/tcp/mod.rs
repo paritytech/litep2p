@@ -772,7 +772,7 @@ mod tests {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         };
-        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
 
         let (mut transport1, listen_addresses) =
             TcpTransport::new(handle1, transport_config1, resolver.clone()).unwrap();
@@ -868,7 +868,7 @@ mod tests {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
             ..Default::default()
         };
-        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
 
         let (mut transport1, listen_addresses) =
             TcpTransport::new(handle1, transport_config1, resolver.clone()).unwrap();
@@ -955,7 +955,7 @@ mod tests {
                 },
             )]),
         };
-        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
         let (mut transport1, _) =
             TcpTransport::new(handle1, Default::default(), resolver.clone()).unwrap();
 
@@ -1028,7 +1028,7 @@ mod tests {
     async fn dial_error_reported_for_outbound_connections() {
         let mut manager = TransportManagerBuilder::new().build();
         let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
-        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build());
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
         manager.register_transport(
             SupportedTransport::Tcp,
             Box::new(crate::transport::dummy::DummyTransport::new()),
