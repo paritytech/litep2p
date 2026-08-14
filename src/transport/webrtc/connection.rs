@@ -29,8 +29,10 @@ use crate::{
     transport::{
         webrtc::{
             schema::webrtc::message::Flag,
+            socket::WebRtcSocket,
             substream::{Message, Substream as WebRtcSubstream, SubstreamHandle},
             util::{extract_framed_message, WebRtcMessage},
+            AddressPair,
         },
         Endpoint, SUBSTREAM_OPEN_TIMEOUT,
     },
@@ -46,11 +48,10 @@ use str0m::{
     net::{Protocol as Str0mProtocol, Receive},
     Event, IceConnectionState, Input, Output, Rtc,
 };
-use tokio::{net::UdpSocket, sync::mpsc::Receiver};
+use tokio::sync::mpsc::Receiver;
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -244,14 +245,11 @@ pub struct WebRtcConnection {
     /// Endpoint.
     endpoint: Endpoint,
 
-    /// Peer address
-    peer_address: SocketAddr,
-
-    /// Local address.
-    local_address: SocketAddr,
+    /// Addresses of the session.
+    addrs: AddressPair,
 
     /// Transport socket.
-    socket: Arc<UdpSocket>,
+    socket: Arc<WebRtcSocket>,
 
     /// RX channel for receiving datagrams from the transport.
     dgram_rx: Receiver<Vec<u8>>,
@@ -296,9 +294,8 @@ impl WebRtcConnection {
     pub fn new(
         rtc: Rtc,
         peer: PeerId,
-        peer_address: SocketAddr,
-        local_address: SocketAddr,
-        socket: Arc<UdpSocket>,
+        addrs: AddressPair,
+        socket: Arc<WebRtcSocket>,
         protocol_set: ProtocolSet,
         endpoint: Endpoint,
         dgram_rx: Receiver<Vec<u8>>,
@@ -307,8 +304,7 @@ impl WebRtcConnection {
             rtc,
             protocol_set,
             peer,
-            peer_address,
-            local_address,
+            addrs,
             socket,
             endpoint,
             dgram_rx,
@@ -1134,7 +1130,9 @@ impl WebRtcConnection {
                         "transmit data",
                     );
 
-                    if let Err(error) = self.socket.try_send_to(&v.contents, v.destination) {
+                    if let Err(error) =
+                        self.socket.try_send_to(&v.contents, v.destination, self.addrs.local.ip())
+                    {
                         if error.kind() == std::io::ErrorKind::WouldBlock {
                             tracing::trace!(
                                 target: LOG_TARGET,
@@ -1266,8 +1264,8 @@ impl WebRtcConnection {
                             Instant::now(),
                             Receive {
                                 proto: Str0mProtocol::Udp,
-                                source: self.peer_address,
-                                destination: self.local_address,
+                                source: self.addrs.remote,
+                                destination: self.addrs.local,
                                 contents,
                             },
                         );

@@ -24,7 +24,11 @@ use crate::{
     config::Role,
     crypto::{ed25519::Keypair, noise::NoiseContext},
     transport::{
-        webrtc::util::{extract_framed_message, WebRtcMessage},
+        webrtc::{
+            socket::WebRtcSocket,
+            util::{extract_framed_message, WebRtcMessage},
+            AddressPair,
+        },
         Endpoint,
     },
     types::ConnectionId,
@@ -41,7 +45,7 @@ use str0m::{
     Event, IceConnectionState, Input, Output, Rtc,
 };
 
-use std::{net::SocketAddr, time::Instant};
+use std::{net::SocketAddr, sync::Arc, time::Instant};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::webrtc::connection";
@@ -110,11 +114,11 @@ pub struct OpeningWebRtcConnection {
     /// Local keypair.
     id_keypair: Keypair,
 
-    /// Peer address
-    peer_address: SocketAddr,
+    /// Addresses of the session.
+    addrs: AddressPair,
 
-    /// Local address.
-    local_address: SocketAddr,
+    /// Socket the session's datagrams are received on and sent from.
+    socket: Arc<WebRtcSocket>,
 
     /// Inbound noise-channel byte buffer for reassembling protobuf frames.
     ///
@@ -166,13 +170,13 @@ impl OpeningWebRtcConnection {
         connection_id: ConnectionId,
         noise_channel_id: ChannelId,
         id_keypair: Keypair,
-        peer_address: SocketAddr,
-        local_address: SocketAddr,
+        addrs: AddressPair,
+        socket: Arc<WebRtcSocket>,
     ) -> OpeningWebRtcConnection {
         tracing::trace!(
             target: LOG_TARGET,
             ?connection_id,
-            ?peer_address,
+            ?addrs,
             "new connection opened",
         );
 
@@ -182,8 +186,8 @@ impl OpeningWebRtcConnection {
             connection_id,
             noise_channel_id,
             id_keypair,
-            peer_address,
-            local_address,
+            addrs,
+            socket,
             noise_recv_buffer: BytesMut::new(),
         }
     }
@@ -191,6 +195,11 @@ impl OpeningWebRtcConnection {
     /// Returns the [`ConnectionId`] assigned to this opening connection.
     pub fn connection_id(&self) -> &ConnectionId {
         &self.connection_id
+    }
+
+    /// Socket the session's datagrams are received on and sent from.
+    pub fn socket(&self) -> &Arc<WebRtcSocket> {
+        &self.socket
     }
 
     /// Get remote fingerprint to bytes.
@@ -224,7 +233,7 @@ impl OpeningWebRtcConnection {
         tracing::trace!(
             target: LOG_TARGET,
             connection_id = ?self.connection_id,
-            peer = ?self.peer_address,
+            peer = ?self.addrs.remote,
             "send initial noise handshake",
         );
 
@@ -262,7 +271,7 @@ impl OpeningWebRtcConnection {
             tracing::error!(
                 target: LOG_TARGET,
                 connection_id = ?self.connection_id,
-                peer = ?self.peer_address,
+                peer = ?self.addrs.remote,
                 ?error,
                 "failed to handle timeout for `Rtc`"
             );
@@ -287,7 +296,7 @@ impl OpeningWebRtcConnection {
         tracing::trace!(
             target: LOG_TARGET,
             connection_id = ?self.connection_id,
-            peer = ?self.peer_address,
+            peer = ?self.addrs.remote,
             len = data.len(),
             buffered = self.noise_recv_buffer.len(),
             "noise channel data received",
@@ -301,7 +310,7 @@ impl OpeningWebRtcConnection {
                 tracing::trace!(
                     target: LOG_TARGET,
                     connection_id = ?self.connection_id,
-                    peer = ?self.peer_address,
+                    peer = ?self.addrs.remote,
                     buffered = self.noise_recv_buffer.len(),
                     "incomplete noise frame, waiting for more bytes",
                 );
@@ -312,7 +321,7 @@ impl OpeningWebRtcConnection {
         tracing::trace!(
             target: LOG_TARGET,
             connection_id = ?self.connection_id,
-            peer = ?self.peer_address,
+            peer = ?self.addrs.remote,
             "handle noise handshake reply",
         );
 
@@ -331,7 +340,7 @@ impl OpeningWebRtcConnection {
             tracing::debug!(
                 target: LOG_TARGET,
                 connection_id = ?self.connection_id,
-                peer = ?self.peer_address,
+                peer = ?self.addrs.remote,
                 "non-payload frame during noise handshake, closing channel"
             );
             return Err(Error::ConnectionClosed);
@@ -341,7 +350,7 @@ impl OpeningWebRtcConnection {
         tracing::trace!(
             target: LOG_TARGET,
             connection_id = ?self.connection_id,
-            peer = ?self.peer_address,
+            peer = ?self.addrs.remote,
             ?remote_peer_id,
             "remote reply parsed successfully",
         );
@@ -361,8 +370,8 @@ impl OpeningWebRtcConnection {
                 .map_err(|_| Error::InvalidCertificate)?;
 
         let address = Multiaddr::empty()
-            .with(Protocol::from(self.peer_address.ip()))
-            .with(Protocol::Udp(self.peer_address.port()))
+            .with(Protocol::from(self.addrs.remote.ip()))
+            .with(Protocol::Udp(self.addrs.remote.port()))
             .with(Protocol::WebRTCDirect)
             .with(Protocol::Certhash(certificate))
             .with(Protocol::P2p(remote_peer_id.into()));
@@ -379,7 +388,7 @@ impl OpeningWebRtcConnection {
         tracing::trace!(
             target: LOG_TARGET,
             connection_id = ?self.connection_id,
-            peer = ?self.peer_address,
+            peer = ?self.addrs.remote,
             "accept webrtc connection",
         );
 
@@ -413,16 +422,16 @@ impl OpeningWebRtcConnection {
     pub fn on_input(&mut self, buffer: DatagramRecv) -> crate::Result<()> {
         tracing::trace!(
             target: LOG_TARGET,
-            peer = ?self.peer_address,
+            peer = ?self.addrs.remote,
             "handle input from peer",
         );
 
         let message = Input::Receive(
             Instant::now(),
             Receive {
-                source: self.peer_address,
+                source: self.addrs.remote,
                 proto: Str0mProtocol::Udp,
-                destination: self.local_address,
+                destination: self.addrs.local,
                 contents: buffer,
             },
         );
@@ -432,7 +441,7 @@ impl OpeningWebRtcConnection {
         self.rtc.handle_input(message).map_err(|error| {
             tracing::debug!(
                 target: LOG_TARGET,
-                source = ?self.peer_address,
+                source = ?self.addrs.remote,
                 ?error,
                 "failed to handle data"
             );
@@ -446,7 +455,7 @@ impl OpeningWebRtcConnection {
             tracing::debug!(
                 target: LOG_TARGET,
                 connection_id = ?self.connection_id,
-                peer = ?self.peer_address,
+                peer = ?self.addrs.remote,
                 "`Rtc` is not alive, closing `WebRtcConnection`"
             );
 
@@ -460,7 +469,7 @@ impl OpeningWebRtcConnection {
                     tracing::debug!(
                         target: LOG_TARGET,
                         connection_id = ?self.connection_id,
-                        peer = ?self.peer_address,
+                        peer = ?self.addrs.remote,
                         ?error,
                         "`WebRtcConnection::poll_process()` failed",
                     );
@@ -474,7 +483,7 @@ impl OpeningWebRtcConnection {
                     tracing::trace!(
                         target: LOG_TARGET,
                         connection_id = ?self.connection_id,
-                        peer = ?self.peer_address,
+                        peer = ?self.addrs.remote,
                         "transmit data",
                     );
 
@@ -490,7 +499,7 @@ impl OpeningWebRtcConnection {
                             tracing::trace!(
                                 target: LOG_TARGET,
                                 connection_id = ?self.connection_id,
-                                peer = ?self.peer_address,
+                                peer = ?self.addrs.remote,
                                 "ice connection closed",
                             );
                             return WebRtcEvent::ConnectionClosed;
@@ -499,7 +508,7 @@ impl OpeningWebRtcConnection {
                         tracing::trace!(
                             target: LOG_TARGET,
                             connection_id = ?self.connection_id,
-                            peer = ?self.peer_address,
+                            peer = ?self.addrs.remote,
                             ?channel_id,
                             ?name,
                             "channel opened",
@@ -509,7 +518,7 @@ impl OpeningWebRtcConnection {
                             tracing::warn!(
                                 target: LOG_TARGET,
                                 connection_id = ?self.connection_id,
-                                peer = ?self.peer_address,
+                                peer = ?self.addrs.remote,
                                 ?channel_id,
                                 "ignoring opened channel",
                             );
@@ -529,7 +538,7 @@ impl OpeningWebRtcConnection {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 connection_id = ?self.connection_id,
-                                peer = ?self.peer_address,
+                                peer = ?self.addrs.remote,
                                 ?error,
                                 "noise channel open failed",
                             );
@@ -540,7 +549,7 @@ impl OpeningWebRtcConnection {
                         tracing::trace!(
                             target: LOG_TARGET,
                             connection_id = ?self.connection_id,
-                            peer = ?self.peer_address,
+                            peer = ?self.addrs.remote,
                             "data received over channel",
                         );
 
@@ -549,7 +558,7 @@ impl OpeningWebRtcConnection {
                                 target: LOG_TARGET,
                                 channel_id = ?data.id,
                                 connection_id = ?self.connection_id,
-                                peer = ?self.peer_address,
+                                peer = ?self.addrs.remote,
                                 "ignoring data from channel",
                             );
                             continue;
@@ -562,7 +571,7 @@ impl OpeningWebRtcConnection {
                                 tracing::debug!(
                                     target: LOG_TARGET,
                                     connection_id = ?self.connection_id,
-                                    peer = ?self.peer_address,
+                                    peer = ?self.addrs.remote,
                                     ?error,
                                     "noise channel data handling failed",
                                 );
@@ -574,7 +583,7 @@ impl OpeningWebRtcConnection {
                         tracing::debug!(
                             target: LOG_TARGET,
                             connection_id = ?self.connection_id,
-                            peer = ?self.peer_address,
+                            peer = ?self.addrs.remote,
                             ?channel_id,
                             "channel closed",
                         );
@@ -587,7 +596,7 @@ impl OpeningWebRtcConnection {
                                     tracing::debug!(
                                         target: LOG_TARGET,
                                         connection_id = ?self.connection_id,
-                                        peer = ?self.peer_address,
+                                        peer = ?self.addrs.remote,
                                         ?err,
                                         "Failed creating remote peer fingerprint"
                                     );
@@ -601,7 +610,7 @@ impl OpeningWebRtcConnection {
                                     tracing::debug!(
                                         target: LOG_TARGET,
                                         connection_id = ?self.connection_id,
-                                        peer = ?self.peer_address,
+                                        peer = ?self.addrs.remote,
                                         ?err,
                                         "Failed creating local peer fingerprint"
                                     );
@@ -618,7 +627,7 @@ impl OpeningWebRtcConnection {
                                     tracing::error!(
                                         target: LOG_TARGET,
                                         connection_id = ?self.connection_id,
-                                        peer = ?self.peer_address,
+                                        peer = ?self.addrs.remote,
                                         "NoiseContext failed with error {err}",
                                     );
 
@@ -629,7 +638,7 @@ impl OpeningWebRtcConnection {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 connection_id = ?self.connection_id,
-                                peer = ?self.peer_address,
+                                peer = ?self.addrs.remote,
                                 "connection opened",
                             );
 
@@ -639,7 +648,7 @@ impl OpeningWebRtcConnection {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 connection_id = ?self.connection_id,
-                                peer = ?self.peer_address,
+                                peer = ?self.addrs.remote,
                                 ?state,
                                 "invalid state for connection"
                             );

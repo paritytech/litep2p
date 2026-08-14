@@ -6,11 +6,16 @@
 //!
 //! litep2p does not persist the certificate itself, persistence is left to the caller.
 
+use crate::types::multihash::Multihash;
+use multihash_codetable::MultihashDigest as _;
 use str0m::{config::DtlsCert, crypto::CryptoError, error::DtlsError, RtcError};
 
+/// Local certificate & key used for DTLS connections.
 #[derive(Debug)]
 pub struct DtlsCertificate {
+    /// Certificate as X.509 DER.
     certificate: Vec<u8>,
+    /// Matching private key as PKCS#8 DER.
     private_key: Vec<u8>,
 }
 
@@ -38,6 +43,16 @@ impl DtlsCertificate {
             certificate: dtls_cert.certificate,
             private_key: dtls_cert.private_key,
         })
+    }
+
+    /// Get the certificate certhash for WebRTC multiaddress.
+    pub fn certhash(&self) -> Multihash<64> {
+        multihash_codetable::Code::Sha2_256.digest(&self.certificate)
+    }
+
+    /// Certhash string representation as in multiaddress.
+    pub fn certhash_b64(&self) -> String {
+        multibase::encode(multibase::Base::Base64Url, self.certhash().to_bytes())
     }
 
     /// Returns the raw certificate and private-key bytes.

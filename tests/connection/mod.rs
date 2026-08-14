@@ -27,6 +27,8 @@ use litep2p::{
     Litep2p, Litep2pEvent, PeerId,
 };
 
+#[cfg(feature = "webrtc")]
+use litep2p::transport::webrtc::config::Config as WebRtcConfig;
 #[cfg(feature = "websocket")]
 use litep2p::transport::websocket::config::Config as WebSocketConfig;
 #[cfg(feature = "quic")]
@@ -41,8 +43,10 @@ use tokio::net::UdpSocket;
 
 use crate::common::{add_transport, Transport};
 
-#[cfg(feature = "websocket")]
+#[cfg(any(feature = "webrtc", feature = "websocket"))]
 use std::collections::HashSet;
+#[cfg(feature = "webrtc")]
+use std::net::IpAddr;
 
 #[cfg(test)]
 mod failed_addresses_on_success;
@@ -1342,6 +1346,95 @@ async fn unspecified_listen_address_websocket() {
             }
         }
     }
+}
+
+// WebRTC cannot dial, so instead of connecting over every interface address like the tests
+// above, assert the wildcard listen addresses expand to exactly the addresses of the host.
+#[cfg(feature = "webrtc")]
+#[tokio::test]
+async fn unspecified_listen_address_webrtc() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let config = ConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_webrtc(WebRtcConfig {
+            listen_addresses: vec![
+                "/ip4/0.0.0.0/udp/0/webrtc-direct".parse().unwrap(),
+                "/ip6/::/udp/0/webrtc-direct".parse().unwrap(),
+            ],
+            ..Default::default()
+        })
+        .build();
+
+    let litep2p = Litep2p::new(config).unwrap();
+    let peer = *litep2p.local_peer_id();
+
+    // Every address is expected to be
+    // `/ip{4,6}/<ip>/udp/<port>/webrtc-direct/certhash/<hash>/p2p/<peer>`.
+    let advertised: HashSet<(IpAddr, u16)> = litep2p
+        .listen_addresses()
+        .map(|address| {
+            let mut iter = address.iter();
+            let ip = match iter.next() {
+                Some(Protocol::Ip4(ip)) => IpAddr::V4(ip),
+                Some(Protocol::Ip6(ip)) => IpAddr::V6(ip),
+                protocol => panic!("unexpected protocol {protocol:?} in {address}"),
+            };
+            let Some(Protocol::Udp(port)) = iter.next() else {
+                panic!("expected `Udp` in {address}");
+            };
+            assert!(
+                matches!(iter.next(), Some(Protocol::WebRTCDirect)),
+                "{address}"
+            );
+            assert!(
+                matches!(iter.next(), Some(Protocol::Certhash(_))),
+                "{address}"
+            );
+            assert_eq!(iter.next(), Some(Protocol::P2p(peer.into())), "{address}");
+            assert_eq!(iter.next(), None, "{address}");
+
+            assert!(
+                !ip.is_unspecified(),
+                "wildcard address advertised: {address}"
+            );
+            // `/udp/0` must have been resolved to the actually bound port.
+            assert_ne!(port, 0, "unresolved ephemeral port: {address}");
+
+            (ip, port)
+        })
+        .collect();
+
+    // Both families are bound separately, so each gets its own ephemeral port. A family with
+    // no advertisable address on this host (e.g. IPv6 disabled) contributes nothing.
+    let ip4_port = advertised.iter().find(|(ip, _)| ip.is_ipv4()).map(|(_, port)| *port);
+    let ip6_port = advertised.iter().find(|(ip, _)| ip.is_ipv6()).map(|(_, port)| *port);
+
+    let mut expected = HashSet::new();
+    for iface in NetworkInterface::show().unwrap() {
+        for address in iface.addr {
+            match address {
+                network_interface::Addr::V4(record) =>
+                    if let Some(port) = ip4_port {
+                        expected.insert((IpAddr::V4(record.ip), port));
+                    },
+                network_interface::Addr::V6(record) => {
+                    // Link-local addresses are deliberately not advertised.
+                    if record.ip.segments()[0] != 0xfe80 {
+                        if let Some(port) = ip6_port {
+                            expected.insert((IpAddr::V6(record.ip), port));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Loopback always exists, so this also guards against both sets being vacuously empty.
+    assert!(!advertised.is_empty());
+    assert_eq!(advertised, expected);
 }
 
 #[tokio::test]
