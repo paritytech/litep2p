@@ -39,6 +39,7 @@ use std::io::{self, ErrorKind};
 // Please note that this error is not propagated directly to the user.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("Peer `{0}` does not exist")]
     PeerDoesntExist(PeerId),
@@ -127,9 +128,9 @@ pub enum Error {
     #[error("Failed to dial peer immediately")]
     ImmediateDialError(#[from] ImmediateDialError),
     #[error("Cannot read system DNS config: `{0}`")]
-    CannotReadSystemDnsConfig(hickory_resolver::net::NetError),
+    CannotReadSystemDnsConfig(DnsInitError),
     #[error("Failed to build DNS resolver: `{0}`")]
-    DnsResolverInit(hickory_resolver::net::NetError),
+    DnsResolverInit(DnsInitError),
 }
 
 /// Error type for address parsing.
@@ -426,6 +427,22 @@ pub enum DnsError {
     /// For example, DNSv4 was expected but DNSv6 was provided.
     #[error("DNS type is different from the provided IP address")]
     IpVersionMismatch,
+}
+
+/// Error during DNS resolver initialization.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct DnsInitError(String);
+
+impl DnsInitError {
+    /// Erase a resolver error into an opaque [`DnsInitError`] to stop leaking hickory error types
+    /// into public litep2p API.
+    ///
+    /// Takes `impl Display` rather than a concrete type because `read_system_conf` returns a
+    /// different error type per target OS.
+    pub(crate) fn new(error: impl std::fmt::Display) -> Self {
+        Self(error.to_string())
+    }
 }
 
 impl From<Multihash> for Error {

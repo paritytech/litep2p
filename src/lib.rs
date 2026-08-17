@@ -32,7 +32,7 @@
 use crate::{
     addresses::PublicAddresses,
     config::Litep2pConfig,
-    error::DialError,
+    error::{DialError, DnsInitError},
     protocol::{
         libp2p::{bitswap::Bitswap, identify::Identify, kademlia::Kademlia, ping::Ping},
         mdns::Mdns,
@@ -164,7 +164,7 @@ impl Litep2p {
 
         let (resolver_config, mut resolver_opts) = if litep2p_config.use_system_dns_config {
             hickory_resolver::system_conf::read_system_conf()
-                .map_err(Error::CannotReadSystemDnsConfig)?
+                .map_err(|error| Error::CannotReadSystemDnsConfig(DnsInitError::new(error)))?
         } else {
             (
                 ResolverConfig::udp_and_tcp(&GOOGLE),
@@ -177,7 +177,7 @@ impl Litep2p {
             TokioResolver::builder_with_config(resolver_config, TokioRuntimeProvider::default())
                 .with_options(resolver_opts)
                 .build()
-                .map_err(Error::DnsResolverInit)?,
+                .map_err(|error| Error::DnsResolverInit(DnsInitError::new(error)))?,
         );
 
         let supported_transports = Self::supported_transports(&litep2p_config);
