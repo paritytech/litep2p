@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-08-17
+
+This release focuses on WebRTC. It is the first release with official WebRTC support. Expect things to break and get fixed in subsequent point releases.
+
+This release is also semver breaking on the error API. `Error::CannotReadSystemDnsConfig` now carries an opaque `DnsInitError` instead of a `hickory-resolver` error type, and the new `Error::DnsResolverInit` variant reports resolver construction failures. `Error` is now `#[non_exhaustive]`, so external `match` expressions over it require a wildcard arm. Together these changes keep `hickory-resolver` out of the public API, making future resolver bumps semver compatible.
+
+### Added
+
+- webrtc: support wildcard listen addresses  ([#640](https://github.com/paritytech/litep2p/pull/640))
+- bitswap: enable Keccak and BLAKE2b hashers for CIDs  ([#641](https://github.com/paritytech/litep2p/pull/641))
+
+### Changed
+
+- deps: bump `hickory-resolver` and `str0m`  ([#642](https://github.com/paritytech/litep2p/pull/642))
+- deps: bump `str0m` to 0.22  ([#639](https://github.com/paritytech/litep2p/pull/639))
+- webrtc: use a shared 16 KiB buffer for the `WebRtcTransport` stream ([#623](https://github.com/paritytech/litep2p/pull/623))
+
+### Fixed
+
+- dns: stop leaking hickory error types in litep2p's public API  ([#643](https://github.com/paritytech/litep2p/pull/643))
+- webrtc: enforce strict client network identity verification  ([#637](https://github.com/paritytech/litep2p/pull/637))
+- webrtc: fix input backpressure  ([#626](https://github.com/paritytech/litep2p/pull/626))
+- webrtc: properly handle `str0m::Event::Closed`  ([#627](https://github.com/paritytech/litep2p/pull/627))
+
 ## [0.14.3] - 2026-06-22
 
 This patch release is dedicated entirely to strengthening the WebRTC transport layer, specifically focusing on connection resilience and build stability.
