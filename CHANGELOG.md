@@ -25,7 +25,7 @@ This release is also semver breaking on the error API. `Error::CannotReadSystemD
 ### Fixed
 
 - dns: stop leaking hickory error types in litep2p's public API  ([#643](https://github.com/paritytech/litep2p/pull/643))
-- webrtc: enfore strict client network identity verification  ([#637](https://github.com/paritytech/litep2p/pull/637))
+- webrtc: enforce strict client network identity verification  ([#637](https://github.com/paritytech/litep2p/pull/637))
 - webrtc: fix input backpressure  ([#626](https://github.com/paritytech/litep2p/pull/626))
 - webrtc: properly handle `str0m::Event::Closed`  ([#627](https://github.com/paritytech/litep2p/pull/627))
 
