@@ -39,6 +39,7 @@ use std::io::{self, ErrorKind};
 // Please note that this error is not propagated directly to the user.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("Peer `{0}` does not exist")]
     PeerDoesntExist(PeerId),
