@@ -7,24 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.15.0] - 2026-08-17
 
-- Stop leaking hickory error types in litep2p public API  ([#643](https://github.com/paritytech/litep2p/pull/643))
+This release focuses on WebRTC. It is the first release with official WebRTC support. Expect things to break and get fixed in subsequent point releases.
+
+This release is also semver breaking on the error API. `Error::CannotReadSystemDnsConfig` now carries an opaque `DnsInitError` instead of a `hickory-resolver` error type, and the new `Error::DnsResolverInit` variant reports resolver construction failures. `Error` is now `#[non_exhaustive]`, so external `match` expressions over it require a wildcard arm. Together these changes keep `hickory-resolver` out of the public API, making future resolver bumps semver compatible.
+
+### Added
+
 - webrtc: support wildcard listen addresses  ([#640](https://github.com/paritytech/litep2p/pull/640))
-- deps: bump hickory-resolver and str0m  ([#642](https://github.com/paritytech/litep2p/pull/642))
-- Enable keccak and blake2 hashers for CIDs  ([#641](https://github.com/paritytech/litep2p/pull/641))
-- build(deps): bump Swatinem/rust-cache from 2.8.2 to 2.9.1  ([#560](https://github.com/paritytech/litep2p/pull/560))
-- cargo: Bump str0m to 0.22  ([#639](https://github.com/paritytech/litep2p/pull/639))
-- webrtc: strict client network identity verification  ([#637](https://github.com/paritytech/litep2p/pull/637))
-- build(deps): bump time from 0.3.41 to 0.3.54 in /fuzz/structure-aware  ([#636](https://github.com/paritytech/litep2p/pull/636))
-- build(deps): bump actions/checkout from 7.0.0 to 7.0.1  ([#635](https://github.com/paritytech/litep2p/pull/635))
-- kad: Fix clippy  ([#634](https://github.com/paritytech/litep2p/pull/634))
-- build(deps): bump actions/setup-go from 6 to 7  ([#633](https://github.com/paritytech/litep2p/pull/633))
-- fix(webrtc): input backpressure  ([#626](https://github.com/paritytech/litep2p/pull/626))
-- build(deps): bump actions/setup-go from 5 to 6  ([#632](https://github.com/paritytech/litep2p/pull/632))
-- ci: Add CI step for webrtc compatibility with libp2p-go  ([#628](https://github.com/paritytech/litep2p/pull/628))
-- ci/release: Sign release commit PRs before pushing  ([#629](https://github.com/paritytech/litep2p/pull/629))
-- fix(webrtc): properly handle `str0m::Event::Closed`  ([#627](https://github.com/paritytech/litep2p/pull/627))
-- feat(webrtc): WebRtcTransport Stream now uses shared 16KiB buffer  ([#623](https://github.com/paritytech/litep2p/pull/623))
-- build(deps): bump actions/checkout from 6 to 7  ([#625](https://github.com/paritytech/litep2p/pull/625))
+- bitswap: enable Keccak and BLAKE2b hashers for CIDs  ([#641](https://github.com/paritytech/litep2p/pull/641))
+
+### Changed
+
+- Bump hickory-resolver and str0m  ([#642](https://github.com/paritytech/litep2p/pull/642))
+- Bump str0m to 0.22  ([#639](https://github.com/paritytech/litep2p/pull/639))
+- webrtc: use a shared 16 KiB buffer for the `WebRtcTransport` stream ([#623](https://github.com/paritytech/litep2p/pull/623))
+
+### Fixed
+
+- dns: stop leaking hickory error types in litep2p's public API  ([#643](https://github.com/paritytech/litep2p/pull/643))
+- webrtc: enfore strict client network identity verification  ([#637](https://github.com/paritytech/litep2p/pull/637))
+- webrtc: fix input backpressure  ([#626](https://github.com/paritytech/litep2p/pull/626))
+- webrtc: properly handle `str0m::Event::Closed`  ([#627](https://github.com/paritytech/litep2p/pull/627))
 
 ## [0.14.3] - 2026-06-22
 
