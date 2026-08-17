@@ -18,8 +18,8 @@ This release is also semver breaking on the error API. `Error::CannotReadSystemD
 
 ### Changed
 
-- Bump hickory-resolver and str0m  ([#642](https://github.com/paritytech/litep2p/pull/642))
-- Bump str0m to 0.22  ([#639](https://github.com/paritytech/litep2p/pull/639))
+- deps: bump `hickory-resolver` and `str0m`  ([#642](https://github.com/paritytech/litep2p/pull/642))
+- deps: bump `str0m` to 0.22  ([#639](https://github.com/paritytech/litep2p/pull/639))
 - webrtc: use a shared 16 KiB buffer for the `WebRtcTransport` stream ([#623](https://github.com/paritytech/litep2p/pull/623))
 
 ### Fixed
