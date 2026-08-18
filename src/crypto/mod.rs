@@ -27,7 +27,14 @@ pub mod ed25519;
 #[cfg(feature = "rsa")]
 pub mod rsa;
 
+// `noise` is exposed under the `fuzz` feature so the out-of-tree harnesses under
+// `fuzz/` can drive `NoiseContext::get_remote_peer_id` — the pre-authentication
+// identity-payload parser — directly from fuzzer bytes. See `fuzz/README.md`.
+#[cfg(not(feature = "fuzz"))]
 pub(crate) mod noise;
+#[cfg(feature = "fuzz")]
+pub mod noise;
+
 #[cfg(feature = "quic")]
 pub(crate) mod tls;
 pub(crate) mod keys_proto {

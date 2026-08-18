@@ -194,6 +194,29 @@ impl NoiseContext {
         parse_and_verify_peer_id(payload, self.get_handshake_dh_remote_pubkey()?)
     }
 
+    /// Parse and verify a **decrypted** WebRTC Noise identity payload.
+    ///
+    /// This is the tail of [`NoiseContext::get_remote_peer_id()`] — everything after
+    /// `snow` has decrypted the second handshake message — exposed so fuzzers can drive
+    /// the protobuf/public-key/signature parsing without first having to produce a valid
+    /// Noise ciphertext.
+    ///
+    /// Splitting the parser from the crypto matters for fuzzing: `get_remote_peer_id`
+    /// only reaches this code once `read_message` succeeds, which random input
+    /// essentially never achieves, so a fuzzer pointed at the full function spends all
+    /// its energy on the length prefix and never sees the parser. It also keeps the
+    /// harness deterministic, since it needs no ephemeral DH keypair.
+    #[cfg(feature = "fuzz")]
+    pub fn fuzz_parse_handshake_payload(
+        payload: &[u8],
+        dh_remote_pubkey: &[u8],
+    ) -> Result<PeerId, NegotiationError> {
+        let payload = handshake_schema::NoiseHandshakePayload::decode(payload)
+            .map_err(|err| NegotiationError::ParseError(err.into()))?;
+
+        parse_and_verify_peer_id(payload, dh_remote_pubkey)
+    }
+
     /// Get first message.
     ///
     /// Listener only sends one message (the payload)

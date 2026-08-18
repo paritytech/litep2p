@@ -1459,3 +1459,236 @@ impl WebRtcConnection {
         }
     }
 }
+
+/// Test/fuzz scaffolding for [`WebRtcConnection`].
+///
+/// [`WebRtcConnection::new()`] needs an `Rtc`, a bound socket, a `ProtocolSet` and an
+/// `Endpoint`, none of which are constructible from outside this crate — which is why this
+/// file had no way to be exercised in isolation. This block builds all of them from
+/// deterministic inputs and exposes the inbound entry points, so `fuzz/webrtc-state` can
+/// drive the channel state machine directly.
+///
+/// # What is and is not reachable
+///
+/// The connection is created without a DTLS handshake, so `Rtc::channel()` finds no open
+/// SCTP stream and every `write()` returns [`Error::ChannelDoesntExist`]. That bounds what
+/// this scaffold covers:
+///
+/// - **Reachable:** the per-channel `recv_buffers` reassembly loop, frame extraction across
+///   interleaved channels, channel-state lookup and removal, and close-time cleanup. This is where
+///   the aggregate-memory question lives — buffers are capped at `MAX_FRAME_SIZE` *individually*
+///   with no bound across channels — and a channel holding a permanently incomplete frame never
+///   dispatches, so it never needs a write to succeed.
+/// - **Not reachable:** anything past a completed negotiation, because sending the
+///   multistream-select response requires a live SCTP stream. The `Open`-state substream path is
+///   covered instead by fuzzing `SubstreamHandle` directly.
+///
+/// Lifting that limit means pairing two `Rtc` instances through a real DTLS/SCTP handshake
+/// per iteration; see `fuzz/README.md`.
+#[cfg(feature = "fuzz")]
+pub struct FuzzConnection {
+    /// The connection under test.
+    ///
+    /// Deliberately private: `WebRtcConnection::new` takes `AddressPair` and
+    /// `WebRtcSocket`, both crate-internal, so exposing the connection itself would leak
+    /// private types into the public API. The harness drives it through the methods below.
+    connection: WebRtcConnection,
+
+    /// Data channels opened so far, in creation order.
+    ///
+    /// Entries become `None` on close rather than being removed, so later indices keep
+    /// referring to the same channel and a mutated script stays meaningful.
+    channels: Vec<Option<ChannelId>>,
+
+    /// Kept alive so the connection's own senders do not observe a closed channel.
+    _dgram_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+    _mgr_rx: tokio::sync::mpsc::Receiver<crate::transport::manager::TransportManagerEvent>,
+    _protocol_rx: tokio::sync::mpsc::Receiver<crate::protocol::InnerTransportEvent>,
+}
+
+#[cfg(feature = "fuzz")]
+impl FuzzConnection {
+    /// Build a connection wired to `protocols`, with no DTLS handshake performed.
+    pub async fn new(protocols: Vec<ProtocolName>) -> crate::Result<Self> {
+        use crate::{
+            codec::ProtocolCodec,
+            transport::{
+                manager::ProtocolContext,
+                webrtc::{certificate::DtlsCertificate, socket::WebRtcSocket},
+            },
+            types::ConnectionId,
+        };
+        use std::sync::{atomic::AtomicUsize, Arc};
+        use str0m::{net::Protocol as Str0mProtocol, Candidate, IceCreds};
+
+        let local = "127.0.0.1:4242".parse().expect("valid socket address");
+        let remote = "127.0.0.1:4243".parse().expect("valid socket address");
+        let addrs = AddressPair { local, remote };
+
+        // Mirrors `WebRtcTransport::make_rtc`, minus the handshake: ICE-lite, fingerprint
+        // verification off (the Noise prologue does the binding), listener role.
+        //
+        // The certificate is generated once per process rather than per connection.
+        // `DtlsCertificate::new` runs a full keypair generation through the crypto provider
+        // and dominates the cost of building this scaffold, while the certificate itself is
+        // never used, because no DTLS handshake happens. Under a fuzzer's persistent loop
+        // that cost is paid on every input. `load` only moves the DER bytes, so reusing them
+        // is free and keeps the fingerprint stable across iterations too.
+        static DTLS_CERT_DER: std::sync::OnceLock<(Vec<u8>, Vec<u8>)> = std::sync::OnceLock::new();
+        let (certificate, private_key) = DTLS_CERT_DER.get_or_init(|| {
+            let generated =
+                DtlsCertificate::new().expect("DTLS certificate generation to succeed");
+            let (certificate, private_key) = generated.as_parts();
+
+            (certificate.clone(), private_key.clone())
+        });
+        let dtls_cert: str0m::config::DtlsCert =
+            DtlsCertificate::load(certificate.clone(), private_key.clone())?.into();
+        let mut rtc = Rtc::builder()
+            .set_ice_lite(true)
+            .set_dtls_cert(dtls_cert)
+            .set_fingerprint_verification(false)
+            .build(std::time::Instant::now());
+        rtc.add_local_candidate(
+            Candidate::host(local, Str0mProtocol::Udp).map_err(str0m::RtcError::Ice)?,
+        );
+        rtc.add_remote_candidate(
+            Candidate::host(remote, Str0mProtocol::Udp).map_err(str0m::RtcError::Ice)?,
+        );
+        let creds = IceCreds {
+            ufrag: "fuzzufrag".to_string(),
+            pass: "fuzzpassfuzzpass".to_string(),
+        };
+        rtc.direct_api().set_remote_ice_credentials(creds.clone());
+        rtc.direct_api().set_local_ice_credentials(creds);
+        rtc.direct_api().set_ice_controlling(false);
+
+        let (protocol_tx, _protocol_rx) = tokio::sync::mpsc::channel(256);
+        let (mgr_tx, _mgr_rx) = tokio::sync::mpsc::channel(256);
+        let (_dgram_tx, dgram_rx) = tokio::sync::mpsc::channel(256);
+
+        let protocols = protocols
+            .into_iter()
+            .map(|protocol| {
+                (
+                    protocol,
+                    ProtocolContext {
+                        codec: ProtocolCodec::Identity(0xffff),
+                        tx: protocol_tx.clone(),
+                        fallback_names: Vec::new(),
+                        keep_alive: SubstreamKeepAlive::No,
+                    },
+                )
+            })
+            .collect();
+
+        let connection_id = ConnectionId::from(0usize);
+        let protocol_set = ProtocolSet::new(
+            connection_id,
+            mgr_tx,
+            Arc::new(AtomicUsize::new(0)),
+            protocols,
+        );
+
+        let socket = Arc::new(WebRtcSocket::new(
+            tokio::net::UdpSocket::bind("127.0.0.1:0").await?,
+        )?);
+
+        let connection = WebRtcConnection::new(
+            rtc,
+            PeerId::random(),
+            addrs,
+            socket,
+            protocol_set,
+            Endpoint::listener(multiaddr::Multiaddr::empty(), connection_id),
+            dgram_rx,
+        );
+
+        Ok(Self {
+            connection,
+            channels: Vec::new(),
+            _dgram_tx,
+            _mgr_rx,
+            _protocol_rx,
+        })
+    }
+
+    /// Open an inbound data channel and register it, returning its index.
+    pub async fn open_channel(&mut self) -> crate::Result<usize> {
+        let label = format!("fuzz-{}", self.channels.len());
+        let channel_id = self.connection.rtc.direct_api().create_data_channel(ChannelConfig {
+            label: label.clone(),
+            ordered: true,
+            reliability: str0m::channel::Reliability::Reliable,
+            negotiated: None,
+            protocol: String::new(),
+        });
+
+        self.connection.on_channel_opened(channel_id, label).await?;
+        self.channels.push(Some(channel_id));
+
+        Ok(self.channels.len() - 1)
+    }
+
+    /// Feed inbound bytes to the channel at `index`, if it is open.
+    ///
+    /// Data for an unknown or already-closed channel is dropped rather than delivered.
+    /// This mirrors an ordering guarantee litep2p relies on: `dispatch_framed_message`
+    /// carries a `debug_assert!(false)` on the "channel doesn't exist" branch, so it treats
+    /// `Event::ChannelData` after `Event::ChannelClose` for the same channel as impossible.
+    /// A channel litep2p closes itself stays in `channels` as `ChannelState::Closing`, so
+    /// in-flight data from the peer is still handled — the state is only removed once str0m
+    /// reports the close.
+    ///
+    /// Delivering post-close data here would fire that assertion on essentially every
+    /// script, burying real findings under one unverified ordering question. If str0m is
+    /// ever shown to reorder those events, drop this guard and the assertion becomes the
+    /// finding.
+    pub async fn inbound(&mut self, index: usize, data: Vec<u8>) -> crate::Result<()> {
+        let Some(Some(channel_id)) = self.channels.get(index).copied() else {
+            return Ok(());
+        };
+
+        self.connection.on_inbound_data(channel_id, data).await
+    }
+
+    /// Close the channel at `index`, if it is open.
+    pub async fn close_channel(&mut self, index: usize) -> crate::Result<()> {
+        let Some(slot) = self.channels.get_mut(index) else {
+            return Ok(());
+        };
+        let Some(channel_id) = slot.take() else {
+            return Ok(());
+        };
+
+        self.connection.on_channel_closed(channel_id).await
+    }
+
+    /// Total bytes held across every channel's reassembly buffer.
+    ///
+    /// Each buffer is individually capped at `MAX_FRAME_SIZE`, but nothing caps the sum,
+    /// so this is the quantity a fuzzer should watch grow.
+    pub fn buffered_bytes(&self) -> usize {
+        self.connection.recv_buffers.values().map(|buffer| buffer.len()).sum()
+    }
+
+    /// Number of live reassembly buffers.
+    pub fn buffer_count(&self) -> usize {
+        self.connection.recv_buffers.len()
+    }
+
+    /// Size of the largest single reassembly buffer.
+    ///
+    /// Unlike the aggregate, this one *is* bounded: a buffer only retains bytes while a
+    /// frame is mid-reassembly, and `extract_framed_message` rejects any frame declaring
+    /// more than `MAX_FRAME_SIZE`. A buffer growing past that is a genuine defect, so a
+    /// fuzzer can assert on it directly.
+    pub fn max_buffered_bytes(&self) -> usize {
+        self.connection
+            .recv_buffers
+            .values()
+            .map(|buffer| buffer.len())
+            .max()
+            .unwrap_or(0)
+    }
+}

@@ -64,18 +64,49 @@ mod connection;
 mod listener;
 mod opening;
 mod socket;
+
+// `substream` and `util` hold the WebRTC wire codec and the substream flag state
+// machine, which are the primary fuzz targets for this transport. The `fuzz` feature
+// makes them reachable from the out-of-tree harnesses under `fuzz/`; see
+// `fuzz/README.md`. Everything else about them is unchanged.
+#[cfg(not(feature = "fuzz"))]
 mod substream;
+#[cfg(feature = "fuzz")]
+pub mod substream;
+
+#[cfg(not(feature = "fuzz"))]
 mod util;
+#[cfg(feature = "fuzz")]
+pub mod util;
 
 pub mod config;
 pub use certificate::DtlsCertificate;
 
+// Scaffolding that lets `fuzz/webrtc-state` drive the channel state machine. Re-exported
+// rather than making `connection` public, so only the harness surface is widened.
+#[cfg(feature = "fuzz")]
+pub use connection::FuzzConnection;
+
+// The generated `webrtc::Message` / `Flag` types are part of the fuzzable codec surface,
+// so they follow `util` in being externally nameable under `fuzz`.
+#[cfg(not(feature = "fuzz"))]
 pub(super) mod schema {
     pub(super) mod webrtc {
         include!(concat!(env!("OUT_DIR"), "/webrtc.rs"));
     }
 
     pub(super) mod noise {
+        include!(concat!(env!("OUT_DIR"), "/noise.rs"));
+    }
+}
+
+#[cfg(feature = "fuzz")]
+pub mod schema {
+    pub mod webrtc {
+        include!(concat!(env!("OUT_DIR"), "/webrtc.rs"));
+    }
+
+    pub mod noise {
         include!(concat!(env!("OUT_DIR"), "/noise.rs"));
     }
 }

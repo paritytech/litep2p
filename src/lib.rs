@@ -84,7 +84,15 @@ pub mod types;
 pub mod yamux;
 
 mod bandwidth;
+
+// `multistream_select` is exposed under the `fuzz` feature so the out-of-tree harnesses
+// under `fuzz/` can reach `webrtc_listener_negotiate` and `WebRtcDialerState`, which
+// parse protocol negotiation straight off the wire. See `fuzz/README.md`.
+#[cfg(not(feature = "fuzz"))]
 mod multistream_select;
+#[cfg(feature = "fuzz")]
+pub mod multistream_select;
+
 pub mod utils;
 
 #[cfg(test)]
