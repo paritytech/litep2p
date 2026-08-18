@@ -292,6 +292,23 @@ impl WebRtcTransport {
         socket: &Arc<WebRtcSocket>,
         buffer: Vec<u8>,
     ) -> crate::Result<bool> {
+        // Drop anything that is not STUN or DTLS before it reaches str0m.
+        // No media is ever negotiated, so RTP/RTCP is always rejected.
+        //
+        // Drop silently rather than erroring,
+        // an invalid datagram must not tear down a live peer.
+        if !is_forwardable(&buffer) {
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?addrs,
+                first_byte = buffer.first().copied(),
+                len = buffer.len(),
+                "dropping non-STUN/DTLS datagram",
+            );
+
+            return Ok(false);
+        }
+
         if let Entry::Occupied(mut entry) = self.open.entry(addrs) {
             let ConnectionContext {
                 peer,
@@ -325,12 +342,6 @@ impl WebRtcTransport {
                     return Ok(false);
                 }
             }
-        }
-
-        if buffer.is_empty() {
-            // str0m crate panics if the buffer doesn't contain at least one byte:
-            // https://github.com/algesten/str0m/blob/2c5dc8ee8ddead08699dd6852a27476af6992a5c/src/io/mod.rs#L222
-            return Err(Error::InvalidData);
         }
 
         // if the peer doesn't exist, decode the message and expect to receive `Stun`
@@ -793,4 +804,96 @@ fn is_stun_packet(bytes: &[u8]) -> bool {
     const STUN_MAGIC_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];
     // 20 bytes for the header, then follows attributes.
     bytes.len() >= 20 && bytes[0] < 2 && bytes[4..8] == STUN_MAGIC_COOKIE
+}
+
+/// Check whether a datagram may be forwarded to str0m.
+///
+/// Datagrams are demultiplexed by their first byte.
+/// The only kinds a libp2p WebRTC transport legitimately receives
+/// are STUN and DTLS, SCTP is not demultiplexed on its own
+/// but carried inside DTLS.
+/// RTP/RTCP never arrive, since no media is negotiated.
+///
+/// The accepted set mirrors str0m's own classifier (`str0m::io::MultiplexKind`):
+/// STUN is `byte0 < 2` with a full 20-byte header,
+/// DTLS is `byte0` in `20..=63`.
+///
+/// A datagram that passes this filter but that str0m then rejects
+/// closes the connection which would tear down a live peer.
+fn is_forwardable(bytes: &[u8]) -> bool {
+    match bytes.first().copied() {
+        // STUN messages always carry a 20-byte header,
+        // shorter ones are rejected by str0m.
+        Some(0..=1) => bytes.len() >= 20,
+        Some(20..=63) => true,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A STUN-shaped datagram of `len` bytes, carrying the magic cookie.
+    fn stun_datagram(len: usize) -> Vec<u8> {
+        let mut datagram = vec![0x00; len];
+        if len >= 8 {
+            datagram[4..8].copy_from_slice(&[0x21, 0x12, 0xA4, 0x42]);
+        }
+        datagram
+    }
+
+    #[test]
+    fn stun_and_dtls_are_forwardable() {
+        // STUN, which always carries a 20-byte header.
+        assert!(is_forwardable(&stun_datagram(20)));
+        assert!(is_forwardable(&stun_datagram(64)));
+        assert!(is_forwardable(&[0x01; 20]));
+
+        // DTLS, at any length.
+        for byte in 20..=63 {
+            assert!(is_forwardable(&[byte]), "{byte:#04x} should be forwardable");
+            assert!(
+                is_forwardable(&[byte; 20]),
+                "{byte:#04x} should be forwardable"
+            );
+        }
+    }
+
+    #[test]
+    fn truncated_stun_datagrams_are_not_forwardable() {
+        // str0m only classifies `byte0 < 2` as STUN once the 20-byte header is complete, and
+        // errors otherwise. Forwarding these would let a spoofed datagram close a live
+        // connection, so they must be dropped here.
+        for len in 0..20 {
+            assert!(
+                !is_forwardable(&stun_datagram(len)),
+                "{len}-byte stun datagram should not be forwardable"
+            );
+            assert!(
+                !is_forwardable(&vec![0x01; len]),
+                "{len}-byte stun datagram should not be forwardable"
+            );
+        }
+    }
+
+    #[test]
+    fn rtp_rtcp_and_unknown_datagrams_are_not_forwardable() {
+        // RTP/RTCP, and the gaps between the STUN, DTLS and RTP/RTCP ranges. Length never
+        // rescues any of them.
+        let rejected = (2..=19).chain(64..=255);
+        for byte in rejected {
+            assert!(
+                !is_forwardable(&[byte]),
+                "{byte:#04x} should not be forwardable"
+            );
+            assert!(
+                !is_forwardable(&[byte; 20]),
+                "{byte:#04x} should not be forwardable"
+            );
+        }
+
+        // Empty datagram.
+        assert!(!is_forwardable(&[]));
+    }
 }
