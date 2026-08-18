@@ -84,7 +84,14 @@ pub mod types;
 pub mod yamux;
 
 mod bandwidth;
+
+// Exposed under `fuzz` so the harnesses can reach `webrtc_listener_negotiate` and
+// `WebRtcDialerState`, which parse protocol negotiation off the wire.
+#[cfg(not(feature = "fuzz"))]
 mod multistream_select;
+#[cfg(feature = "fuzz")]
+pub mod multistream_select;
+
 pub mod utils;
 
 #[cfg(test)]

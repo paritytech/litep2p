@@ -194,6 +194,20 @@ impl NoiseContext {
         parse_and_verify_peer_id(payload, self.get_handshake_dh_remote_pubkey()?)
     }
 
+    /// Parse and verify a **decrypted** WebRTC Noise identity payload: the tail of
+    /// [`NoiseContext::get_remote_peer_id()`] after `snow` decrypts. Exposed so a fuzzer can drive
+    /// the protobuf/pubkey/signature parsing directly, without first producing valid ciphertext.
+    #[cfg(feature = "fuzz")]
+    pub fn fuzz_parse_handshake_payload(
+        payload: &[u8],
+        dh_remote_pubkey: &[u8],
+    ) -> Result<PeerId, NegotiationError> {
+        let payload = handshake_schema::NoiseHandshakePayload::decode(payload)
+            .map_err(|err| NegotiationError::ParseError(err.into()))?;
+
+        parse_and_verify_peer_id(payload, dh_remote_pubkey)
+    }
+
     /// Get first message.
     ///
     /// Listener only sends one message (the payload)
@@ -243,6 +257,46 @@ impl NoiseContext {
         size.append(&mut buffer);
 
         Ok(size)
+    }
+
+    /// Build a WebRTC Noise responder with a prologue. Fuzz-only: litep2p is listen-only and never
+    /// runs the responder in production, so this lets a fuzz client complete the handshake. Mirrors
+    /// [`NoiseContext::with_prologue`] with `build_responder()`; `assemble` still signs the payload.
+    #[cfg(all(feature = "webrtc", feature = "fuzz"))]
+    pub fn with_prologue_responder(
+        id_keys: &Keypair,
+        prologue: Vec<u8>,
+    ) -> Result<Self, NegotiationError> {
+        let noise: Builder<'_> = Builder::with_resolver(
+            NOISE_PARAMETERS.parse().expect("qed; Valid noise pattern"),
+            Box::new(protocol::Resolver),
+        );
+
+        let keypair = noise.generate_keypair()?;
+
+        let noise = noise
+            .local_private_key(&keypair.private)
+            .prologue(&prologue)
+            .build_responder()?;
+
+        Self::assemble(noise, keypair, id_keys, Role::Listener)
+    }
+
+    /// Read the initiator's first message (2-byte length-prefixed) so the responder can reply with
+    /// [`NoiseContext::second_message`]. Fuzz-only.
+    #[cfg(all(feature = "webrtc", feature = "fuzz"))]
+    pub fn read_first_message(&mut self, message: &[u8]) -> Result<(), NegotiationError> {
+        if message.len() < 2 {
+            return Err(NegotiationError::ParseError(ParseError::InvalidReplyLength));
+        }
+
+        let NoiseState::Handshake(ref mut noise) = self.noise else {
+            return Err(NegotiationError::StateMismatch);
+        };
+
+        let mut buffer = vec![0u8; MAX_NOISE_MSG_LEN];
+        noise.read_message(&message[2..], &mut buffer)?;
+        Ok(())
     }
 
     /// Read handshake message.

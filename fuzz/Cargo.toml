@@ -1,0 +1,19 @@
+# The three WebRTC harnesses share one workspace, and therefore one `Cargo.lock` and one
+# target directory. Three standalone crates meant three copies of a ~3000-line lockfile that
+# agreed on 99.9% of their lines, drifted apart in practice (they pinned different litep2p
+# versions, and one resolved two `str0m` versions and compiled it twice), and built litep2p
+# plus vendored OpenSSL once per crate.
+#
+# `fuzz/simple` and `fuzz/structure-aware` predate this and stay standalone; they are excluded
+# so adding this file does not change how they build.
+[workspace]
+resolver = "2"
+members = ["webrtc-codec", "webrtc-state", "webrtc-datagram"]
+exclude = ["simple", "structure-aware"]
+
+# Fuzzing a parser with `debug_assert!` compiled out hides exactly the bugs we are looking for,
+# and `overflow-checks` turns silent wraparound in the framing arithmetic into a crash the
+# fuzzer can report.
+[profile.release]
+debug-assertions = true
+overflow-checks = true
