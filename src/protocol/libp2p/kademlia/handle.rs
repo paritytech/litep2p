@@ -193,14 +193,14 @@ pub enum KademliaEvent {
 
     /// Routing table update.
     ///
-    /// Kademlia has discovered one or more peers that should be added to the routing table.
-    /// If [`RoutingTableUpdateMode`] is `Automatic`, user can ignore this event unless some
-    /// upper-level protocols has user for this information.
+    /// A peer answered one of our queries, proving it operates in server mode, and should be
+    /// added to the routing table. If [`RoutingTableUpdateMode`] is `Automatic`, user can ignore
+    /// this event unless some upper-level protocols has user for this information.
     ///
     /// If the mode was set to `Manual`, user should call [`KademliaHandle::add_known_peer()`]
     /// in order to add the peers to routing table.
     RoutingTableUpdate {
-        /// Discovered peers.
+        /// Peers proven to operate in server mode.
         peers: Vec<PeerId>,
     },
 

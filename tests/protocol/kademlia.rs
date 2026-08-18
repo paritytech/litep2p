@@ -24,12 +24,18 @@ use futures::StreamExt;
 use litep2p::{
     config::ConfigBuilder,
     crypto::ed25519::Keypair,
-    protocol::libp2p::kademlia::{
-        ConfigBuilder as KademliaConfigBuilder, ContentProvider, IncomingRecordValidationMode,
-        KademliaEvent, PeerRecord, Quorum, Record, RecordKey,
+    protocol::libp2p::{
+        identify::{Config as IdentifyConfig, IdentifyEvent},
+        kademlia::{
+            ConfigBuilder as KademliaConfigBuilder, ContentProvider, IncomingRecordValidationMode,
+            KademliaEvent, KademliaMode, PeerRecord, Quorum, Record, RecordKey,
+        },
     },
     transport::tcp::config::Config as TcpConfig,
-    types::multiaddr::{Multiaddr, Protocol},
+    types::{
+        multiaddr::{Multiaddr, Protocol},
+        protocol::ProtocolName,
+    },
     Litep2p, PeerId,
 };
 
@@ -816,6 +822,265 @@ async fn provider_added_to_remote_node() {
                         break
                     }
                 }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn client_does_not_answer_queries() {
+    // node1 runs in client mode, node2 in server mode
+    let (kad_config1, mut kad_handle1) =
+        KademliaConfigBuilder::new().with_mode(KademliaMode::Client).build();
+    let (kad_config2, mut kad_handle2) = KademliaConfigBuilder::new().build();
+
+    let config1 = ConfigBuilder::new()
+        .with_tcp(TcpConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config1)
+        .build();
+
+    let config2 = ConfigBuilder::new()
+        .with_tcp(TcpConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config2)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+
+    // the server knows the client and queries it
+    kad_handle2
+        .add_known_peer(
+            *litep2p1.local_peer_id(),
+            litep2p1.listen_addresses().cloned().collect(),
+        )
+        .await;
+    let query = kad_handle2.find_node(PeerId::random()).await;
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
+                panic!("query did not finish in 10 secs")
+            }
+            _ = litep2p1.next_event() => {}
+            _ = litep2p2.next_event() => {}
+            _ = kad_handle1.next() => {}
+            event = kad_handle2.next() => match event {
+                Some(KademliaEvent::QueryFailed { query_id }) => {
+                    assert_eq!(query_id, query);
+                    break;
+                }
+                Some(KademliaEvent::FindNodeSuccess { .. }) => {
+                    panic!("client answered the query");
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn server_does_not_add_querying_client_to_routing_table() {
+    // node1 runs in client mode, node2 in server mode
+    let (kad_config1, mut kad_handle1) =
+        KademliaConfigBuilder::new().with_mode(KademliaMode::Client).build();
+    let (kad_config2, mut kad_handle2) = KademliaConfigBuilder::new().build();
+
+    let config1 = ConfigBuilder::new()
+        .with_tcp(TcpConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config1)
+        .build();
+
+    let config2 = ConfigBuilder::new()
+        .with_tcp(TcpConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config2)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+
+    // the client knows the server and queries it
+    kad_handle1
+        .add_known_peer(
+            *litep2p2.local_peer_id(),
+            litep2p2.listen_addresses().cloned().collect(),
+        )
+        .await;
+    let query1 = kad_handle1.find_node(PeerId::random()).await;
+
+    // the client's query succeeds as the server answers it
+    let mut query2 = None;
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
+                panic!("queries did not finish in 10 secs")
+            }
+            _ = litep2p1.next_event() => {}
+            _ = litep2p2.next_event() => {}
+            event = kad_handle1.next() => {
+                if let Some(KademliaEvent::FindNodeSuccess { query_id, .. }) = event {
+                    assert_eq!(query_id, query1);
+
+                    // the server answered but the client gave it no server evidence,
+                    // so the server's routing table must still be empty and its own
+                    // query must fail immediately
+                    query2 = Some(kad_handle2.find_node(PeerId::random()).await);
+                }
+            }
+            event = kad_handle2.next() => match event {
+                Some(KademliaEvent::QueryFailed { query_id }) => {
+                    assert_eq!(Some(query_id), query2);
+                    break;
+                }
+                Some(KademliaEvent::FindNodeSuccess { .. }) => {
+                    panic!("client was added to the server's routing table");
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn client_can_publish_records() {
+    // node1 runs in client mode, node2 in server mode
+    let (kad_config1, mut kad_handle1) =
+        KademliaConfigBuilder::new().with_mode(KademliaMode::Client).build();
+    let (kad_config2, mut kad_handle2) = KademliaConfigBuilder::new().build();
+
+    let config1 = ConfigBuilder::new()
+        .with_tcp(TcpConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config1)
+        .build();
+
+    let config2 = ConfigBuilder::new()
+        .with_tcp(TcpConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config2)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+
+    kad_handle1
+        .add_known_peer(
+            *litep2p2.local_peer_id(),
+            litep2p2.listen_addresses().cloned().collect(),
+        )
+        .await;
+
+    let record = Record::new(vec![1, 2, 3], vec![0x01]);
+    let query = kad_handle1.put_record(record.clone(), Quorum::One).await;
+
+    let mut put_record_success = false;
+    let mut incoming_record = false;
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
+                panic!("record was not published in 10 secs")
+            }
+            _ = litep2p1.next_event() => {}
+            _ = litep2p2.next_event() => {}
+            event = kad_handle1.next() => {
+                if let Some(KademliaEvent::PutRecordSuccess { query_id, key }) = event {
+                    assert_eq!(query_id, query);
+                    assert_eq!(key, record.key);
+                    put_record_success = true;
+                    if incoming_record {
+                        break
+                    }
+                }
+            }
+            event = kad_handle2.next() => {
+                if let Some(KademliaEvent::IncomingRecord { record: got_record }) = event {
+                    assert_eq!(got_record.key, record.key);
+                    assert_eq!(got_record.value, record.value);
+                    incoming_record = true;
+                    if put_record_success {
+                        break
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn client_mode_not_advertised_via_identify() {
+    // node1 runs in client mode, node2 in server mode, both with identify
+    let (kad_config1, _kad_handle1) =
+        KademliaConfigBuilder::new().with_mode(KademliaMode::Client).build();
+    let (kad_config2, _kad_handle2) = KademliaConfigBuilder::new().build();
+
+    let (identify_config1, mut identify_stream1) =
+        IdentifyConfig::new("/proto/1".to_string(), None);
+    let (identify_config2, mut identify_stream2) =
+        IdentifyConfig::new("/proto/1".to_string(), None);
+
+    let config1 = ConfigBuilder::new()
+        .with_tcp(TcpConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config1)
+        .with_libp2p_identify(identify_config1)
+        .build();
+
+    let config2 = ConfigBuilder::new()
+        .with_tcp(TcpConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config2)
+        .with_libp2p_identify(identify_config2)
+        .build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+
+    let address2 = litep2p2.listen_addresses().next().unwrap().clone();
+    litep2p1.dial_address(address2).await.unwrap();
+
+    let kad_protocol = ProtocolName::from("/ipfs/kad/1.0.0");
+    let mut client_identified = false;
+    let mut server_identified = false;
+
+    while !client_identified || !server_identified {
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
+                panic!("peers were not identified in 10 secs")
+            }
+            _ = litep2p1.next_event() => {}
+            _ = litep2p2.next_event() => {}
+            event = identify_stream1.next() => {
+                // the client observes the server advertising kademlia
+                let IdentifyEvent::PeerIdentified { supported_protocols, .. } = event.unwrap();
+                assert!(supported_protocols.contains(&kad_protocol));
+                server_identified = true;
+            }
+            event = identify_stream2.next() => {
+                // the server observes the client not advertising kademlia
+                let IdentifyEvent::PeerIdentified { supported_protocols, .. } = event.unwrap();
+                assert!(!supported_protocols.contains(&kad_protocol));
+                client_identified = true;
             }
         }
     }
