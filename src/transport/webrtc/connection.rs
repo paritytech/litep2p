@@ -847,6 +847,19 @@ impl WebRtcConnection {
             "received channel data",
         );
 
+        // Drop data for channels we never opened. Creating a `recv_buffers` entry here would
+        // leak it for the life of the connection: `on_channel_closed` only runs for channels
+        // that were actually opened.
+        if !self.channels.contains_key(&channel_id) {
+            tracing::debug!(
+                target: LOG_TARGET,
+                peer = ?self.peer,
+                ?channel_id,
+                "dropping data for unknown channel",
+            );
+            return Ok(());
+        }
+
         self.recv_buffers.entry(channel_id).or_default().extend_from_slice(&data);
 
         loop {
@@ -854,7 +867,26 @@ impl WebRtcConnection {
                 return Ok(());
             };
 
-            let Some(body) = extract_framed_message(buffer)? else {
+            let Some(body) = (match extract_framed_message(buffer) {
+                Ok(value) => value,
+                Err(error) => {
+                    // Unparseable framing can never become parseable by appending more
+                    // bytes. Drop the reassembly buffer and tear the channel down instead
+                    // of retaining bytes that would fail again on every append.
+                    self.recv_buffers.remove(&channel_id);
+                    self.rtc.direct_api().close_data_channel(channel_id);
+                    if matches!(
+                        self.channels.get(&channel_id),
+                        Some(ChannelState::Open { .. })
+                    ) {
+                        self.handles.remove(&channel_id);
+                    }
+                    if let Some(state) = self.channels.get_mut(&channel_id) {
+                        *state = ChannelState::Closing;
+                    }
+                    return Err(error.into());
+                }
+            }) else {
                 return Ok(());
             };
 
@@ -1679,10 +1711,11 @@ impl FuzzConnection {
 
     /// Size of the largest single reassembly buffer.
     ///
-    /// Unlike the aggregate, this one *is* bounded: a buffer only retains bytes while a
-    /// frame is mid-reassembly, and `extract_framed_message` rejects any frame declaring
-    /// more than `MAX_FRAME_SIZE`. A buffer growing past that is a genuine defect, so a
-    /// fuzzer can assert on it directly.
+    /// A buffer only retains bytes while a frame is mid-reassembly, so on the success path
+    /// it is bounded by `MAX_FRAME_SIZE` plus a 3-byte varint header. The one way it can
+    /// grow past that is a permanent parse error: `on_inbound_data` now drops the buffer and
+    /// closes the channel in that case, so a buffer growing past the cap is still a genuine
+    /// defect a fuzzer can assert on directly.
     pub fn max_buffered_bytes(&self) -> usize {
         self.connection
             .recv_buffers
