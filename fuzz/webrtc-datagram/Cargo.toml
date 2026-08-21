@@ -11,6 +11,9 @@ litep2p = { path = "../..", features = ["webrtc"] }
 tokio = { version = "1.44.1", features = ["full", "test-util"] }
 multiaddr = "0.18.2"
 futures = "0.3.31"
+# Only used by `gen_seeds` to build valid STUN binding requests. Version and features match the
+# transitive dep pulled in by litep2p so the build unifies rather than compiling a second str0m.
+str0m = { version = "0.22.0", default-features = false, features = ["openssl", "vendored"] }
 
 [profile.release]
 debug-assertions = true
@@ -24,3 +27,8 @@ path = "src/main.rs"
 [[bin]]
 name = "gen_fixture"
 path = "src/gen_fixture.rs"
+
+# Regenerates the committed STUN seed corpus; not part of fuzzing.
+[[bin]]
+name = "gen_seeds"
+path = "src/gen_seeds.rs"

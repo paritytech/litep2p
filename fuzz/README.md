@@ -10,7 +10,7 @@ a workspace member and `cargo test` at the repo root does not build them.
 | `structure-aware` | Application protocol commands over TCP | Low | bincode-decoded command enums replayed via `fuzz_send_message` (SRLabs, PR #365) |
 | `webrtc-codec` | WebRTC wire parsers | **Exact** | Pure `fn(&[u8])`: frame reassembly, protobuf, multistream-select, Noise identity payload |
 | `webrtc-state` | WebRTC state machines | High | Structure-aware scripts against `SubstreamHandle` and `WebRtcConnection` |
-| `webrtc-datagram` | Live WebRTC listener | Low | Fuzzed UDP at a bound socket; mostly reaches `str0m` |
+| `webrtc-datagram` | Live WebRTC listener | Low | STUN seed corpus gets past the demux to `make_rtc`; DTLS and beyond stay unreached. See below |
 
 ## Setup
 
@@ -25,7 +25,7 @@ and native C in-process (relevant if you want ASan).
 
 ```sh
 cd fuzz/webrtc-codec
-cargo ziggy fuzz --input corpus     # seeds are committed; see "Corpora" below
+cargo ziggy fuzz webrtc-codec -i corpus   # seeds are committed; see "Corpora" below
 ```
 
 Every harness also has ordinary `cargo test` self-checks. **Run them before fuzzing.** A
@@ -52,14 +52,13 @@ That is why the WebRTC coverage is split three ways instead of being one end-to-
 - **`webrtc-state` covers what has memory.** The half-close protocol
   (`FIN`/`FIN_ACK`/`STOP_SENDING`/`RESET_STREAM`) and per-channel frame reassembly. Bugs
   here are orderings, so the input is a bincode script, not a byte blob.
-- **`webrtc-datagram` is the honest long shot.** It exercises the pre-handshake path, but
-  most parsing it reaches is `str0m`'s and DTLS gates everything else, so coverage-per-exec
-  is poor. Its real value is resource exhaustion — the transport holds an `Rtc` per remote
-  address pair — so run it under a memory ceiling:
-
-  ```sh
-  ( ulimit -v 2000000 && cargo ziggy fuzz )
-  ```
+- **`webrtc-datagram` clears the gate but stops at DTLS.** It ships a committed STUN seed corpus
+  (`gen_seeds`), so mutation starts from a valid binding request: `is_stun_packet`,
+  `StunMessage::parse` and `split_username` pass, `make_rtc` runs and an opening connection is
+  created. It cannot complete the DTLS handshake (the server's per-run crypto desyncs any captured
+  or mutated handshake), so the SCTP and channel-data layers stay unreached, and most of what it
+  exercises past the gate is str0m, not litep2p. The module docs in
+  `webrtc-datagram/src/main.rs` cover the remaining limits.
 
   Crashes in `DatagramRecv::try_from` or `StunMessage::parse` belong upstream in `str0m`.
 
@@ -80,14 +79,15 @@ job (`.github/workflows/ci.yml`) drives a go-libp2p perf client against a litep2
 server via [`litep2p-perf`](https://github.com/lexnv/litep2p-perf); the decrypted
 channel-data frames from a local run make ideal input for `webrtc-codec` and `webrtc-state`.
 
-`webrtc-datagram` commits a DTLS certificate fixture (`src/fixture.rs`) instead of a corpus.
-It is committed rather than generated at startup so the certhash — and therefore the
-advertised multiaddr and peer identity — is stable across runs, matching how the interop CI
-job pins the server with `--node-key secret`. Without it, crash reproducers would not
-replay. Regenerate with:
+`webrtc-datagram` ships a STUN seed corpus under `corpus/` and a committed DTLS certificate
+fixture (`src/fixture.rs`). The seeds are valid binding requests that clear the demux gate, which a
+fuzzer never synthesises from nothing; the fixture is committed rather than generated at startup so
+the certhash, and therefore the advertised multiaddr and peer identity, stays stable across runs.
+Regenerate with:
 
 ```sh
-cargo run --bin gen_fixture > src/fixture.rs
+cargo run --bin gen_seeds -- corpus            # STUN seed corpus
+cargo run --bin gen_fixture > src/fixture.rs   # DTLS certificate fixture
 ```
 
 ## The `fuzz` feature
@@ -117,18 +117,23 @@ Two things to know:
 
 - **No CI runs any of these.** Matching the pre-existing state; only Dependabot touches
   `fuzz/` today. The `--all-features` check above is the sole guard against API drift.
-- **`webrtc-state`'s connection layer cannot complete a negotiation.** `FuzzConnection`
-  builds a `WebRtcConnection` without a DTLS handshake, so `Rtc::channel()` finds no open
-  SCTP stream and every `write()` fails with `ChannelDoesntExist`. Reassembly, channel-state
-  transitions and close-time cleanup are reachable; the `Open`-state substream path is not,
-  and is covered by fuzzing `SubstreamHandle` directly instead. Lifting this means pairing
-  two `Rtc` instances through a real DTLS/SCTP handshake per iteration — costly and
-  non-deterministic, but it would unlock the full connection state machine.
-- **`webrtc-state` drops post-close inbound data.** `dispatch_framed_message` carries a
-  `debug_assert!(false)` on its "channel doesn't exist" branch, i.e. litep2p treats
-  `Event::ChannelData` after `Event::ChannelClose` for the same channel as impossible. The
-  scaffold honours that assumption; otherwise the assertion fires on nearly every script and
-  buries everything else. Whether `str0m` can actually reorder those events is unverified —
-  if it can, remove the guard in `FuzzConnection::inbound` and the assertion is the finding.
-- **`webrtc-datagram` keeps state across iterations.** The node is built once, since
-  standing up a transport per iteration would dominate runtime and churn through ports.
+- **`webrtc-state`'s connection layer cannot complete a negotiation.** `FuzzConnection` builds
+  a `WebRtcConnection` without a DTLS handshake, and its channels are created with
+  `negotiated: None`, so str0m assigns no SCTP stream id, `Rtc::channel()` returns `None` and
+  every `write()` fails with `ChannelDoesntExist`. The consequence is sharper than it sounds:
+  `on_inbound_opening_channel_data` writes the multistream-select response *before* branching
+  on the outcome, so `Accepted`, `Rejected` and `PendingProtocol` all fail there and close the
+  channel. A channel from `open_channel()` is a one-frame channel, and the back-and-forth
+  negotiation states stay unreachable.
+
+  The `Open` state is reachable, through `open_negotiated_channel()`, which installs a
+  substream and its handle directly and skips the write that cannot succeed. Inbound frames
+  then travel the real path — reassembly, `on_open_channel_data`,
+  `SubstreamHandle::on_message` — and `poll_handles()` drives the `SubstreamHandleSet`
+  round-robin. `read_substream()` makes the delivery observable, which is what keeps that claim
+  honest. Lifting the rest means pairing two `Rtc` instances through a real DTLS/SCTP handshake
+  per iteration: costly and non-deterministic, but it would unlock the full state machine.
+- **`webrtc-datagram` keeps state across iterations.** The node is built once, since standing up a
+  transport per iteration would dominate runtime and churn through ports, so a crash there needs
+  the whole queue in order rather than one input file. Its committed STUN seeds get mutation past
+  the demux, but DTLS completion is out of reach, so the depth past `make_rtc` is limited.

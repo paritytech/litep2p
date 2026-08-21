@@ -20,29 +20,56 @@
 
 //! Datagram-level fuzzing of a live litep2p WebRTC listener.
 //!
-//! # What this actually covers, and what it does not
+//! # Status: reaches connection setup, not the DTLS-protected layers
 //!
-//! Be clear-eyed about this harness before trusting its output. It reaches litep2p only
-//! through the public API — bind a `Litep2p` with a WebRTC listener, then write fuzzed UDP
-//! datagrams at the bound port — which means it covers the *pre-handshake* path:
-//! `is_stun_packet`, the datagram demux in `on_socket_input` (including its empty-buffer
-//! guard, which exists because str0m panics on zero-length input), STUN parsing and
-//! username splitting, the GRO stride de-coalescing arithmetic, and the
-//! `datagram_buffer_size` drop-on-full path.
+//! Read this before trusting its output. With the committed STUN seed corpus (see `gen_seeds`) a
+//! seed datagram now clears the demux: it passes `is_stun_packet`, `StunMessage::parse` and
+//! `split_username`, so `make_rtc` runs and an `OpeningWebRtcConnection` is inserted. litep2p does
+//! not validate the ufrag (`mod.rs:404-442`), so an arbitrary `ufrag:pass` is enough. What the
+//! harness still cannot reach is everything behind the DTLS handshake, and much of what it does
+//! reach past the gate is str0m's ICE code rather than litep2p's:
 //!
-//! Everything past that is gated by DTLS, which fuzzer-random bytes will not complete. So:
+//! - **Nothing gets past the DTLS handshake.** Creating the `Rtc` and feeding it the first STUN
+//!   message is as far as a seed goes. Completing DTLS needs a real peer's key agreement, and the
+//!   server's per-run crypto makes a captured or mutated handshake desync at once, so
+//!   `opening.on_input` beyond the first flight and the whole SCTP and channel-data path stay
+//!   unreached. Without a seed the gate itself is unreachable: the STUN magic cookie alone is 2⁻³²
+//!   to hit by blind mutation, which is why the corpus is mandatory here.
+//! - **The resource-exhaustion angle is thin.** The connection table is keyed by `AddressPair`,
+//!   and this harness varies only the source among `NUM_SENDERS` sockets, so the table tops out at
+//!   8 opening connections however many STUN seeds run. Running under `ulimit -v` proves nothing.
+//! - **Zero-length datagrams never reach `on_socket_input`.** quinn-udp reports
+//!   `len = 0, stride = 0`, the transport normalises that to `meta.len = 0`, and the
+//!   de-coalescing loop `while offset < meta.len` runs zero times. The empty-buffer guard
+//!   inside `on_socket_input` is unreachable from a socket.
+//! - **The GRO stride arithmetic never runs.** Every datagram this chunker can emit is at most
+//!   255 bytes, and GRO only coalesces a same-4-tuple burst.
+//! - **The `datagram_buffer_size` drop-on-full path never runs.** It lives behind
+//!   `self.open`, which is populated only after a completed DTLS handshake and Noise identity
+//!   exchange.
 //!
-//! - Most parsing reached here is **str0m's**, not litep2p's. Crashes found in
-//!   `DatagramRecv::try_from` or `StunMessage::parse` belong upstream. litep2p's own
-//!   parsers are fuzzed properly by `fuzz/webrtc-codec` and `fuzz/webrtc-state`, which is
-//!   where coverage-per-exec is worth having.
-//! - Coverage feedback is weak and the harness is slow: a real socket, a real transport
-//!   and vendored OpenSSL sit in the loop, and node state persists across iterations.
+//! What does run: the socket read path, the listener's address bookkeeping, `is_stun_packet`,
+//! `DatagramRecv::try_from` and the first `StunMessage::parse` rejection. Almost all of that
+//! is str0m's code, so a crash there belongs upstream.
 //!
-//! Its real value is **resource exhaustion**, not parser bugs — the transport keeps an
-//! `Rtc` per remote address pair, so a spray from many source addresses grows that table.
-//! Run it under a memory ceiling (e.g. `ulimit -v`) so unbounded growth surfaces as an
-//! OOM crash instead of as silence.
+//! # What would take it further
+//!
+//! The seed corpus (done, via `gen_seeds`) gets mutation past the STUN gate. Two things still cap
+//! its depth. First, the harness assigns each datagram in an iteration to a different source socket
+//! (`selector + index`), so a STUN request and a following record never share an `AddressPair` and
+//! cannot drive one connection together; letting the fuzzer reuse a source with repetition would
+//! fix that. Second, the source pool is fixed at 8. Even with both, litep2p's own WebRTC parsers
+//! are covered properly by `fuzz/webrtc-codec` and its state machines by `fuzz/webrtc-state`, which
+//! is where the coverage-per-exec is worth having.
+//!
+//! # Reproducibility
+//!
+//! Low, and pinning the certificate does not change that. The fixture makes the certhash and
+//! peer id stable, which is worth having, but the listener and sender ports are ephemeral and
+//! they are what keys the connection table and the ICE candidates; `Instant::now()` feeds every
+//! `Rtc` timeout; and node state persists across iterations by design. Replay through
+//! `cargo ziggy run` feeds one file to a fresh process, so a crash that depended on earlier
+//! iterations cannot be reproduced from a single input at all.
 
 mod fixture;
 
@@ -61,15 +88,18 @@ use std::{
 
 /// Distinct source sockets used to reach the listener.
 ///
-/// Each source address is a separate address pair to the transport, and therefore a
-/// separate `Rtc` in its connection table. A handful is enough to exercise the demux and
-/// the table's growth without the harness itself leaking file descriptors.
+/// Each source address is a separate address pair to the transport, and therefore would be a
+/// separate `Rtc` in its connection table. Eight is far below any file-descriptor limit, so
+/// the number is not the constraint; the constraint is that no `Rtc` is ever created. Raising
+/// this only helps once a STUN seed exists. See the module docs.
 const NUM_SENDERS: usize = 8;
 
 /// Datagrams per fuzz iteration.
 const MAX_DATAGRAMS: usize = 16;
 
 /// How many times the transport is polled after a batch of datagrams.
+///
+/// Every pass costs one 1ms step of virtual time and no wall-clock time.
 const POLL_BUDGET: usize = 8;
 
 /// Fixed node identity, so the peer ID is stable across runs like the DTLS certificate is.
@@ -106,7 +136,10 @@ fn main() {
             let _ = sender.send_to(datagram, node.target);
         }
 
-        drive(&mut node);
+        if !drive(&mut node) {
+            harness_failure("the litep2p event stream terminated; the node is dead and every \
+                             further iteration would be a no-op");
+        }
     });
 }
 
@@ -134,14 +167,20 @@ fn datagrams(mut data: &[u8]) -> Vec<&[u8]> {
     datagrams
 }
 
-/// Let the transport process what was just sent.
+/// Let the transport process what was just sent, returning whether the node is still alive.
 ///
-/// Virtual time is paused, so a `timeout` on a pending future auto-advances the clock the
-/// moment the runtime goes idle: spawned connection tasks still get to run, but the
-/// harness never actually waits a millisecond of wall-clock. The side effect is that
-/// transport timers fire eagerly, which reaches timeout paths at the cost of some
-/// realism.
-fn drive(node: &mut Node) {
+/// Two things to know about the timing. `biased;` matters: without it `tokio::select!` picks a
+/// randomised order, and since both the socket wake and the elapsed sleep are ready after the
+/// first park, a meaningful fraction of iterations would take the sleep branch and never poll
+/// the transport at all. Datagrams would not be lost, but which iteration processed which
+/// datagram would be nondeterministic, and that is precisely what a crash reproducer needs to
+/// be stable.
+///
+/// The paused clock only makes this loop's own 1ms budget free. It does **not** make the
+/// transport's timers fire eagerly: litep2p's WebRTC timeouts are `futures_timer::Delay` with
+/// deadlines from `std::time::Instant::now()`, and neither is affected by tokio's clock. The
+/// ICE and DTLS timeout paths are therefore not reached here.
+fn drive(node: &mut Node) -> bool {
     let Node {
         runtime,
         litep2p,
@@ -152,14 +191,35 @@ fn drive(node: &mut Node) {
     runtime.block_on(async {
         for _ in 0..POLL_BUDGET {
             tokio::select! {
-                _event = litep2p.next_event() => {}
+                biased;
+
+                event = litep2p.next_event() => {
+                    // `None` means the transport stream ended or the installed protocols
+                    // terminated. Every later iteration would be a no-op at high exec/s.
+                    if event.is_none() {
+                        return false;
+                    }
+                }
                 // The ping stream must be drained too, or its channel fills and applies
                 // backpressure that would mask what the fuzzer is doing.
                 _event = futures::StreamExt::next(ping) => {}
-                _ = tokio::time::sleep(Duration::from_millis(1)) => break,
+                _ = tokio::time::sleep(Duration::from_millis(1)) => {}
             }
         }
-    });
+
+        true
+    })
+}
+
+/// Stop with a message that cannot be mistaken for a finding.
+///
+/// A signal would make AFL file the current input as a crash. A plain non-zero exit is not
+/// recorded as one, so a harness or environment failure stays out of the crash directory
+/// instead of masquerading as a litep2p bug.
+fn harness_failure(what: &str) -> ! {
+    eprintln!("webrtc-datagram: harness failure: {what}");
+    eprintln!("this is a harness or environment problem, not a finding in litep2p");
+    std::process::exit(70);
 }
 
 fn build_node() -> Node {
@@ -167,7 +227,7 @@ fn build_node() -> Node {
         .enable_all()
         .start_paused(true)
         .build()
-        .expect("runtime to build");
+        .unwrap_or_else(|error| harness_failure(&format!("tokio runtime: {error}")));
 
     let (ping_config, ping_events) = ping::Config::default();
 
@@ -194,7 +254,9 @@ fn build_node() -> Node {
         .with_libp2p_ping(ping_config)
         .build();
 
-    let litep2p = runtime.block_on(async { Litep2p::new(config).expect("litep2p to start") });
+    let litep2p = runtime.block_on(async {
+        Litep2p::new(config).unwrap_or_else(|error| harness_failure(&format!("litep2p: {error}")))
+    });
 
     let address = litep2p
         .listen_addresses()
@@ -204,13 +266,16 @@ fn build_node() -> Node {
     let target = socket_address(&address).expect("listen address to contain ip4/udp");
 
     let senders = (0..NUM_SENDERS)
-        .map(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("sender socket to bind"))
+        .map(|_| {
+            UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+                .unwrap_or_else(|error| harness_failure(&format!("sender socket: {error}")))
+        })
         .collect();
 
     Node {
         runtime,
         litep2p,
-        ping: Box::new(ping_events),
+        ping: ping_events,
         target,
         senders,
     }
@@ -274,15 +339,21 @@ mod tests {
         );
     }
 
-    /// Datagrams must reach the listener without taking the transport down. Includes the
-    /// zero-length datagram, which is the specific input litep2p guards against because
-    /// str0m panics on it.
+    /// Datagrams must reach the listener without taking the transport down.
+    ///
+    /// The liveness check is `drive`'s return value, not `listen_addresses()`. That method
+    /// iterates a `Vec` built once at construction and never updated when a transport dies, so
+    /// asserting on it is unconditionally true and cannot fail — the previous version of this
+    /// test verified nothing.
+    ///
+    /// The zero-length datagram is kept because it is free, but note it never reaches
+    /// `on_socket_input` at all; see the module docs.
     #[test]
     fn adversarial_datagrams_do_not_kill_the_listener() {
         let mut node = build_node();
 
         let inputs: Vec<Vec<u8>> = vec![
-            vec![],                       // empty: must be dropped before reaching str0m
+            vec![],                       // empty: never reaches `on_socket_input`
             vec![0x00],                   // one byte, below any header length
             vec![0x00; 20],               // STUN-length zeros, invalid magic cookie
             vec![0xff; 1500],             // full-MTU garbage
@@ -297,17 +368,16 @@ mod tests {
 
         for input in &inputs {
             let _ = node.senders[0].send_to(input, node.target);
-            drive(&mut node);
+            assert!(
+                drive(&mut node),
+                "the transport stream terminated on a {}-byte datagram",
+                input.len(),
+            );
         }
-
-        // The listener must still be advertising an address, i.e. it did not tear down.
-        assert!(
-            node.litep2p.listen_addresses().next().is_some(),
-            "listener must survive adversarial datagrams",
-        );
     }
 
-    /// The chunker must respect its bounds and be able to emit an empty datagram.
+    /// The chunker must respect its bounds and be able to emit an empty datagram, even though
+    /// an empty datagram stops at the socket layer.
     #[test]
     fn datagram_chunking_is_bounded() {
         assert!(datagrams(&[]).is_empty());

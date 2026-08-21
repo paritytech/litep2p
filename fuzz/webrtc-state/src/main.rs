@@ -117,8 +117,20 @@ fn runtime() -> &'static tokio::runtime::Runtime {
             .enable_all()
             .start_paused(true)
             .build()
-            .expect("runtime to build")
+            .unwrap_or_else(|error| harness_failure(&format!("tokio runtime failed to build: {error}")))
     })
+}
+
+/// Stop with a message that cannot be mistaken for a finding.
+///
+/// A panic aborts and AFL files the current input as a crash. A plain non-zero exit is not recorded
+/// as one, so a harness or environment failure (a failed socket bind, a runtime that will not
+/// build) stays out of the crash directory instead of masquerading as a litep2p bug. Mirrors the
+/// same helper in the `webrtc-datagram` harness.
+fn harness_failure(what: &str) -> ! {
+    eprintln!("webrtc-state: harness failure: {what}");
+    eprintln!("this is a harness or environment problem, not a finding in litep2p");
+    std::process::exit(70);
 }
 
 fn main() {
@@ -143,20 +155,26 @@ fn main() {
 async fn replay_connection(script: ConnectionScript) {
     let protocols = SUPPORTED_PROTOCOLS.iter().map(|name| ProtocolName::from(*name)).collect();
 
-    // A setup failure must be loud. Returning here would leave every connection iteration a
-    // silent no-op while the exec counter kept climbing, which is the worst outcome
-    // available: a whole campaign that looks healthy and tests nothing.
-    let mut connection = FuzzConnection::new(protocols)
-        .await
-        .expect("connection scaffold must build; a failure here is a harness or environment problem, not a finding");
-
-    let mut channels = 0usize;
+    // A setup failure must be loud but must not look like a finding. Returning here would leave
+    // every connection iteration a silent no-op while the exec counter climbed (a campaign that
+    // looks healthy and tests nothing); panicking would file the input as a crash. Exit 70 instead,
+    // so a bad environment stays out of the crash directory.
+    let mut connection = match FuzzConnection::new(protocols).await {
+        Ok(connection) => connection,
+        Err(error) => harness_failure(&format!("connection scaffold failed to build: {error}")),
+    };
 
     for op in script.ops.into_iter().take(MAX_OPS) {
         match op {
             ConnectionOp::OpenChannel => {
-                if channels < MAX_CHANNELS && connection.open_channel().await.is_ok() {
-                    channels += 1;
+                if connection.channel_count() < MAX_CHANNELS {
+                    let _ = connection.open_channel().await;
+                }
+            }
+            ConnectionOp::OpenNegotiated => {
+                if connection.channel_count() < MAX_CHANNELS {
+                    let protocol = ProtocolName::from(SUPPORTED_PROTOCOLS[0]);
+                    let _ = connection.open_negotiated_channel(protocol);
                 }
             }
             ConnectionOp::Inbound { channel, mut data } => {
@@ -169,14 +187,22 @@ async fn replay_connection(script: ConnectionScript) {
             ConnectionOp::CloseChannel { channel } => {
                 let _ = connection.close_channel(channel as usize).await;
             }
+            ConnectionOp::PollHandles => {
+                connection.poll_handles();
+            }
+            ConnectionOp::ReadSubstream { channel, len } => {
+                let _ = connection.read_substream(channel as usize, len as usize);
+            }
         }
 
-        assert_buffers_bounded(&connection, channels);
+        assert_buffers_bounded(&connection);
     }
 }
 
 /// Check every reassembly-memory bound after an operation.
-fn assert_buffers_bounded(connection: &FuzzConnection, channels: usize) {
+fn assert_buffers_bounded(connection: &FuzzConnection) {
+    let channels = connection.channel_count();
+
     let largest = connection.max_buffered_bytes();
     assert!(
         largest <= MAX_FRAME_SIZE + BUFFER_SLACK,
@@ -568,17 +594,17 @@ mod tests {
         assert!(count >= 15, "expected the generated corpus, found {count} seeds");
     }
 
-    /// Sweep connection scripts and require that the *only* assertion that ever fires is the
-    /// known buffer-growth one.
+    /// Sweep connection scripts and require that no assertion fires at all.
     ///
-    /// The connection oracle grew three assertions, and two of them are about counts rather
-    /// than about a single call, which is exactly where a harness starts accusing litep2p of
-    /// things it did not do. Any panic here that is not the known defect is a false positive,
-    /// and it must surface in `cargo test` rather than as a crash on the first fuzzing run.
+    /// The connection oracle has three assertions and two of them are about counts rather than
+    /// about a single call, which is exactly where a harness starts accusing litep2p of things
+    /// it did not do. The wedged-buffer defect that used to make this sweep tolerate one
+    /// failure is fixed, so the bar is now absolute: any panic here is a false positive and
+    /// must surface in `cargo test` rather than as a crash on the first fuzzing run.
     #[test]
-    fn connection_scripts_only_trip_the_known_defect() {
+    fn connection_scripts_trip_no_assertions() {
         // A legal frame, an unfinishable one, and the three shapes that are rejected
-        // permanently. The last one is what drives the known growth.
+        // permanently.
         let patterns: Vec<Vec<u8>> = vec![
             vec![],
             vec![0x00],
@@ -589,52 +615,33 @@ mod tests {
             vec![0x5a; 1024],
         ];
 
+        const ALPHABET: u8 = 7;
+
         for pattern in &patterns {
-            for a in 0..4u8 {
-                for b in 0..4u8 {
-                    for c in 0..4u8 {
+            for a in 0..ALPHABET {
+                for b in 0..ALPHABET {
+                    for c in 0..ALPHABET {
                         let op = |code: u8| match code {
                             0 => ConnectionOp::OpenChannel,
-                            1 => ConnectionOp::Inbound {
+                            1 => ConnectionOp::OpenNegotiated,
+                            2 => ConnectionOp::Inbound {
                                 channel: 0,
                                 data: pattern.clone(),
                             },
-                            2 => ConnectionOp::CloseChannel { channel: 0 },
-                            _ => ConnectionOp::Inbound {
+                            3 => ConnectionOp::Inbound {
                                 channel: 1,
                                 data: pattern.clone(),
                             },
+                            4 => ConnectionOp::CloseChannel { channel: 0 },
+                            5 => ConnectionOp::PollHandles,
+                            _ => ConnectionOp::ReadSubstream { channel: 0, len: 64 },
                         };
 
                         let script = ConnectionScript {
-                            ops: vec![
-                                ConnectionOp::OpenChannel,
-                                op(a),
-                                op(b),
-                                op(c),
-                            ],
+                            ops: vec![ConnectionOp::OpenChannel, op(a), op(b), op(c)],
                         };
 
-                        let hook = std::panic::take_hook();
-                        std::panic::set_hook(Box::new(|_| {}));
-                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            block_on(replay_connection(script))
-                        }));
-                        std::panic::set_hook(hook);
-
-                        if let Err(payload) = result {
-                            let message = payload
-                                .downcast_ref::<String>()
-                                .cloned()
-                                .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
-                                .unwrap_or_default();
-
-                            assert!(
-                                message.contains("reassembly buffer grew"),
-                                "script [{a}, {b}, {c}] over pattern {pattern:02x?} tripped an \
-                                 assertion other than the known buffer growth: {message}",
-                            );
-                        }
+                        block_on(replay_connection(script));
                     }
                 }
             }
@@ -694,6 +701,53 @@ mod tests {
             matches!(result, ListenerSelectResult::Accepted { .. }),
             "the negotiation seed must be accepted, got {result:?}",
         );
+    }
+
+    /// The `Open`-state seed must deliver its payload all the way to the local substream.
+    ///
+    /// `OpenNegotiated` exists to make `ChannelState::Open` reachable, and the only way to know
+    /// it worked is to observe the payload arriving. If this fails, the seed is opening a
+    /// channel that swallows its input and the whole `Open` path is nominal coverage only.
+    #[test]
+    fn open_substream_seed_delivers_payload() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("corpus")
+            .join("conn-open-substream-traffic");
+        let data = std::fs::read(&path).expect("open-substream seed to exist");
+
+        let Ok(Input::Connection(script)) = bincode_options().deserialize::<Input>(&data) else {
+            panic!("the open-substream seed must decode as a connection script");
+        };
+
+        // The first framed payload the seed feeds, taken from the seed itself rather than
+        // rebuilt, so a stale seed cannot pass this.
+        let frame = script
+            .ops
+            .iter()
+            .find_map(|op| match op {
+                ConnectionOp::Inbound { data, .. } => Some(data.clone()),
+                _ => None,
+            })
+            .expect("the seed must feed a frame");
+
+        block_on(async {
+            let protocols =
+                SUPPORTED_PROTOCOLS.iter().map(|name| ProtocolName::from(*name)).collect();
+            let mut connection =
+                FuzzConnection::new(protocols).await.expect("scaffold must build");
+
+            let index = connection
+                .open_negotiated_channel(ProtocolName::from(SUPPORTED_PROTOCOLS[0]))
+                .expect("negotiated channel installs");
+
+            connection.inbound(index, frame).await.expect("frame is handled");
+
+            assert_eq!(
+                connection.read_substream(index, 64).as_deref(),
+                Some(&b"payload"[..]),
+                "the seed's payload must reach the local end of the substream",
+            );
+        });
     }
 
     /// The connection scaffold must actually stand up and accept inbound bytes. If
@@ -775,7 +829,7 @@ mod tests {
             // entry while its data is drained, but it must never retain bytes.
             for _ in 0..8 {
                 let _ = connection.inbound(0, vec![0u8; MAX_OP_BYTES]).await;
-                assert_buffers_bounded(&connection, 1);
+                assert_buffers_bounded(&connection);
                 assert_eq!(connection.buffered_bytes(), 0);
             }
         });

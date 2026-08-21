@@ -2727,6 +2727,7 @@ dependencies = [
  "futures",
  "litep2p",
  "multiaddr",
+ "str0m",
  "tokio",
  "ziggy",
 ]

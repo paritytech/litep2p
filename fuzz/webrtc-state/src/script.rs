@@ -97,7 +97,7 @@ pub struct Script {
 /// Channels are addressed by creation index rather than by `ChannelId`, because str0m's
 /// `ChannelId` is opaque and only the connection knows the real ones. Out-of-range indices
 /// are no-ops, which keeps mutated inputs useful instead of aborting the script.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConnectionOp {
     /// Open a new inbound data channel.
     OpenChannel,
@@ -107,6 +107,23 @@ pub enum ConnectionOp {
 
     /// Close a channel, which should drop its reassembly buffer.
     CloseChannel { channel: u8 },
+
+    /// Install a channel already in `ChannelState::Open`, bypassing multistream-select.
+    ///
+    /// Without this the connection layer never reaches the `Open` state, because the
+    /// multistream-select response write always fails in the scaffold and every negotiation
+    /// outcome closes its channel. This is what makes `on_open_channel_data`,
+    /// `SubstreamHandle::on_message` and the handle set reachable through the connection.
+    ///
+    /// New variants go at the end of this enum on purpose: bincode encodes the variant index,
+    /// so appending keeps every committed seed decoding.
+    OpenNegotiated,
+
+    /// Poll the substream handle set once, driving its round-robin.
+    PollHandles,
+
+    /// Read from the local end of a substream, so inbound delivery is observable.
+    ReadSubstream { channel: u8, len: u16 },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

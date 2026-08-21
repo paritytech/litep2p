@@ -16,7 +16,7 @@
 #[allow(dead_code)]
 mod script;
 
-use litep2p::transport::webrtc::util::WebRtcMessage;
+use litep2p::transport::webrtc::{schema::webrtc::message::Flag, util::WebRtcMessage};
 use script::{
     bincode_options, ConnectionOp, ConnectionScript, Input, Op, Script, FIN, FIN_ACK,
     MAX_OP_BYTES, RESET_STREAM, STOP_SENDING,
@@ -166,6 +166,74 @@ fn connection_seeds() -> Vec<(&'static str, ConnectionScript)> {
                     ConnectionOp::Inbound {
                         channel: 0,
                         data: OVERSIZED_FRAME.to_vec(),
+                    },
+                ],
+            },
+        ),
+        (
+            // The `Open` state, which nothing else in this harness can reach: a negotiated
+            // channel, a framed payload that must arrive at the local end, a poll of the
+            // handle set, then a FIN that makes the handle emit FIN_ACK.
+            //
+            // The FIN_ACK cannot be written out in this scaffold, so forwarding it fails and
+            // the channel closes. That failure path is itself worth seeding.
+            "conn-open-substream-traffic",
+            ConnectionScript {
+                ops: vec![
+                    ConnectionOp::OpenNegotiated,
+                    ConnectionOp::Inbound {
+                        channel: 0,
+                        data: WebRtcMessage::encode(b"payload".to_vec(), None),
+                    },
+                    ConnectionOp::ReadSubstream { channel: 0, len: 64 },
+                    ConnectionOp::PollHandles,
+                    ConnectionOp::Inbound {
+                        channel: 0,
+                        data: WebRtcMessage::encode(Vec::new(), Some(Flag::Fin)),
+                    },
+                    ConnectionOp::PollHandles,
+                    ConnectionOp::ReadSubstream { channel: 0, len: 64 },
+                ],
+            },
+        ),
+        (
+            // Several open channels polled together, then one closed mid-rotation. This is the
+            // `SubstreamHandleSet` round-robin: the persistent `index`, the `pending` skip and
+            // the `swap_remove` that reorders the map underneath it.
+            "conn-open-handle-set-rotation",
+            ConnectionScript {
+                ops: {
+                    let mut ops = vec![ConnectionOp::OpenNegotiated; 4];
+
+                    for channel in 0..4u8 {
+                        ops.push(ConnectionOp::Inbound {
+                            channel,
+                            data: WebRtcMessage::encode(b"rotate".to_vec(), None),
+                        });
+                    }
+                    ops.extend(std::iter::repeat_n(ConnectionOp::PollHandles, 4));
+                    ops.push(ConnectionOp::CloseChannel { channel: 1 });
+                    ops.extend(std::iter::repeat_n(ConnectionOp::PollHandles, 4));
+
+                    ops
+                },
+            },
+        ),
+        (
+            // Data delivered after the channel is closed. `on_inbound_data` must drop it
+            // without creating a reassembly buffer that nothing would ever reclaim.
+            "conn-data-after-close",
+            ConnectionScript {
+                ops: vec![
+                    ConnectionOp::OpenChannel,
+                    ConnectionOp::CloseChannel { channel: 0 },
+                    ConnectionOp::Inbound {
+                        channel: 0,
+                        data: INCOMPLETE_FRAME.to_vec(),
+                    },
+                    ConnectionOp::Inbound {
+                        channel: 0,
+                        data: WebRtcMessage::encode(b"after-close".to_vec(), None),
                     },
                 ],
             },

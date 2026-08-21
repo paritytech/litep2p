@@ -1039,6 +1039,49 @@ impl WebRtcConnection {
         Ok(())
     }
 
+    /// Handle one item yielded by the substream handle set.
+    ///
+    /// `None` means the handle finished, `Some` is a message to forward to the peer. Either
+    /// way a failure closes the channel and drops the handle.
+    ///
+    /// Split out of [`Self::run_event_loop()`] so that `FuzzConnection::poll_handles()` drives
+    /// this exact code rather than a copy of it.
+    fn on_handle_message(&mut self, channel_id: ChannelId, message: Option<Message>) {
+        let failed = match message {
+            None => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    peer = ?self.peer,
+                    ?channel_id,
+                    "channel closed",
+                );
+
+                true
+            }
+            Some(Message { payload, flag }) => match self.on_outbound_data(channel_id, payload, flag)
+            {
+                Ok(()) => false,
+                Err(error) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?channel_id,
+                        ?flag,
+                        ?error,
+                        "failed to send data to remote peer",
+                    );
+
+                    true
+                }
+            },
+        };
+
+        if failed {
+            self.rtc.direct_api().close_data_channel(channel_id);
+            self.channels.insert(channel_id, ChannelState::Closing);
+            self.handles.remove(&channel_id);
+        }
+    }
+
     /// Handle outbound data with optional flag.
     fn on_outbound_data(
         &mut self,
@@ -1328,33 +1371,7 @@ impl WebRtcConnection {
                         );
                         return self.on_connection_closed().await;
                     },
-                    Some((channel_id, None)) => {
-                        tracing::trace!(
-                            target: LOG_TARGET,
-                            peer = ?self.peer,
-                            ?channel_id,
-                            "channel closed",
-                        );
-
-                        self.rtc.direct_api().close_data_channel(channel_id);
-                        self.channels.insert(channel_id, ChannelState::Closing);
-                        self.handles.remove(&channel_id);
-                    }
-                    Some((channel_id, Some(Message { payload, flag }))) => {
-                        if let Err(error) = self.on_outbound_data(channel_id, payload, flag) {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?channel_id,
-                                ?flag,
-                                ?error,
-                                "failed to send data to remote peer",
-                            );
-
-                            self.rtc.direct_api().close_data_channel(channel_id);
-                            self.channels.insert(channel_id, ChannelState::Closing);
-                            self.handles.remove(&channel_id);
-                        }
-                    }
+                    Some((channel_id, message)) => self.on_handle_message(channel_id, message),
                 },
                 command = self.protocol_set.next() => match command {
                     None | Some(ProtocolCommand::ForceClose) => {
@@ -1502,22 +1519,35 @@ impl WebRtcConnection {
 ///
 /// # What is and is not reachable
 ///
-/// The connection is created without a DTLS handshake, so `Rtc::channel()` finds no open
-/// SCTP stream and every `write()` returns [`Error::ChannelDoesntExist`]. That bounds what
-/// this scaffold covers:
+/// The connection is created without a DTLS handshake, and the data channels are created with
+/// `negotiated: None`, so str0m never assigns them an SCTP stream id. `Rtc::channel()`
+/// therefore returns `None` and every `write()` returns [`Error::ChannelDoesntExist`].
 ///
-/// - **Reachable:** the per-channel `recv_buffers` reassembly loop, frame extraction across
-///   interleaved channels, channel-state lookup and removal, and close-time cleanup. This is where
-///   the aggregate-memory question lives — buffers are capped at `MAX_FRAME_SIZE` *individually*
-///   with no bound across channels — and a channel holding a permanently incomplete frame never
-///   dispatches, so it never needs a write to succeed.
-/// - **Not reachable:** anything past a completed negotiation, because sending the
-///   multistream-select response requires a live SCTP stream. The `Open`-state substream path is
-///   covered instead by fuzzing `SubstreamHandle` directly.
+/// The consequence is sharper than "negotiation cannot complete". In
+/// [`Self::on_inbound_opening_channel_data()`] the multistream-select response is written
+/// *before* the accept/reject/pending branch, so **every** outcome — `Accepted`, `Rejected`
+/// and `PendingProtocol` alike — fails at that write and moves the channel to
+/// [`ChannelState::Closing`]. A channel opened with [`FuzzConnection::open_channel()`] is
+/// effectively a one-frame channel: the first complete frame ends it, and later frames are
+/// discarded by the `Closing` arm.
 ///
-/// Lifting that limit means pairing two `Rtc` instances through a real DTLS/SCTP handshake
-/// per iteration; see `fuzz/README.md`.
-#[cfg(feature = "fuzz")]
+/// - **Reachable through [`FuzzConnection::open_channel()`]:** the per-channel `recv_buffers`
+///   reassembly loop, frame extraction across interleaved channels, channel-state lookup and
+///   removal, close-time cleanup, and one pass through `webrtc_listener_negotiate`. A channel
+///   holding a permanently incomplete frame never dispatches, so it never needs a write.
+/// - **Reachable through [`FuzzConnection::open_negotiated_channel()`]:** the
+///   [`ChannelState::Open`] path, which is what the write failure otherwise blocks. That entry
+///   point installs a substream and its handle directly, so inbound frames reach
+///   `on_open_channel_data` and `SubstreamHandle::on_message`, and
+///   [`FuzzConnection::poll_handles()`] drives the [`SubstreamHandleSet`] round-robin.
+/// - **Not reachable:** the back-and-forth negotiation states, because
+///   `InboundOpening { header_received: true }` requires the response write to succeed. Any
+///   outbound message a handle produces also fails to write and closes its channel, so the
+///   `Open` state survives inbound traffic but not outbound.
+///
+/// Lifting the remaining limits means pairing two `Rtc` instances through a real DTLS/SCTP
+/// handshake per iteration; see `fuzz/README.md`.
+#[cfg(any(test, feature = "fuzz"))]
 pub struct FuzzConnection {
     /// The connection under test.
     ///
@@ -1526,19 +1556,36 @@ pub struct FuzzConnection {
     /// private types into the public API. The harness drives it through the methods below.
     connection: WebRtcConnection,
 
-    /// Data channels opened so far, in creation order.
+    /// Data channels opened so far, in creation order, paired with whether this scaffold
+    /// still considers them open.
     ///
-    /// Entries become `None` on close rather than being removed, so later indices keep
-    /// referring to the same channel and a mutated script stays meaningful.
-    channels: Vec<Option<ChannelId>>,
+    /// Entries are never removed, so later indices keep referring to the same channel and a
+    /// mutated script stays meaningful. The `ChannelId` outlives the close so a script can
+    /// deliver data *after* the close, which is an ordering a peer really can produce.
+    channels: Vec<(ChannelId, bool)>,
 
-    /// Kept alive so the connection's own senders do not observe a closed channel.
+    /// Local ends of substreams installed by [`Self::open_negotiated_channel()`], indexed in
+    /// step with `channels` so one index addresses both. `None` for channels opened through
+    /// [`Self::open_channel()`], which have no substream.
+    ///
+    /// Held so each handle keeps a live peer. Dropping a `Substream` closes its outbound
+    /// channel, which makes the handle start half-closing on the next poll and collapses the
+    /// `Open` state this exists to reach.
+    substreams: Vec<Option<Substream>>,
+
+    /// Held so the connection's datagram receiver does not observe a closed sender.
     _dgram_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
-    _mgr_rx: tokio::sync::mpsc::Receiver<crate::transport::manager::TransportManagerEvent>,
-    _protocol_rx: tokio::sync::mpsc::Receiver<crate::protocol::InnerTransportEvent>,
+
+    /// Drained by [`Self::drain_events()`] rather than merely held.
+    ///
+    /// Both channels have capacity 256 and `ProtocolSet` sends on them with `.await`, so
+    /// holding the receivers without reading them would block forever on the 257th event once
+    /// any reporting path is reachable — an unattributable fuzzer hang rather than a finding.
+    mgr_rx: tokio::sync::mpsc::Receiver<crate::transport::manager::TransportManagerEvent>,
+    protocol_rx: tokio::sync::mpsc::Receiver<crate::protocol::InnerTransportEvent>,
 }
 
-#[cfg(feature = "fuzz")]
+#[cfg(any(test, feature = "fuzz"))]
 impl FuzzConnection {
     /// Build a connection wired to `protocols`, with no DTLS handshake performed.
     pub async fn new(protocols: Vec<ProtocolName>) -> crate::Result<Self> {
@@ -1595,8 +1642,8 @@ impl FuzzConnection {
         rtc.direct_api().set_local_ice_credentials(creds);
         rtc.direct_api().set_ice_controlling(false);
 
-        let (protocol_tx, _protocol_rx) = tokio::sync::mpsc::channel(256);
-        let (mgr_tx, _mgr_rx) = tokio::sync::mpsc::channel(256);
+        let (protocol_tx, protocol_rx) = tokio::sync::mpsc::channel(256);
+        let (mgr_tx, mgr_rx) = tokio::sync::mpsc::channel(256);
         let (_dgram_tx, dgram_rx) = tokio::sync::mpsc::channel(256);
 
         let protocols = protocols
@@ -1622,9 +1669,21 @@ impl FuzzConnection {
             protocols,
         );
 
-        let socket = Arc::new(WebRtcSocket::new(
-            tokio::net::UdpSocket::bind("127.0.0.1:0").await?,
-        )?);
+        // The socket is a placeholder, like the certificate above. The logical `addrs` are
+        // hardcoded and no I/O ever runs on it, because there is no DTLS handshake. Binding it per
+        // input cost a syscall and a fresh ephemeral port every iteration, so bind once per process
+        // and share the `Arc`. That also turns a transient bind failure into a single setup failure
+        // rather than one crash per input.
+        static SOCKET: std::sync::OnceLock<Arc<WebRtcSocket>> = std::sync::OnceLock::new();
+        let socket = match SOCKET.get() {
+            Some(socket) => socket.clone(),
+            None => {
+                let socket =
+                    Arc::new(WebRtcSocket::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await?)?);
+                let _ = SOCKET.set(socket.clone());
+                socket
+            }
+        };
 
         let connection = WebRtcConnection::new(
             rtc,
@@ -1639,14 +1698,21 @@ impl FuzzConnection {
         Ok(Self {
             connection,
             channels: Vec::new(),
+            substreams: Vec::new(),
             _dgram_tx,
-            _mgr_rx,
-            _protocol_rx,
+            mgr_rx,
+            protocol_rx,
         })
     }
 
     /// Open an inbound data channel and register it, returning its index.
+    ///
+    /// The channel lands in [`ChannelState::InboundOpening`], so its first complete frame runs
+    /// one pass of `webrtc_listener_negotiate` and then closes it. Use
+    /// [`Self::open_negotiated_channel()`] to reach the `Open` state instead.
     pub async fn open_channel(&mut self) -> crate::Result<usize> {
+        self.drain_events();
+
         let label = format!("fuzz-{}", self.channels.len());
         let channel_id = self.connection.rtc.direct_api().create_data_channel(ChannelConfig {
             label: label.clone(),
@@ -1657,43 +1723,164 @@ impl FuzzConnection {
         });
 
         self.connection.on_channel_opened(channel_id, label).await?;
-        self.channels.push(Some(channel_id));
+        self.channels.push((channel_id, true));
+        self.substreams.push(None);
 
         Ok(self.channels.len() - 1)
     }
 
-    /// Feed inbound bytes to the channel at `index`, if it is open.
+    /// Feed inbound bytes to the channel at `index`.
     ///
-    /// Data for an unknown or already-closed channel is dropped rather than delivered.
-    /// This mirrors an ordering guarantee litep2p relies on: `dispatch_framed_message`
-    /// carries a `debug_assert!(false)` on the "channel doesn't exist" branch, so it treats
-    /// `Event::ChannelData` after `Event::ChannelClose` for the same channel as impossible.
-    /// A channel litep2p closes itself stays in `channels` as `ChannelState::Closing`, so
-    /// in-flight data from the peer is still handled — the state is only removed once str0m
-    /// reports the close.
-    ///
-    /// Delivering post-close data here would fire that assertion on essentially every
-    /// script, burying real findings under one unverified ordering question. If str0m is
-    /// ever shown to reorder those events, drop this guard and the assertion becomes the
-    /// finding.
+    /// An index that was never opened is a no-op, since there is no `ChannelId` to address.
+    /// Data for a *closed* channel is delivered, which is deliberate: `on_inbound_data` now
+    /// drops data for a channel with no state of its own, so the post-close ordering question
+    /// this scaffold used to sidestep is answered by the code under test rather than by a
+    /// guard here.
     pub async fn inbound(&mut self, index: usize, data: Vec<u8>) -> crate::Result<()> {
-        let Some(Some(channel_id)) = self.channels.get(index).copied() else {
+        self.drain_events();
+
+        let Some((channel_id, _open)) = self.channels.get(index).copied() else {
             return Ok(());
         };
 
         self.connection.on_inbound_data(channel_id, data).await
     }
 
-    /// Close the channel at `index`, if it is open.
+    /// Close the channel at `index`, if this scaffold still considers it open.
     pub async fn close_channel(&mut self, index: usize) -> crate::Result<()> {
-        let Some(slot) = self.channels.get_mut(index) else {
+        self.drain_events();
+
+        let Some((channel_id, open)) = self.channels.get_mut(index) else {
             return Ok(());
         };
-        let Some(channel_id) = slot.take() else {
+        if !*open {
             return Ok(());
-        };
+        }
+
+        *open = false;
+        let channel_id = *channel_id;
 
         self.connection.on_channel_closed(channel_id).await
+    }
+
+    /// Install an already-negotiated channel in [`ChannelState::Open`], returning its index.
+    ///
+    /// This is the entry point that makes the `Open` state reachable at all. Multistream-select
+    /// cannot complete in this scaffold, because the response write always fails, so the
+    /// post-negotiation setup is performed directly instead: allocate a substream id, take a
+    /// permit, create the substream pair, install the handle and set the channel state. That is
+    /// the same sequence as the tail of [`Self::on_inbound_opening_channel_data()`].
+    ///
+    /// Two deliberate divergences from production, both of which keep the `Open` state alive
+    /// rather than immediately tearing it down:
+    ///
+    /// - `report_substream_open` is not called, so the protocol never receives the `Substream`.
+    ///   The local end is kept in `substreams` instead. Reporting it would hand ownership to a
+    ///   receiver this scaffold has to drain, and dropping it there would close the outbound
+    ///   channel and start a half-close on the next poll.
+    /// - `lifetime_permit` is `None`, matching the `SubstreamKeepAlive::No` that
+    ///   [`Self::new()`] registers for every protocol.
+    pub fn open_negotiated_channel(&mut self, protocol: ProtocolName) -> crate::Result<usize> {
+        self.drain_events();
+
+        let label = format!("fuzz-open-{}", self.channels.len());
+        let channel_id = self.connection.rtc.direct_api().create_data_channel(ChannelConfig {
+            label,
+            ordered: true,
+            reliability: str0m::channel::Reliability::Reliable,
+            negotiated: None,
+            protocol: String::new(),
+        });
+
+        let substream_id = self.connection.protocol_set.next_substream_id();
+        let codec = self.connection.protocol_set.protocol_codec(&protocol);
+        let _permit = self.connection.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
+        let (substream, handle) = WebRtcSubstream::new();
+        let substream =
+            Substream::new_webrtc(self.connection.peer, substream_id, substream, codec);
+
+        self.connection.handles.insert(channel_id, handle);
+        self.connection.channels.insert(
+            channel_id,
+            ChannelState::Open {
+                substream_id,
+                channel_id,
+                lifetime_permit: None,
+            },
+        );
+
+        self.substreams.push(Some(substream));
+        self.channels.push((channel_id, true));
+
+        Ok(self.channels.len() - 1)
+    }
+
+    /// Poll the substream handle set once and hand whatever it yields to the connection.
+    ///
+    /// Returns whether the set produced an item. This is the round-robin in
+    /// [`SubstreamHandleSet::poll_next()`] — the `index` walk, `pending` skipping and
+    /// `swap_remove` reordering — which nothing else in this scaffold reaches, and which is
+    /// where an index-out-of-bounds or a starved handle would come from.
+    ///
+    /// Any message a handle produces is forwarded through [`Self::on_handle_message()`], the
+    /// same function `run_event_loop` uses. In this scaffold the forwarding write fails, so a
+    /// handle that produces anything gets its channel closed; the polling logic still runs.
+    pub fn poll_handles(&mut self) -> bool {
+        self.drain_events();
+
+        let mut context = Context::from_waker(futures::task::noop_waker_ref());
+
+        match self.connection.handles.poll_next_unpin(&mut context) {
+            Poll::Ready(Some((channel_id, message))) => {
+                self.connection.on_handle_message(channel_id, message);
+                true
+            }
+            Poll::Ready(None) | Poll::Pending => false,
+        }
+    }
+
+    /// Read from the local end of the substream at `index`, returning what was available.
+    ///
+    /// Proves inbound frames actually traverse the whole path: `on_inbound_data` reassembles,
+    /// `on_open_channel_data` decodes, `SubstreamHandle::on_message` forwards, and the payload
+    /// lands here. Without this the `Open` state would be reachable but unobservable.
+    pub fn read_substream(&mut self, index: usize, len: usize) -> Option<Vec<u8>> {
+        use futures::FutureExt;
+        use tokio::io::AsyncReadExt;
+
+        let substream = self.substreams.get_mut(index)?.as_mut()?;
+        let mut buffer = vec![0u8; len];
+
+        match substream.read(&mut buffer).now_or_never() {
+            Some(Ok(read)) => {
+                buffer.truncate(read);
+                Some(buffer)
+            }
+            Some(Err(_)) | None => None,
+        }
+    }
+
+    /// Drain the protocol and manager event queues, returning how many events were dropped.
+    ///
+    /// Called at the start of every operation, so no reporting path can ever fill a
+    /// capacity-256 channel and turn a `.await` send into a hang the fuzzer reports as a
+    /// timeout.
+    pub fn drain_events(&mut self) -> usize {
+        let mut drained = 0;
+
+        while self.protocol_rx.try_recv().is_ok() {
+            drained += 1;
+        }
+        while self.mgr_rx.try_recv().is_ok() {
+            drained += 1;
+        }
+
+        drained
+    }
+
+    /// Number of channels this scaffold has opened, however they were opened.
+    pub fn channel_count(&self) -> usize {
+        self.channels.len()
     }
 
     /// Total bytes held across every channel's reassembly buffer.
@@ -1723,5 +1910,104 @@ impl FuzzConnection {
             .map(|buffer| buffer.len())
             .max()
             .unwrap_or(0)
+    }
+}
+
+#[cfg(all(test, feature = "webrtc"))]
+mod tests {
+    use super::*;
+    use crate::transport::webrtc::util::MAX_FRAME_SIZE;
+
+    fn protocols() -> Vec<ProtocolName> {
+        vec![ProtocolName::from("/ipfs/ping/1.0.0")]
+    }
+
+    /// A permanent framing error must drop the reassembly buffer and close the channel.
+    ///
+    /// `extract_framed_message` deliberately does not consume on error, and the event loop only
+    /// logs the failure and continues. Without an explicit drop here, the offending bytes stay at
+    /// the head of the buffer and every later byte the peer sends is appended to a buffer that can
+    /// never be parsed — unbounded, remotely triggered memory growth.
+    #[tokio::test]
+    async fn permanent_framing_error_drops_buffer_and_closes_channel() {
+        let mut connection = FuzzConnection::new(protocols()).await.expect("scaffold to build");
+        let index = connection.open_channel().await.expect("channel to open");
+
+        // Non-minimal varint: decodes to zero, but a single `0x00` is the canonical encoding, so
+        // no number of following bytes can make this parse.
+        assert!(
+            connection.inbound(index, vec![0x80, 0x00]).await.is_err(),
+            "a permanent framing error must be reported",
+        );
+        assert_eq!(connection.buffer_count(), 0, "the reassembly buffer must be dropped");
+
+        // Keep writing, as a peer would. Nothing may accumulate.
+        for _ in 0..8 {
+            let _ = connection.inbound(index, vec![0xaa; MAX_FRAME_SIZE]).await;
+            assert_eq!(connection.buffered_bytes(), 0, "no bytes may be retained");
+        }
+    }
+
+    /// Data for a channel with no state must not create a reassembly buffer. Nothing would ever
+    /// reclaim it, because `on_channel_closed` only runs for channels litep2p knows about.
+    #[tokio::test]
+    async fn post_close_data_creates_no_buffer() {
+        let mut connection = FuzzConnection::new(protocols()).await.expect("scaffold to build");
+        let index = connection.open_channel().await.expect("channel to open");
+        connection.close_channel(index).await.expect("channel to close");
+
+        connection
+            .inbound(index, vec![0xac, 0x02, 0xaa, 0xbb])
+            .await
+            .expect("post-close data is dropped, not an error");
+
+        assert_eq!(connection.buffer_count(), 0, "a closed channel must not regain a buffer");
+    }
+
+    /// An inbound frame on an `Open` channel must traverse the whole path: reassembly, protobuf
+    /// decode, `SubstreamHandle::on_message`, and out of the local `Substream`.
+    ///
+    /// This is what makes `open_negotiated_channel` worth having. If the payload does not arrive,
+    /// the `Open` state is nominally reachable but exercises nothing.
+    #[tokio::test]
+    async fn open_channel_delivers_payload_to_substream() {
+        let mut connection = FuzzConnection::new(protocols()).await.expect("scaffold to build");
+        let index = connection
+            .open_negotiated_channel(ProtocolName::from("/ipfs/ping/1.0.0"))
+            .expect("negotiated channel to install");
+
+        let frame = WebRtcMessage::encode(b"payload".to_vec(), None);
+        connection.inbound(index, frame).await.expect("frame to be handled");
+
+        assert_eq!(
+            connection.read_substream(index, 32).as_deref(),
+            Some(&b"payload"[..]),
+            "the payload must reach the local end of the substream",
+        );
+    }
+
+    /// Polling the handle set must reach the round-robin without panicking, including after a
+    /// `swap_remove` has reordered it. The hard `assert!` in `SubstreamHandleSet::insert` and the
+    /// index walk in `poll_next` are the reason this is worth a test.
+    #[tokio::test]
+    async fn polling_handles_survives_removal() {
+        let mut connection = FuzzConnection::new(protocols()).await.expect("scaffold to build");
+
+        for _ in 0..4 {
+            connection
+                .open_negotiated_channel(ProtocolName::from("/ipfs/ping/1.0.0"))
+                .expect("negotiated channel to install");
+        }
+
+        for _ in 0..8 {
+            connection.poll_handles();
+        }
+
+        // Closing reorders the set through `swap_remove`, so keep polling afterwards.
+        connection.close_channel(1).await.expect("channel to close");
+
+        for _ in 0..8 {
+            connection.poll_handles();
+        }
     }
 }
