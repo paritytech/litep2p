@@ -2,56 +2,50 @@
 //!
 //! Run with `cargo run --bin gen_seeds -- corpus` to (re)generate the seeds under `corpus/`.
 //!
-//! # Why these seeds exist
+//! # What the seeds are
 //!
-//! Without a seed, blind mutation never produces a datagram that clears the transport's demux:
-//! `on_socket_input` only builds an `Rtc` for a packet that passes `is_stun_packet`, then
-//! `StunMessage::parse`, then `split_username` (see `src/main.rs` module docs). The magic cookie
-//! alone is 2⁻³² to hit by chance. These seeds start the fuzzer from a valid STUN binding request,
-//! so mutation explores from *past* the gate: `make_rtc`, `rtc.handle_input`, and the
-//! `OpeningWebRtcConnection` bookkeeping all run. litep2p does not validate the ufrag
-//! (`mod.rs:404-442`), so an arbitrary `ufrag:pass` username is enough to create a connection.
-//!
-//! The requests are built with str0m's own serializer, so whatever `StunMessage::parse` checks
-//! (length framing, the mandatory MESSAGE-INTEGRITY and PRIORITY attributes for a binding request,
-//! the FINGERPRINT CRC) is satisfied by construction. Each seed is parsed back before it is written,
-//! so a broken seed fails generation rather than shipping.
-//!
-//! # Seed wire format
-//!
-//! The harness reads the first byte as the sender selector and then splits the remainder into
-//! datagrams, each prefixed by a single length byte (`main.rs::datagrams`). So a seed is
-//! `selector ++ (len ++ datagram)*`, and every datagram must be at most 255 bytes.
+//! The harness completes a real WebRTC handshake at runtime, then writes the fuzz input to the
+//! server's Noise channel. A seed file is split into chunks on length-byte boundaries (see
+//! `channel_chunks` in `main.rs`); the server concatenates the chunks and reads them as a sequence
+//! of `unsigned-varint length ++ body` frames in `extract_framed_message`, then prost-decodes each
+//! body as a `webrtc.Message`. These seeds hand the fuzzer valid framings and the known permanent
+//! error cases to start mutation from, since the crypto that guards this path is performed by the
+//! harness, not the fuzzer.
 
 use std::{fs, path::PathBuf};
 
-use str0m::ice::{StunMessage, TransId};
-
-/// Build a STUN binding request that clears the harness gate, and prove it does before returning.
-fn binding_request(username: &str, use_candidate: bool) -> Vec<u8> {
-    // controlling=true, tie-breaker and priority are arbitrary; the password is never verified at
-    // the gate (litep2p calls `parse` + `split_username`, not `verify`), so a dummy HMAC is fine.
-    let message = StunMessage::binding_request(username, TransId::new(), true, 0, 100, use_candidate);
-
-    let mut buffer = [0u8; 512];
-    let len = message
-        .to_bytes(Some(b"fuzz-password"), &mut buffer, |_key, _payloads| [0u8; 20])
-        .expect("STUN binding request to serialize");
-    let bytes = buffer[..len].to_vec();
-
-    let parsed = StunMessage::parse(&bytes).expect("generated STUN must parse");
-    assert!(parsed.split_username().is_some(), "generated STUN must carry a `ufrag:pass` username");
-    assert!(bytes.len() <= u8::MAX as usize, "datagram must fit the 1-byte length prefix");
-    bytes
+/// Encode `n` as an unsigned-varint (LEB128), matching `unsigned_varint::encode`.
+fn uvarint(mut n: u64) -> Vec<u8> {
+    let mut out = Vec::new();
+    loop {
+        let mut byte = (n & 0x7f) as u8;
+        n >>= 7;
+        if n != 0 {
+            byte |= 0x80;
+        }
+        out.push(byte);
+        if n == 0 {
+            break;
+        }
+    }
+    out
 }
 
-/// Frame datagrams into the harness input format: `selector ++ (len ++ datagram)*`.
-fn frame(selector: u8, datagrams: &[&[u8]]) -> Vec<u8> {
-    let mut out = vec![selector];
-    for datagram in datagrams {
-        assert!(datagram.len() <= u8::MAX as usize, "datagram too large for a 1-byte prefix");
-        out.push(datagram.len() as u8);
-        out.extend_from_slice(datagram);
+/// A single `varint(len) ++ body` frame, the unit `extract_framed_message` reads.
+fn frame(body: &[u8]) -> Vec<u8> {
+    let mut out = uvarint(body.len() as u64);
+    out.extend_from_slice(body);
+    out
+}
+
+/// Encode chunks into the harness input format: `(len_byte ++ chunk)*`, each chunk <= 255 bytes.
+/// Splitting a frame across chunks is how a seed exercises cross-SCTP-message reassembly.
+fn chunks(parts: &[&[u8]]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for part in parts {
+        assert!(part.len() <= u8::MAX as usize, "chunk too large for a 1-byte length prefix");
+        out.push(part.len() as u8);
+        out.extend_from_slice(part);
     }
     out
 }
@@ -60,17 +54,23 @@ fn main() {
     let dir: PathBuf = std::env::args().nth(1).unwrap_or_else(|| "corpus".to_string()).into();
     fs::create_dir_all(&dir).expect("corpus directory to be creatable");
 
-    let plain = binding_request("fuzz-remote:fuzz-local", false);
-    let use_candidate = binding_request("fuzz-remote:fuzz-local", true);
+    // A minimal valid `webrtc.Message { message: [0xAA, 0xBB] }`: field 2 (bytes), length 2. This
+    // decodes to `{ payload: Some(_), flag: None }`, the shape `on_noise_channel_data` accepts, so
+    // the frame reaches `get_remote_peer_id`.
+    let message = [0x12u8, 0x02, 0xAA, 0xBB];
+    let valid = frame(&message);
 
     let seeds: Vec<(&str, Vec<u8>)> = vec![
-        // One request from one source: reaches `make_rtc` and inserts one `OpeningWebRtcConnection`.
-        ("stun-binding", frame(0, &[&plain])),
-        // The USE-CANDIDATE variant, a distinct attribute layout for the parser to chew on.
-        ("stun-binding-usecandidate", frame(0, &[&use_candidate])),
-        // Two requests: the two datagrams land on different sender sockets, so the fuzzer starts
-        // from a state with two live opening connections in the table.
-        ("stun-binding-pair", frame(0, &[&plain, &use_candidate])),
+        // One complete frame in one chunk: framing + decode + get_remote_peer_id.
+        ("frame-message", chunks(&[&valid])),
+        // The varint and body in separate chunks: cross-message reassembly, the Ok(None) path.
+        ("frame-split", chunks(&[&valid[..1], &valid[1..]])),
+        // Empty-body frame: decodes to an empty message.
+        ("frame-empty", chunks(&[&frame(&[])])),
+        // Non-minimal varint zero (0x80 0x00): a permanent framing error that closes the channel.
+        ("frame-nonminimal", chunks(&[&[0x80, 0x00]])),
+        // A varint declaring a body far larger than MAX_FRAME_SIZE: rejected before the body.
+        ("frame-oversized", chunks(&[&uvarint(1 << 20)])),
     ];
 
     let mut written = 0;
@@ -79,5 +79,5 @@ fn main() {
         written += 1;
     }
 
-    eprintln!("wrote {written} STUN seeds to {}", dir.display());
+    eprintln!("wrote {written} end-to-end seeds to {}", dir.display());
 }

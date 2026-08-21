@@ -10,7 +10,7 @@ a workspace member and `cargo test` at the repo root does not build them.
 | `structure-aware` | Application protocol commands over TCP | Low | bincode-decoded command enums replayed via `fuzz_send_message` (SRLabs, PR #365) |
 | `webrtc-codec` | WebRTC wire parsers | **Exact** | Pure `fn(&[u8])`: frame reassembly, protobuf, multistream-select, Noise identity payload |
 | `webrtc-state` | WebRTC state machines | High | Structure-aware scripts against `SubstreamHandle` and `WebRtcConnection` |
-| `webrtc-datagram` | Live WebRTC listener | Low | STUN seed corpus gets past the demux to `make_rtc`; DTLS and beyond stay unreached. See below |
+| `webrtc-datagram` | End-to-end over a real handshake | Low | A str0m client completes ICE/DTLS/SCTP, then fuzzes the server's Noise-channel framing behind DTLS. See below |
 
 ## Setup
 
@@ -52,15 +52,15 @@ That is why the WebRTC coverage is split three ways instead of being one end-to-
 - **`webrtc-state` covers what has memory.** The half-close protocol
   (`FIN`/`FIN_ACK`/`STOP_SENDING`/`RESET_STREAM`) and per-channel frame reassembly. Bugs
   here are orderings, so the input is a bincode script, not a byte blob.
-- **`webrtc-datagram` clears the gate but stops at DTLS.** It ships a committed STUN seed corpus
-  (`gen_seeds`), so mutation starts from a valid binding request: `is_stun_packet`,
-  `StunMessage::parse` and `split_username` pass, `make_rtc` runs and an opening connection is
-  created. It cannot complete the DTLS handshake (the server's per-run crypto desyncs any captured
-  or mutated handshake), so the SCTP and channel-data layers stay unreached, and most of what it
-  exercises past the gate is str0m, not litep2p. The module docs in
-  `webrtc-datagram/src/main.rs` cover the remaining limits.
-
-  Crashes in `DatagramRecv::try_from` or `StunMessage::parse` belong upstream in `str0m`.
+- **`webrtc-datagram` fuzzes the handshake path end to end.** A real str0m client
+  (`src/client.rs`, ICE-controlling, DTLS-active) completes ICE/DTLS/SCTP against the listener over
+  loopback, then writes the fuzz input to the Noise channel. Those bytes reach the server's
+  `on_noise_channel_data` — its `extract_framed_message` reassembly and `WebRtcMessage::decode` — as
+  genuinely decrypted, SCTP-framed data with fuzzer-chosen message boundaries. It is the only
+  harness that reaches that path through a real handshake; the parsers behind it are also covered,
+  far faster, by `webrtc-codec`. The client never runs Noise, so the authenticated substream layer
+  is out of scope. One handshake per input makes it slow and, because the handshake uses a CSPRNG,
+  not byte-exact reproducible; treat it as an integration complement to the two stateless targets.
 
 ## Corpora
 
@@ -79,14 +79,15 @@ job (`.github/workflows/ci.yml`) drives a go-libp2p perf client against a litep2
 server via [`litep2p-perf`](https://github.com/lexnv/litep2p-perf); the decrypted
 channel-data frames from a local run make ideal input for `webrtc-codec` and `webrtc-state`.
 
-`webrtc-datagram` ships a STUN seed corpus under `corpus/` and a committed DTLS certificate
-fixture (`src/fixture.rs`). The seeds are valid binding requests that clear the demux gate, which a
-fuzzer never synthesises from nothing; the fixture is committed rather than generated at startup so
-the certhash, and therefore the advertised multiaddr and peer identity, stays stable across runs.
-Regenerate with:
+`webrtc-datagram` ships a seed corpus of Noise-channel framings under `corpus/` and a committed DTLS
+certificate fixture (`src/fixture.rs`). Each seed is written to the server's Noise channel after the
+handshake and read as `unsigned-varint length ++ body` frames; the seeds cover a valid frame, a
+frame split across SCTP messages, an empty-body frame, and the permanent framing errors (non-minimal
+varint, oversized length). The fixture is committed rather than generated at startup so the server's
+certhash and peer identity stay stable across runs. Regenerate with:
 
 ```sh
-cargo run --bin gen_seeds -- corpus            # STUN seed corpus
+cargo run --bin gen_seeds -- corpus            # Noise-channel framing seeds
 cargo run --bin gen_fixture > src/fixture.rs   # DTLS certificate fixture
 ```
 
@@ -133,7 +134,10 @@ Two things to know:
   round-robin. `read_substream()` makes the delivery observable, which is what keeps that claim
   honest. Lifting the rest means pairing two `Rtc` instances through a real DTLS/SCTP handshake
   per iteration: costly and non-deterministic, but it would unlock the full state machine.
-- **`webrtc-datagram` keeps state across iterations.** The node is built once, since standing up a
-  transport per iteration would dominate runtime and churn through ports, so a crash there needs
-  the whole queue in order rather than one input file. Its committed STUN seeds get mutation past
-  the demux, but DTLS completion is out of reach, so the depth past `make_rtc` is limited.
+- **`webrtc-datagram` is slow and not byte-exact reproducible.** It performs one real ICE/DTLS/SCTP
+  handshake per input, so throughput is a fraction of the stateless targets, and the handshake uses
+  a CSPRNG, so a crash replays as "the input against a fresh handshake", not deterministically from
+  the file alone. The listener is built once per process and each input uses a fresh connection, so
+  per-input state does not bleed; abandoned server-side connections are reclaimed on their ICE/DTLS
+  timeout. It stops at the Noise channel: the client never authenticates, so the substream layer
+  behind Noise (which `webrtc-state` covers with a faked channel) is out of scope here.

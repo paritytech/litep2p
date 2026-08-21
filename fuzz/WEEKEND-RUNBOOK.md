@@ -22,7 +22,7 @@ Paths below assume user `fuzz`, checkout `~/litep2p`, output volume `/data`. Adj
 |---|---|---|
 | `webrtc-codec` | **Exactly**, from one input file. | Pure parser, no IO/clock/RNG. This is the target that matters; its oracles make a crash meaningful. |
 | `webrtc-state` | **Usually not from one file.** | Shares a process-global paused clock (virtual time accumulates across iterations), calls `PeerId::random()`, and binds a real UDP socket per iteration. Keep the whole crash dir + op sequence. A crash whose message is a bind `.expect()` is environment noise, not a finding. |
-| `webrtc-datagram` | **No** (state persists across iterations). | Now ships a STUN seed corpus, so mutation starts past the demux and reaches `make_rtc` and opening-connection setup. It still can't complete DTLS (the server's per-run crypto desyncs any handshake), so depth past connection setup is limited and most of it is str0m. Worth a couple of cores, not more. |
+| `webrtc-datagram` | **No** (real handshake, CSPRNG). | End-to-end: a str0m client completes ICE/DTLS/SCTP, then fuzzes the server's Noise-channel framing (`on_noise_channel_data`) behind DTLS. One handshake per input, so low exec/s. The only target that reaches that path; stops before Noise auth. Worth a couple of cores, not more. |
 
 ## 1. Provision
 
@@ -96,7 +96,7 @@ cd ~/litep2p && git checkout gab_webrtc_fuzzin   # push this branch to origin fi
 git rev-parse HEAD | tee ~/PROVENANCE            # expect 3bf53d20...
 { rustc -V; cargo afl --version; ziggy --version; } >> ~/PROVENANCE
 
-# all three targets ship committed corpora under fuzz/<target>/corpus (datagram's are STUN requests)
+# all three targets ship committed corpora under fuzz/<target>/corpus (datagram's are Noise-channel framings)
 
 # build all three. --release activates the debug-assertions + overflow-checks profile in each crate.
 # First build is slow: vendored OpenSSL + two instrumented binaries (AFL++ and honggfuzz) per target.
@@ -212,14 +212,17 @@ systemctl enable --now ziggy-status.timer
   `crashes/`, and that `cargo ziggy run -i` prints the backtrace. Do this before you walk away.
 - **Replay by target.** `webrtc-codec` reproduces exactly from one file. `webrtc-state` often won't,
   so keep the whole crash dir and the op sequence (the timing and global-state caveat above).
-  `webrtc-datagram` crashes are str0m or environment noise, not litep2p findings.
+  A `webrtc-datagram` crash in the framed Noise-channel handling is a real litep2p finding; a crash
+  inside the handshake itself (before channel 0 opens) is str0m or environment, not litep2p.
 
 ## Verification (run before leaving it)
 
 1. `cargo ziggy build --release` succeeded for all three targets.
-2. `cargo test` green in `webrtc-codec` and `webrtc-state`.
+2. `cargo test` green in `webrtc-codec`, `webrtc-state`, and `webrtc-datagram` (the last runs a real
+   client-to-listener handshake spike).
 3. `systemctl status ziggy@webrtc-codec` is `active (running)`; `afl-whatsup` shows execs and corpus
-   rising for codec and state (datagram stays flat, which is expected).
+   rising for codec and state. `webrtc-datagram` advances much more slowly, one handshake per input,
+   which is expected.
 4. Kill an AFL++ PID by hand; systemd restarts it within 10s and AFL++ resumes (corpus count does
    **not** reset to the seed count).
 5. After a `reboot`, all three services come back `active`; `cat /proc/sys/kernel/core_pattern`
