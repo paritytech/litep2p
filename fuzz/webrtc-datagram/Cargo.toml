@@ -5,7 +5,10 @@ edition = "2024"
 
 [dependencies]
 ziggy = { version = "1.3.1", default-features = false }
-litep2p = { path = "../..", features = ["webrtc"] }
+# `fuzz` exposes the Noise responder helper, `util::WebRtcMessage`, and `extract_framed_message`
+# used to complete and frame the handshake from the client side.
+litep2p = { path = "../..", features = ["webrtc", "fuzz"] }
+bytes = "1.10.1"
 # `test-util` gives the harness `start_paused`, so the transport can be driven without
 # spending real wall-clock time per iteration.
 tokio = { version = "1.44.1", features = ["full", "test-util"] }

@@ -22,7 +22,7 @@ Paths below assume user `fuzz`, checkout `~/litep2p`, output volume `/data`. Adj
 |---|---|---|
 | `webrtc-codec` | **Exactly**, from one input file. | Pure parser, no IO/clock/RNG. This is the target that matters; its oracles make a crash meaningful. |
 | `webrtc-state` | **Usually not from one file.** | Shares a process-global paused clock (virtual time accumulates across iterations), calls `PeerId::random()`, and binds a real UDP socket per iteration. Keep the whole crash dir + op sequence. A crash whose message is a bind `.expect()` is environment noise, not a finding. |
-| `webrtc-datagram` | **No** (real handshake, CSPRNG). | End-to-end: a str0m client completes ICE/DTLS/SCTP, then fuzzes the server's Noise-channel framing (`on_noise_channel_data`) behind DTLS. One handshake per input, so low exec/s. The only target that reaches that path; stops before Noise auth. Worth a couple of cores, not more. |
+| `webrtc-datagram` | **No** (real handshake, CSPRNG). | End-to-end: a str0m client completes the handshake incl. Noise auth as responder, then fuzzes the noise-channel framing (even selector) or the post-auth substream negotiation on a real channel (odd selector). One handshake per input, so low exec/s. The only target reaching the authenticated layer. Worth a couple of cores, not more. |
 
 ## 1. Provision
 
@@ -96,7 +96,7 @@ cd ~/litep2p && git checkout gab_webrtc_fuzzin   # push this branch to origin fi
 git rev-parse HEAD | tee ~/PROVENANCE            # expect 3bf53d20...
 { rustc -V; cargo afl --version; ziggy --version; } >> ~/PROVENANCE
 
-# all three targets ship committed corpora under fuzz/<target>/corpus (datagram's are Noise-channel framings)
+# all three targets ship committed corpora under fuzz/<target>/corpus (datagram's are mode-prefixed e2e seeds)
 
 # build all three. --release activates the debug-assertions + overflow-checks profile in each crate.
 # First build is slow: vendored OpenSSL + two instrumented binaries (AFL++ and honggfuzz) per target.

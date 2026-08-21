@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-//! End-to-end fuzzing of the litep2p WebRTC listener's Noise-channel framing.
+//! End-to-end fuzzing of the litep2p WebRTC listener over a real, authenticated connection.
 //!
 //! # Model
 //!
@@ -26,30 +26,32 @@
 //! genuine ICE + DTLS + SCTP handshake against a live `Litep2p` WebRTC listener over loopback. The
 //! listener runs once per process on its own thread (see [`server_addr`]).
 //!
-//! Once the pre-negotiated channel 0 opens, the server acts as the Noise dialer (per the libp2p
-//! spec): it sends its first handshake message and then waits in `on_noise_channel_data`
-//! (`src/transport/webrtc/opening.rs`) for the reply. The fuzzer input is split into chunks and
-//! written to channel 0; each chunk becomes one SCTP message and therefore one
-//! `on_noise_channel_data` call, so the fuzzer drives that function's `extract_framed_message`
-//! reassembly and `WebRtcMessage::decode` path with genuinely decrypted, SCTP-framed bytes and
-//! fuzzer-chosen message boundaries.
+//! The first byte of each input selects the target and the rest is split into channel-write chunks,
+//! one SCTP message per chunk.
 //!
-//! This is the only harness that reaches that path through a real handshake. The stateless parsers
-//! behind it (`extract_framed_message`, `WebRtcMessage::decode`) are also covered directly, and far
-//! faster, by `fuzz/webrtc-codec`.
+//! - **Pre-auth (even selector).** The chunks are written to the pre-negotiated noise channel,
+//!   driving the server's noise-channel de-framing (`extract_framed_message` and
+//!   `WebRtcMessage::decode` in `on_noise_channel_data`, `opening.rs`) with genuinely decrypted,
+//!   SCTP-framed bytes and fuzzer-chosen message boundaries.
+//! - **Post-auth (odd selector).** The client first runs the libp2p Noise handshake as the
+//!   *responder* ([`client::WebRtcClient::authenticate`]), so the server authenticates it and
+//!   promotes the connection to established. The client then opens a real substream channel and
+//!   writes the chunks into it, driving multistream-select negotiation
+//!   (`on_inbound_opening_channel_data` and `webrtc_listener_negotiate`) and the substream data
+//!   path on a channel with a real SCTP stream id.
 //!
-//! # Scope
-//!
-//! The client never runs the Noise handshake, so it does not authenticate: the authenticated
-//! substream layer is out of scope by design (that is "Option 2"). Everything up to and including
-//! the server's Noise-channel de-framing is reached.
+//! The post-auth path is why this harness exists. It reaches the authenticated substream layer no
+//! in-process harness otherwise can, because litep2p's WebRTC transport is listen-only and never
+//! runs the client half of the handshake. The stateless parsers behind both paths are also covered,
+//! far faster, by `fuzz/webrtc-codec`, and the substream state machine by `fuzz/webrtc-state`
+//! (against a faked channel).
 //!
 //! # Cost and reproducibility
 //!
-//! One full DTLS/SCTP handshake per input makes this far slower than the stateless targets, and the
-//! handshake pulls from a CSPRNG, so crashes are not byte-exact reproducible from a single input.
-//! It is an integration target that complements, not replaces, `fuzz/webrtc-codec` and
-//! `fuzz/webrtc-state`.
+//! One full DTLS/SCTP handshake per input (plus a Noise handshake on the post-auth path) makes this
+//! far slower than the stateless targets, and the handshakes pull from a CSPRNG, so crashes are not
+//! byte-exact reproducible from a single input. It is an integration target that complements, not
+//! replaces, `fuzz/webrtc-codec` and `fuzz/webrtc-state`.
 
 mod client;
 mod fixture;
@@ -58,14 +60,17 @@ use client::WebRtcClient;
 
 use litep2p::{
     config::ConfigBuilder,
-    crypto::ed25519::SecretKey,
+    crypto::ed25519::{Keypair, SecretKey},
     protocol::libp2p::ping,
     transport::webrtc::{config::Config, DtlsCertificate},
-    Litep2p,
+    Litep2p, Litep2pEvent,
 };
 use std::{
     net::{IpAddr, SocketAddr},
-    sync::OnceLock,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        OnceLock,
+    },
     time::Duration,
 };
 
@@ -78,8 +83,23 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long to let the server process the written chunks before dropping the connection.
 const DRAIN: Duration = Duration::from_millis(50);
 
+/// How long to wait for a post-auth substream channel to open.
+const SUBSTREAM_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Fixed node identity, so the peer id and certhash are stable across runs like the DTLS fixture.
 const NODE_KEY: [u8; 32] = [7u8; 32];
+
+/// Fixed client identity, so the fuzz client's peer id is stable across runs.
+const CLIENT_ID: [u8; 32] = [9u8; 32];
+
+/// Count of connections the server has fully established (Noise handshake completed). The
+/// end-to-end tests read it to confirm authentication succeeded.
+static ESTABLISHED: AtomicUsize = AtomicUsize::new(0);
+
+/// Build the client's libp2p identity keypair from the fixed secret.
+fn client_identity() -> Keypair {
+    SecretKey::try_from_bytes(&mut CLIENT_ID.clone()).expect("valid client identity key").into()
+}
 
 fn main() {
     // A panic anywhere (the client, the fuzz loop, or the server thread) must abort the process so
@@ -90,9 +110,14 @@ fn main() {
     }));
 
     let server = server_addr();
+    let id_keys = client_identity();
 
     ziggy::fuzz!(|data: &[u8]| {
-        let chunks = channel_chunks(data);
+        // The first byte selects the target; the rest is split into channel write chunks.
+        let Some((&mode, rest)) = data.split_first() else {
+            return;
+        };
+        let chunks = channel_chunks(rest);
         if chunks.is_empty() {
             return;
         }
@@ -105,17 +130,43 @@ fn main() {
                 Err(_) => return,
             };
 
-            // Complete the handshake so the server is parked in `on_noise_channel_data`. A failure
-            // here (timeout, disconnect) is a handshake/environment outcome, not a litep2p finding.
-            if client.handshake(HANDSHAKE_TIMEOUT).await.is_err() {
-                client.close().await;
-                return;
-            }
+            // Every input first completes the handshake, leaving the server past DTLS with its
+            // noise channel open. A failure here is a handshake/environment outcome, not a finding.
+            let first = match client.handshake(HANDSHAKE_TIMEOUT).await {
+                Ok(first) => first,
+                Err(_) => {
+                    client.close().await;
+                    return;
+                }
+            };
 
-            // Drive the target: each chunk is one SCTP message, one `on_noise_channel_data` call.
-            for &chunk in &chunks {
-                if client.write_chunk(chunk).await.is_err() {
-                    break;
+            if mode % 2 == 0 {
+                // Pre-auth target: write the chunks to the noise channel, driving the server's
+                // `on_noise_channel_data` framing and decode with fuzzer-chosen message boundaries.
+                for &chunk in &chunks {
+                    if client.write_chunk(chunk).await.is_err() {
+                        break;
+                    }
+                }
+            } else {
+                // Post-auth target: run the Noise responder to authenticate, then open a substream
+                // and feed the chunks into it, driving multistream-select negotiation and the
+                // substream data path on a real channel with a real SCTP stream id.
+                if client.authenticate(&id_keys, &first).await.is_err() {
+                    client.close().await;
+                    return;
+                }
+                let channel = match client.open_substream(SUBSTREAM_TIMEOUT).await {
+                    Ok(channel) => channel,
+                    Err(_) => {
+                        client.close().await;
+                        return;
+                    }
+                };
+                for &chunk in &chunks {
+                    if client.write_to(channel, chunk).await.is_err() {
+                        break;
+                    }
                 }
             }
 
@@ -229,8 +280,13 @@ fn server_addr() -> SocketAddr {
                     tx.send(target).expect("server address channel to be open");
 
                     loop {
-                        if litep2p.next_event().await.is_none() {
-                            harness_failure("litep2p event stream ended; the server is dead");
+                        match litep2p.next_event().await {
+                            Some(Litep2pEvent::ConnectionEstablished { .. }) => {
+                                ESTABLISHED.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Some(_) => {}
+                            None =>
+                                harness_failure("litep2p event stream ended; the server is dead"),
                         }
                     }
                 });
@@ -286,6 +342,73 @@ mod tests {
                 !received.is_empty(),
                 "server must send its first noise message over channel 0",
             );
+            client.close().await;
+        });
+    }
+
+    /// End-to-end auth spike: after the handshake the client runs the Noise responder and the
+    /// server authenticates it, emitting `ConnectionEstablished`. This is the milestone that proves
+    /// Option 2 works, since the authenticated substream layer only exists past this point.
+    #[test]
+    fn client_authenticates_and_server_establishes_connection() {
+        let addr = server_addr();
+        let id_keys = client_identity();
+        let before = ESTABLISHED.load(Ordering::Relaxed);
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("client runtime to build");
+
+        runtime.block_on(async {
+            let mut client = WebRtcClient::connect(addr).await.expect("client connects");
+            let first =
+                client.handshake(Duration::from_secs(15)).await.expect("handshake completes");
+            client.authenticate(&id_keys, &first).await.expect("noise responder authenticates");
+
+            // The server processes msg2 on its own thread; pump the client while waiting for the
+            // ConnectionEstablished event to land.
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while ESTABLISHED.load(Ordering::Relaxed) <= before
+                && std::time::Instant::now() < deadline
+            {
+                let _ = client.pump_for(Duration::from_millis(100)).await;
+            }
+            assert!(
+                ESTABLISHED.load(Ordering::Relaxed) > before,
+                "server must establish the connection after the client authenticates",
+            );
+            client.close().await;
+        });
+    }
+
+    /// Post-auth, the client opens a substream and writes bytes, so the server runs
+    /// multistream-select on a real channel with a real SCTP stream id. The substream opening at
+    /// all proves the authenticated path works end to end, and garbage must not panic the server.
+    #[test]
+    fn post_auth_substream_negotiation_is_reachable() {
+        let addr = server_addr();
+        let id_keys = client_identity();
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("client runtime to build");
+
+        runtime.block_on(async {
+            let mut client = WebRtcClient::connect(addr).await.expect("client connects");
+            let first =
+                client.handshake(Duration::from_secs(15)).await.expect("handshake completes");
+            client.authenticate(&id_keys, &first).await.expect("authenticates");
+
+            let channel =
+                client.open_substream(Duration::from_secs(10)).await.expect("substream opens");
+
+            // Multistream-select-shaped garbage: drives negotiation without completing it.
+            for chunk in [&[0x13u8][..], &[0xff; 40][..], &[0x00][..]] {
+                let _ = client.write_to(channel, chunk).await;
+            }
+            let _ = client.pump_for(Duration::from_millis(200)).await;
             client.close().await;
         });
     }

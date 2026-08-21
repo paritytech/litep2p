@@ -268,6 +268,52 @@ impl NoiseContext {
         Ok(size)
     }
 
+    /// Build a WebRTC Noise **responder** with a prologue, for fuzzing the server end to end.
+    ///
+    /// litep2p's WebRTC transport is listen-only and therefore always the Noise *initiator*; there
+    /// is no responder in production. This mirrors [`NoiseContext::with_prologue`] but calls
+    /// `build_responder()` with [`Role::Listener`], so a fuzz client can complete the handshake
+    /// against the server. `assemble` still runs, signing the identity payload over the responder's
+    /// own noise static key exactly as the initiator does, so the server's `get_remote_peer_id`
+    /// accepts the reply.
+    #[cfg(all(feature = "webrtc", feature = "fuzz"))]
+    pub fn with_prologue_responder(
+        id_keys: &Keypair,
+        prologue: Vec<u8>,
+    ) -> Result<Self, NegotiationError> {
+        let noise: Builder<'_> = Builder::with_resolver(
+            NOISE_PARAMETERS.parse().expect("qed; Valid noise pattern"),
+            Box::new(protocol::Resolver),
+        );
+
+        let keypair = noise.generate_keypair()?;
+
+        let noise = noise
+            .local_private_key(&keypair.private)
+            .prologue(&prologue)
+            .build_responder()?;
+
+        Self::assemble(noise, keypair, id_keys, Role::Listener)
+    }
+
+    /// Consume the initiator's first handshake message (2-byte length-prefixed, as produced by
+    /// [`NoiseContext::first_message`]) so the responder can then produce its reply with
+    /// [`NoiseContext::second_message`]. Fuzz-only; see [`NoiseContext::with_prologue_responder`].
+    #[cfg(all(feature = "webrtc", feature = "fuzz"))]
+    pub fn read_first_message(&mut self, message: &[u8]) -> Result<(), NegotiationError> {
+        if message.len() < 2 {
+            return Err(NegotiationError::ParseError(ParseError::InvalidReplyLength));
+        }
+
+        let NoiseState::Handshake(ref mut noise) = self.noise else {
+            return Err(NegotiationError::StateMismatch);
+        };
+
+        let mut buffer = vec![0u8; MAX_NOISE_MSG_LEN];
+        noise.read_message(&message[2..], &mut buffer)?;
+        Ok(())
+    }
+
     /// Read handshake message.
     async fn read_handshake_message<T: AsyncRead + AsyncWrite + Unpin>(
         &mut self,

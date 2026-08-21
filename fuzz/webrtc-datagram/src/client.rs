@@ -26,6 +26,12 @@ use str0m::{
 };
 use tokio::net::UdpSocket;
 
+use bytes::BytesMut;
+use litep2p::{
+    crypto::{ed25519::Keypair, noise::NoiseContext},
+    transport::webrtc::util::{extract_framed_message, WebRtcMessage},
+};
+
 /// Shared ICE ufrag and password.
 ///
 /// litep2p's `make_rtc` adopts `(ufrag, pass)` verbatim from the STUN username the client sends and
@@ -47,6 +53,9 @@ pub enum ClientError {
     Disconnected,
     ChannelGone,
     Timeout,
+    Noise,
+    Framing,
+    NoRemoteFingerprint,
 }
 
 /// A live str0m client aimed at a litep2p WebRTC listener over loopback UDP.
@@ -56,6 +65,8 @@ pub struct WebRtcClient {
     local: SocketAddr,
     channel: ChannelId,
     channel_open: bool,
+    /// Every channel id str0m has reported open, so `open_substream` can wait for a specific one.
+    opened: Vec<ChannelId>,
     recv_buf: Vec<u8>,
 }
 
@@ -71,6 +82,7 @@ impl WebRtcClient {
             local,
             channel,
             channel_open: false,
+            opened: Vec::new(),
             recv_buf: vec![0u8; 2048],
         })
     }
@@ -88,7 +100,12 @@ impl WebRtcClient {
                         .map_err(ClientError::Io)?;
                 }
                 Output::Event(event) => match event {
-                    Event::ChannelOpen(id, _) if id == self.channel => self.channel_open = true,
+                    Event::ChannelOpen(id, _) => {
+                        if id == self.channel {
+                            self.channel_open = true;
+                        }
+                        self.opened.push(id);
+                    }
                     Event::ChannelData(data) if data.id == self.channel => received.push(data.data),
                     Event::IceConnectionStateChange(IceConnectionState::Disconnected) =>
                         return Err(ClientError::Disconnected),
@@ -148,6 +165,63 @@ impl WebRtcClient {
         Err(ClientError::Timeout)
     }
 
+    /// Complete the libp2p Noise handshake as the responder, so litep2p authenticates the client
+    /// and promotes the connection to established, after which real substreams become reachable.
+    ///
+    /// `server_first_message` is what [`WebRtcClient::handshake`] collected: the channel-0 bytes
+    /// carrying the server's first Noise message. `id_keys` is the client's libp2p identity.
+    pub async fn authenticate(
+        &mut self,
+        id_keys: &Keypair,
+        server_first_message: &[Vec<u8>],
+    ) -> Result<(), ClientError> {
+        // The prologue must byte-match the server's: "libp2p-webrtc-noise:" then the client's cert
+        // multihash, then the server's. str0m exposes the real DTLS fingerprints once the handshake
+        // completes; each is a 32-byte SHA-256 wrapped as a sha2-256 multihash.
+        let client_fp = self.rtc.direct_api().local_dtls_fingerprint().bytes.clone();
+        let server_fp = self
+            .rtc
+            .direct_api()
+            .remote_dtls_fingerprint()
+            .ok_or(ClientError::NoRemoteFingerprint)?
+            .bytes
+            .clone();
+        let prologue = webrtc_noise_prologue(&client_fp, &server_fp);
+
+        let mut noise = NoiseContext::with_prologue_responder(id_keys, prologue)
+            .map_err(|_| ClientError::Noise)?;
+
+        // Reassemble the server's first message and strip the outer WebRTC framing to the inner
+        // Noise message, exactly as the server does on its side.
+        let mut buffer = BytesMut::new();
+        for frame in server_first_message {
+            buffer.extend_from_slice(frame);
+        }
+        let body = extract_framed_message(&mut buffer)
+            .map_err(|_| ClientError::Framing)?
+            .ok_or(ClientError::Framing)?;
+        let msg1 = WebRtcMessage::decode(&body)
+            .map_err(|_| ClientError::Framing)?
+            .payload
+            .ok_or(ClientError::Framing)?;
+
+        // Responder: read msg1, produce msg2 carrying our signed identity, wrap and send it.
+        noise.read_first_message(&msg1).map_err(|_| ClientError::Noise)?;
+        let msg2 = noise.second_message().map_err(|_| ClientError::Noise)?;
+        let channel_bytes = WebRtcMessage::encode(msg2, None);
+
+        match self.rtc.channel(self.channel) {
+            Some(mut channel) => {
+                channel.write(true, &channel_bytes).map_err(ClientError::Rtc)?;
+            }
+            None => return Err(ClientError::ChannelGone),
+        }
+
+        let mut sink = Vec::new();
+        self.drain(&mut sink).await?;
+        Ok(())
+    }
+
     /// Write one chunk to channel 0 as its own SCTP message, then flush transmits.
     ///
     /// Each call becomes one `Event::ChannelData` and therefore one `on_noise_channel_data` call on
@@ -157,6 +231,44 @@ impl WebRtcClient {
         match self.rtc.channel(self.channel) {
             Some(mut channel) => {
                 channel.write(true, chunk).map_err(ClientError::Rtc)?;
+            }
+            None => return Err(ClientError::ChannelGone),
+        }
+        let mut sink = Vec::new();
+        self.drain(&mut sink).await?;
+        Ok(())
+    }
+
+    /// Open a fresh SCTP-negotiated data channel (a substream) and wait until it is open.
+    ///
+    /// Unlike channel 0, this is negotiated over SCTP, so the server sees a `ChannelOpen` and
+    /// treats it as a new inbound substream: writing to it drives multistream-select negotiation
+    /// and, once that succeeds, the substream data path.
+    pub async fn open_substream(&mut self, timeout: Duration) -> Result<ChannelId, ClientError> {
+        let id = self.rtc.direct_api().create_data_channel(ChannelConfig {
+            label: String::new(),
+            ordered: true,
+            reliability: Reliability::Reliable,
+            negotiated: None,
+            protocol: String::new(),
+        });
+
+        let deadline = Instant::now() + timeout;
+        let mut sink = Vec::new();
+        while Instant::now() < deadline {
+            if self.opened.contains(&id) {
+                return Ok(id);
+            }
+            self.step(&mut sink).await?;
+        }
+        Err(ClientError::Timeout)
+    }
+
+    /// Write bytes to a specific channel as one SCTP message, then flush transmits.
+    pub async fn write_to(&mut self, channel: ChannelId, bytes: &[u8]) -> Result<(), ClientError> {
+        match self.rtc.channel(channel) {
+            Some(mut channel) => {
+                channel.write(true, bytes).map_err(ClientError::Rtc)?;
             }
             None => return Err(ClientError::ChannelGone),
         }
@@ -228,4 +340,22 @@ fn build_client_rtc(local: SocketAddr, remote: SocketAddr) -> (Rtc, ChannelId) {
     });
 
     (rtc, channel)
+}
+
+/// The libp2p-webrtc Noise prologue: `"libp2p-webrtc-noise:" ++ mh(client) ++ mh(server)`, where
+/// `mh` is the sha2-256 multihash of a DTLS certificate (`[0x12, 0x20]` followed by the 32-byte
+/// hash). The client's fingerprint comes first, matching litep2p's `noise_prologue`.
+fn webrtc_noise_prologue(client_fp_sha256: &[u8], server_fp_sha256: &[u8]) -> Vec<u8> {
+    let multihash = |hash: &[u8]| {
+        let mut wrapped = Vec::with_capacity(2 + hash.len());
+        wrapped.push(0x12); // sha2-256 code
+        wrapped.push(0x20); // 32-byte digest length
+        wrapped.extend_from_slice(hash);
+        wrapped
+    };
+
+    let mut prologue = b"libp2p-webrtc-noise:".to_vec();
+    prologue.extend_from_slice(&multihash(client_fp_sha256));
+    prologue.extend_from_slice(&multihash(server_fp_sha256));
+    prologue
 }
