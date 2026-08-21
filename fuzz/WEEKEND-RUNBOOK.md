@@ -117,9 +117,10 @@ Preflight before committing the weekend (catches a broken harness before it wast
 #    a post-auth substream, so green confirms the end-to-end path builds and works.
 for t in webrtc-codec webrtc-state webrtc-datagram; do ( cd ~/litep2p/fuzz/$t && cargo test ); done
 
-# 2. determinism of the stateless targets
-( cd ~/litep2p/fuzz/webrtc-codec && cargo ziggy stability webrtc-codec -n 10 )   # expect ~100%
-( cd ~/litep2p/fuzz/webrtc-state && cargo ziggy stability webrtc-state -n 10 )   # <100% expected
+# 2. determinism of the stateless targets. -i points stability at the committed seeds; without it,
+#    it defaults to the output/ corpus that only exists after a fuzz run.
+( cd ~/litep2p/fuzz/webrtc-codec && cargo ziggy stability webrtc-codec -i corpus -n 10 )   # expect ~100%
+( cd ~/litep2p/fuzz/webrtc-state && cargo ziggy stability webrtc-state -i corpus -n 10 )   # <100% expected
 ```
 
 Then **smoke each target under the real fuzzer for ~5 minutes**. This is the only preflight that
@@ -127,7 +128,7 @@ exercises the live AFL++ fork server, and it is mandatory for `webrtc-datagram`:
 
 ```bash
 cd ~/litep2p/fuzz/webrtc-datagram
-timeout 300 cargo ziggy fuzz webrtc-datagram --release --no-honggfuzz -j 2 -o /tmp/smoke -i corpus || true
+timeout 300 cargo ziggy fuzz webrtc-datagram --release --no-honggfuzz -j 2 --ziggy-output /tmp/smoke -i corpus || true
 cargo afl whatsup -s /tmp/smoke/webrtc-datagram/afl     # the corpus/paths count must be GROWING
 ```
 
@@ -141,7 +142,14 @@ same way (without `--no-honggfuzz`); there paths should climb quickly.
 
 ## 6. Supervisor (systemd template, auto-restart, reboot-safe)
 
-`/etc/systemd/system/ziggy@.service`, where the instance name `%i` is the target (= crate dir):
+This is **one** systemd *template* unit that runs as **three** services, one per target. The `@` in
+the filename makes it a template: you never start `ziggy@.service` itself, you start instances of it
+(`ziggy@webrtc-codec`, `ziggy@webrtc-state`, `ziggy@webrtc-datagram`), and systemd substitutes `%i`
+with the text after the `@`, i.e. the target/crate name. So the single file below, instantiated
+three times, gives three independent fuzzers, each in its own crate dir with its own `.env` (hence
+one `.service` file but three `.env` files).
+
+`/etc/systemd/system/ziggy@.service`:
 
 ```ini
 [Unit]
@@ -153,7 +161,7 @@ WorkingDirectory=/home/fuzz/litep2p/fuzz/%i
 EnvironmentFile=/etc/ziggy/%i.env
 Environment=AFL_SKIP_CPUFREQ=1
 Environment=RUST_BACKTRACE=full
-ExecStart=/home/fuzz/.cargo/bin/cargo ziggy fuzz %i --release -j ${JOBS} $EXTRA -o /data/fuzz-output -i ${SEEDS}
+ExecStart=/home/fuzz/.cargo/bin/cargo ziggy fuzz %i --release -j ${JOBS} $EXTRA --ziggy-output /data/fuzz-output -i ${SEEDS}
 Restart=always
 RestartSec=10
 StartLimitIntervalSec=0
@@ -183,11 +191,24 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now ziggy@webrtc-codec ziggy@webrtc-state ziggy@webrtc-datagram
 ```
 
+Worked example: `ziggy@webrtc-datagram` resolves `%i` to `webrtc-datagram`, so it runs in
+`/home/fuzz/litep2p/fuzz/webrtc-datagram`, reads `/etc/ziggy/webrtc-datagram.env`, and execs
+`cargo ziggy fuzz webrtc-datagram --release -j 2 --no-honggfuzz --ziggy-output /data/fuzz-output -i <its corpus>`.
+Manage each instance on its own: `systemctl status ziggy@webrtc-datagram`, `journalctl -u ziggy@webrtc-state`.
+
 `Restart=always` + `StartLimitIntervalSec=0` cover process crash, OOM kill, and reboot (systemd never
 stops retrying). The sysctl drop-in and `cpu-performance.service` re-apply at boot; `-i ${SEEDS}`
 re-imports seeds on every start.
 
 ## 7. Logs, monitoring, readable errors
+
+Quick overview per-fuzzer, one command each — full afl-whatsup output for a single target, live. Run each in its own terminal or tmux pane:
+```bash
+watch -n 10 'cargo afl whatsup -s /data/fuzz-output/webrtc-codec/afl'
+watch -n 10 'cargo afl whatsup -s /data/fuzz-output/webrtc-state/afl'
+watch -n 10 'cargo afl whatsup -s /data/fuzz-output/webrtc-datagram/afl' 
+```
+Drop the -s for the detailed per-AFL-instance breakdown instead of the summary.
 
 Everything is under `/data/fuzz-output/<target>/`:
 
