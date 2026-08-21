@@ -4,7 +4,9 @@ Runs the WebRTC ziggy harnesses (`webrtc-codec`, `webrtc-state`, `webrtc-datagra
 honggfuzz for ~2 days, supervised so it restarts through any failure and survives reboot, with
 crashes and logs on disk and reproducible from a pinned commit.
 
-Target commit: `paritytech/litep2p @ 3bf53d20` (branch `gab_webrtc_fuzzin`).
+Target commit: the tip of branch `gab_webrtc_fuzzin` with the fuzz harnesses committed. Commit and
+push the harness work first (the `webrtc-datagram` corpus and `client.rs` may still be untracked);
+`3bf53d20` predates all of it. The exact SHA is recorded into provenance in step 5.
 Paths below assume user `fuzz`, checkout `~/litep2p`, output volume `/data`. Adjust if yours differ.
 
 ## How it's wired (two ziggy facts that drive the design)
@@ -21,15 +23,16 @@ Paths below assume user `fuzz`, checkout `~/litep2p`, output volume `/data`. Adj
 | Target | Crash reproducible? | Notes |
 |---|---|---|
 | `webrtc-codec` | **Exactly**, from one input file. | Pure parser, no IO/clock/RNG. This is the target that matters; its oracles make a crash meaningful. |
-| `webrtc-state` | **Usually not from one file.** | Shares a process-global paused clock (virtual time accumulates across iterations), calls `PeerId::random()`, and binds a real UDP socket per iteration. Keep the whole crash dir + op sequence. A crash whose message is a bind `.expect()` is environment noise, not a finding. |
+| `webrtc-state` | **Usually not from one file.** | Shares a process-global paused clock (virtual time accumulates across iterations) and calls `PeerId::random()`. The placeholder UDP socket is now bound once per process, not per input, and a bind failure exits cleanly instead of being filed as a crash. Keep the whole crash dir + op sequence. |
 | `webrtc-datagram` | **No** (real handshake, CSPRNG). | End-to-end: a str0m client completes the handshake incl. Noise auth as responder, then fuzzes the noise-channel framing (even selector) or the post-auth substream negotiation on a real channel (odd selector). One handshake per input, so low exec/s. The only target reaching the authenticated layer. Worth a couple of cores, not more. |
 
 ## 1. Provision
 
-16-core EPYC dedicated (real cores, stable clocks), ≥32 GB RAM, and **≥60 GB free disk**.
-`fuzz/target` is already ~11 GB, and ziggy adds `target/afl` + `target/honggfuzz` per crate plus a
-growing corpus and always-on logs. Put `/data` on the largest volume. Build and fuzz as a
-**non-root sudo user** (`fuzz`); AFL++ prefers non-root.
+16-core EPYC dedicated (real cores, stable clocks), ≥32 GB RAM, and **≥100 GB free disk**. Each of
+the three targets builds litep2p and vendored OpenSSL several times over (an AFL++, a honggfuzz, and
+a coverage build), so the build trees alone reach tens of GB, on top of a growing corpus and
+always-on logs. Put `/data` on the largest volume. Build and fuzz as a **non-root sudo user**
+(`fuzz`); AFL++ prefers non-root.
 
 ## 2. Packages (root)
 
@@ -93,7 +96,7 @@ git clone https://github.com/paritytech/litep2p.git ~/litep2p
 cd ~/litep2p && git checkout gab_webrtc_fuzzin   # push this branch to origin first if it isn't there
 
 # provenance: pin everything a repro depends on
-git rev-parse HEAD | tee ~/PROVENANCE            # expect 3bf53d20...
+git rev-parse HEAD | tee ~/PROVENANCE            # the branch tip with the harnesses committed
 { rustc -V; cargo afl --version; ziggy --version; } >> ~/PROVENANCE
 
 # all three targets ship committed corpora under fuzz/<target>/corpus (datagram's are mode-prefixed e2e seeds)
@@ -107,14 +110,34 @@ done
 
 Do **not** `cargo update`. Each fuzz crate ships its own `Cargo.lock`; keep it for reproducible deps.
 
-Preflight before committing the weekend (both catch a broken harness before it wastes 48h):
+Preflight before committing the weekend (catches a broken harness before it wastes 48h):
 
 ```bash
-( cd ~/litep2p/fuzz/webrtc-codec && cargo test )   # corpus-decode + reaches-states self-checks
-( cd ~/litep2p/fuzz/webrtc-state && cargo test )
+# 1. self-checks. webrtc-datagram's tests run a real client<->listener handshake, Noise auth, and
+#    a post-auth substream, so green confirms the end-to-end path builds and works.
+for t in webrtc-codec webrtc-state webrtc-datagram; do ( cd ~/litep2p/fuzz/$t && cargo test ); done
+
+# 2. determinism of the stateless targets
 ( cd ~/litep2p/fuzz/webrtc-codec && cargo ziggy stability webrtc-codec -n 10 )   # expect ~100%
 ( cd ~/litep2p/fuzz/webrtc-state && cargo ziggy stability webrtc-state -n 10 )   # <100% expected
 ```
+
+Then **smoke each target under the real fuzzer for ~5 minutes**. This is the only preflight that
+exercises the live AFL++ fork server, and it is mandatory for `webrtc-datagram`:
+
+```bash
+cd ~/litep2p/fuzz/webrtc-datagram
+timeout 300 cargo ziggy fuzz webrtc-datagram --release --no-honggfuzz -j 2 -o /tmp/smoke -i corpus || true
+cargo afl whatsup -s /tmp/smoke/webrtc-datagram/afl     # the corpus/paths count must be GROWING
+```
+
+Confirm the **corpus (paths) count climbs**, not just execs. `webrtc-datagram` stands up its litep2p
+server on a background thread built before the fuzz loop; if the fork server places that thread in a
+different process than the instrumented target, every input silently skips at the handshake and
+paths stay flat while execs tick up, which looks healthy and tests nothing. Flat paths on
+datagram means stop and fix the harness (initialize the server inside the fuzz closure so it shares
+the instrumented process) before committing the weekend. Smoke `webrtc-codec` and `webrtc-state` the
+same way (without `--no-honggfuzz`); there paths should climb quickly.
 
 ## 6. Supervisor (systemd template, auto-restart, reboot-safe)
 
@@ -130,7 +153,7 @@ WorkingDirectory=/home/fuzz/litep2p/fuzz/%i
 EnvironmentFile=/etc/ziggy/%i.env
 Environment=AFL_SKIP_CPUFREQ=1
 Environment=RUST_BACKTRACE=full
-ExecStart=/home/fuzz/.cargo/bin/cargo ziggy fuzz %i --release -j ${JOBS} -o /data/fuzz-output -i ${SEEDS}
+ExecStart=/home/fuzz/.cargo/bin/cargo ziggy fuzz %i --release -j ${JOBS} $EXTRA -o /data/fuzz-output -i ${SEEDS}
 Restart=always
 RestartSec=10
 StartLimitIntervalSec=0
@@ -140,13 +163,16 @@ LimitNOFILE=1048576
 WantedBy=multi-user.target
 ```
 
-Per-target env files (15 of 16 cores; ziggy splits each `-j` roughly ⅔ AFL++ / ⅓ honggfuzz):
+Per-target env files (15 of 16 cores; ziggy splits each `-j` roughly ⅔ AFL++ / ⅓ honggfuzz). `EXTRA`
+carries per-target flags: `webrtc-datagram` runs **AFL++-only** (`--no-honggfuzz`), because its
+threaded, socket-driven harness is the least tested under honggfuzz's persistent loop; codec and
+state keep both engines. An empty `EXTRA` expands to no argument (it is unbraced in `ExecStart`).
 
 ```bash
 sudo mkdir -p /etc/ziggy
-printf 'JOBS=8\nSEEDS=/home/fuzz/litep2p/fuzz/webrtc-codec/corpus\n'    | sudo tee /etc/ziggy/webrtc-codec.env
-printf 'JOBS=5\nSEEDS=/home/fuzz/litep2p/fuzz/webrtc-state/corpus\n'    | sudo tee /etc/ziggy/webrtc-state.env
-printf 'JOBS=2\nSEEDS=/home/fuzz/litep2p/fuzz/webrtc-datagram/corpus\n' | sudo tee /etc/ziggy/webrtc-datagram.env
+printf 'JOBS=8\nEXTRA=\nSEEDS=/home/fuzz/litep2p/fuzz/webrtc-codec/corpus\n'                   | sudo tee /etc/ziggy/webrtc-codec.env
+printf 'JOBS=5\nEXTRA=\nSEEDS=/home/fuzz/litep2p/fuzz/webrtc-state/corpus\n'                   | sudo tee /etc/ziggy/webrtc-state.env
+printf 'JOBS=2\nEXTRA=--no-honggfuzz\nSEEDS=/home/fuzz/litep2p/fuzz/webrtc-datagram/corpus\n' | sudo tee /etc/ziggy/webrtc-datagram.env
 ```
 
 Start all three:
@@ -206,14 +232,16 @@ systemctl enable --now ziggy-status.timer
 
 ## 8. Reproducibility checklist
 
-- **Provenance** pinned in `~/PROVENANCE`: litep2p SHA `3bf53d20...`, `rustc`, `cargo-afl`, `honggfuzz`,
-  `ziggy` versions. Committed `Cargo.lock` per crate and committed seed corpora complete the pin.
+- **Provenance** pinned in `~/PROVENANCE`: the recorded litep2p SHA (the branch tip), `rustc`,
+  `cargo-afl`, `honggfuzz`, `ziggy` versions. Committed `Cargo.lock` per crate and committed seed
+  corpora complete the pin.
 - **Panic-is-a-crash check.** Feed a deliberately panicking input, confirm a file lands under
   `crashes/`, and that `cargo ziggy run -i` prints the backtrace. Do this before you walk away.
 - **Replay by target.** `webrtc-codec` reproduces exactly from one file. `webrtc-state` often won't,
   so keep the whole crash dir and the op sequence (the timing and global-state caveat above).
-  A `webrtc-datagram` crash in the framed Noise-channel handling is a real litep2p finding; a crash
-  inside the handshake itself (before channel 0 opens) is str0m or environment, not litep2p.
+  A `webrtc-datagram` crash in the framed noise-channel handling (even selector) or the post-auth
+  substream negotiation (odd selector) is a real litep2p finding; a crash inside the handshake
+  itself, before the channel opens, is str0m or environment, not litep2p.
 
 ## Verification (run before leaving it)
 
@@ -221,8 +249,9 @@ systemctl enable --now ziggy-status.timer
 2. `cargo test` green in `webrtc-codec`, `webrtc-state`, and `webrtc-datagram` (the last runs a real
    client-to-listener handshake spike).
 3. `systemctl status ziggy@webrtc-codec` is `active (running)`; `afl-whatsup` shows execs and corpus
-   rising for codec and state. `webrtc-datagram` advances much more slowly, one handshake per input,
-   which is expected.
+   rising for codec and state. `webrtc-datagram` advances much more slowly (one handshake per input),
+   but its corpus/paths count must still climb. The preflight smoke (step 5) is what proves that,
+   and flat paths there mean the harness is testing nothing.
 4. Kill an AFL++ PID by hand; systemd restarts it within 10s and AFL++ resumes (corpus count does
    **not** reset to the seed count).
 5. After a `reboot`, all three services come back `active`; `cat /proc/sys/kernel/core_pattern`
