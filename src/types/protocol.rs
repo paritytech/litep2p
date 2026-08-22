@@ -82,6 +82,16 @@ impl std::ops::Deref for ProtocolName {
     }
 }
 
+/// Helper that maps `&ProtocolName -> &str` via deref.
+///
+/// Defined as a free `fn` (not a closure) so it has a fully `for<'a>`-polymorphic signature.
+/// This is required when the resulting `Map` iterator is captured by an `async move` block
+/// that is later boxed (`Box::pin`) — closures with locally-inferred lifetimes fail HRTB and
+/// produce "implementation of `FnOnce` is not general enough" errors at the boxing site.
+pub(crate) fn protocol_name_as_str(p: &ProtocolName) -> &str {
+    p
+}
+
 impl Hash for ProtocolName {
     fn hash<H: Hasher>(&self, state: &mut H) {
         (self as &str).hash(state)
