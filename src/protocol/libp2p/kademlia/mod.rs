@@ -412,6 +412,9 @@ impl Kademlia {
     }
 
     /// Remote opened a substream to local node.
+    ///
+    /// The peer may send more than one request over it, so the substream is kept alive until the
+    /// peer is done with it rather than closed after the first response.
     async fn on_inbound_substream(&mut self, peer: PeerId, substream: Substream) {
         tracing::trace!(target: LOG_TARGET, ?peer, "inbound substream opened");
 
@@ -419,7 +422,7 @@ impl Kademlia {
         // when inserting into the routing table.
         self.peers.entry(peer).or_default();
 
-        self.executor.read_message(peer, None, substream);
+        self.executor.read_request(peer, substream);
     }
 
     /// Update routing table if the routing table update mode was set to automatic.
@@ -456,16 +459,19 @@ impl Kademlia {
     }
 
     /// Handle received message.
+    ///
+    /// Returns the substream if the message needed no answer, leaving it to the caller to decide
+    /// whether it is worth keeping open.
     async fn on_message_received(
         &mut self,
         peer: PeerId,
         query_id: Option<QueryId>,
         message: BytesMut,
         substream: Substream,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<Option<Substream>> {
         tracing::trace!(target: LOG_TARGET, ?peer, query = ?query_id, "handle message from peer");
 
-        match KademliaMessage::from_bytes(message, self.replication_factor)
+        let unused_substream = match KademliaMessage::from_bytes(message, self.replication_factor)
             .ok_or(Error::InvalidData)?
         {
             KademliaMessage::FindNode { target, peers } => {
@@ -487,6 +493,7 @@ impl Kademlia {
                             KademliaMessage::FindNode { target, peers },
                         );
                         substream.close().await;
+                        None
                     }
                     None => {
                         tracing::trace!(
@@ -502,6 +509,7 @@ impl Kademlia {
                                 .closest(&Key::new(target.as_ref()), self.replication_factor),
                         );
                         self.executor.send_message(peer, None, message.into(), substream);
+                        None
                     }
                 }
             }
@@ -521,6 +529,7 @@ impl Kademlia {
                         KademliaMessage::PutValue { record },
                     );
                     substream.close().await;
+                    None
                 }
                 None => {
                     tracing::trace!(
@@ -545,6 +554,7 @@ impl Kademlia {
                     // https://github.com/paritytech/litep2p/issues/429.
 
                     let _ = self.event_tx.send(KademliaEvent::IncomingRecord { record }).await;
+                    None
                 }
             },
             KademliaMessage::GetRecord { key, record, peers } => {
@@ -569,6 +579,7 @@ impl Kademlia {
                         );
 
                         substream.close().await;
+                        None
                     }
                     (None, Some(key)) => {
                         tracing::trace!(
@@ -586,14 +597,18 @@ impl Kademlia {
                         let message =
                             KademliaMessage::get_value_response(key, closest_peers, value);
                         self.executor.send_message(peer, None, message.into(), substream);
+                        None
                     }
-                    (None, None) => tracing::debug!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        ?record,
-                        ?peers,
-                        "unable to handle `GET_RECORD` request with empty key",
-                    ),
+                    (None, None) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?record,
+                            ?peers,
+                            "unable to handle `GET_RECORD` request with empty key",
+                        );
+                        Some(substream)
+                    }
                 }
             }
             KademliaMessage::AddProvider { key, mut providers } => {
@@ -646,6 +661,9 @@ impl Kademlia {
                         )
                     }
                 }
+
+                // the spec defines no response to `ADD_PROVIDER`
+                Some(substream)
             }
             KademliaMessage::GetProviders {
                 key,
@@ -679,6 +697,7 @@ impl Kademlia {
                         );
 
                         substream.close().await;
+                        None
                     }
                     (None, Some(key)) => {
                         tracing::trace!(
@@ -705,19 +724,23 @@ impl Kademlia {
                         let message =
                             KademliaMessage::get_providers_response(providers, &closer_peers);
                         self.executor.send_message(peer, None, message.into(), substream);
+                        None
                     }
-                    (None, None) => tracing::debug!(
-                        target: LOG_TARGET,
-                        ?peer,
-                        ?peers,
-                        ?providers,
-                        "unable to handle `GET_PROVIDERS` request with empty key",
-                    ),
+                    (None, None) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?peer,
+                            ?peers,
+                            ?providers,
+                            "unable to handle `GET_PROVIDERS` request with empty key",
+                        );
+                        Some(substream)
+                    }
                 }
             }
-        }
+        };
 
-        Ok(())
+        Ok(unused_substream)
     }
 
     /// Failed to open substream to remote peer.
@@ -1016,6 +1039,108 @@ impl Kademlia {
         }
     }
 
+    /// Handle the outcome of a substream operation the [`QueryExecutor`] was driving.
+    ///
+    /// A missing `query_id` means the substream was opened by the remote peer to send us requests.
+    /// Those substreams are kept open for the peer's next request and their failures stay local to
+    /// the substream, whereas anything belonging to one of our own queries is closed and reported
+    /// to the [`QueryEngine`].
+    async fn on_query_result(&mut self, context: QueryContext) {
+        let QueryContext {
+            peer,
+            query_id,
+            result,
+        } = context;
+
+        match result {
+            QueryResult::SendSuccess { substream } => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    query = ?query_id,
+                    "message sent to peer",
+                );
+
+                match query_id {
+                    None => self.executor.read_request(peer, substream),
+                    Some(query_id) => {
+                        let _ = substream.close().await;
+                        self.engine.register_send_success(query_id, peer);
+                    }
+                }
+            }
+            // This is a workaround to gracefully handle older litep2p nodes not
+            // sending/receiving `PUT_VALUE` ACKs. This should eventually be removed.
+            // TODO: remove this as part of https://github.com/paritytech/litep2p/issues/429.
+            QueryResult::AssumeSendSuccess => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    query = ?query_id,
+                    "treating message as sent to peer",
+                );
+
+                if let Some(query_id) = query_id {
+                    self.engine.register_send_success(query_id, peer);
+                }
+            }
+            QueryResult::SendFailure { reason } => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    query = ?query_id,
+                    ?reason,
+                    "failed to send message to peer",
+                );
+
+                if query_id.is_some() {
+                    self.disconnect_peer(peer, query_id).await;
+                }
+            }
+            QueryResult::ReadSuccess { substream, message } => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    query = ?query_id,
+                    "message read from peer",
+                );
+
+                if let Some(query_id) = query_id {
+                    // Read success for locally originating requests implies send success.
+                    self.engine.register_send_success(query_id, peer);
+                }
+
+                match self.on_message_received(peer, query_id, message, substream).await {
+                    Ok(Some(substream)) if query_id.is_none() =>
+                        self.executor.read_request(peer, substream),
+                    Ok(Some(substream)) => {
+                        let _ = substream.close().await;
+                    }
+                    Ok(None) => {}
+                    Err(error) => tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?error,
+                        "failed to process message",
+                    ),
+                }
+            }
+            QueryResult::ReadFailure { reason } => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    query = ?query_id,
+                    ?reason,
+                    "failed to read message from substream",
+                );
+
+                if query_id.is_some() {
+                    self.disconnect_peer(peer, query_id).await;
+                }
+            }
+        }
+    }
+
     /// [`Kademlia`] event loop.
     pub async fn run(mut self) -> crate::Result<()> {
         tracing::debug!(target: LOG_TARGET, "starting kademlia event loop");
@@ -1069,89 +1194,7 @@ impl Kademlia {
                     None => return Err(Error::EssentialTaskClosed),
                 },
                 context = self.executor.next() => {
-                    let QueryContext { peer, query_id, result } = context.unwrap();
-
-                    match result {
-                        QueryResult::SendSuccess { substream } => {
-                            tracing::trace!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                query = ?query_id,
-                                "message sent to peer",
-                            );
-                            let _ = substream.close().await;
-
-                            if let Some(query_id) = query_id {
-                                self.engine.register_send_success(query_id, peer);
-                            }
-                        }
-                        // This is a workaround to gracefully handle older litep2p nodes not
-                        // sending/receiving `PUT_VALUE` ACKs. This should eventually be removed.
-                        // TODO: remove this as part of
-                        // https://github.com/paritytech/litep2p/issues/429.
-                        QueryResult::AssumeSendSuccess => {
-                            tracing::trace!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                query = ?query_id,
-                                "treating message as sent to peer",
-                            );
-
-                            if let Some(query_id) = query_id {
-                                self.engine.register_send_success(query_id, peer);
-                            }
-                        }
-                        QueryResult::SendFailure { reason } => {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                query = ?query_id,
-                                ?reason,
-                                "failed to send message to peer",
-                            );
-
-                            self.disconnect_peer(peer, query_id).await;
-                        }
-                        QueryResult::ReadSuccess { substream, message } => {
-                            tracing::trace!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                query = ?query_id,
-                                "message read from peer",
-                            );
-
-                            if let Some(query_id) = query_id {
-                                // Read success for locally originating requests implies send
-                                // success.
-                                self.engine.register_send_success(query_id, peer);
-                            }
-
-                            if let Err(error) = self.on_message_received(
-                                peer,
-                                query_id,
-                                message,
-                                substream
-                            ).await {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?peer,
-                                    ?error,
-                                    "failed to process message",
-                                );
-                            }
-                        }
-                        QueryResult::ReadFailure { reason } => {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                query = ?query_id,
-                                ?reason,
-                                "failed to read message from substream",
-                            );
-
-                            self.disconnect_peer(peer, query_id).await;
-                        }
-                    }
+                    self.on_query_result(context.unwrap()).await;
                 },
                 command = self.cmd_rx.recv() => {
                     match command {
@@ -1416,6 +1459,7 @@ mod tests {
     use super::*;
     use crate::{
         codec::ProtocolCodec,
+        mock::substream::MockSubstream,
         transport::{
             manager::{SubstreamKeepAlive, TransportManager, TransportManagerBuilder},
             KEEP_ALIVE_TIMEOUT,
@@ -1424,7 +1468,7 @@ mod tests {
         ConnectionId,
     };
     use multiaddr::Protocol;
-    use std::str::FromStr;
+    use std::{str::FromStr, task::Poll};
     use tokio::sync::mpsc::channel;
 
     #[allow(unused)]
@@ -1643,5 +1687,107 @@ mod tests {
             }
             _ => panic!("Peer not found in routing table"),
         };
+    }
+
+    /// Drive the executor until it runs dry, feeding every result back into `kademlia`.
+    async fn drain_executor(kademlia: &mut Kademlia) {
+        while let Ok(Some(context)) =
+            tokio::time::timeout(Duration::from_millis(100), kademlia.executor.next()).await
+        {
+            kademlia.on_query_result(context).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn inbound_substream_serves_several_requests() {
+        let (mut kademlia, _context, _manager) = make_kademlia();
+
+        let peer = PeerId::random();
+        let request = || {
+            Poll::Ready(Some(Ok(BytesMut::from(
+                &KademliaMessage::find_node(PeerId::random())[..],
+            ))))
+        };
+
+        let mut substream = MockSubstream::new();
+        // two requests, each followed by the write of our response, and then the peer hangs up
+        substream.expect_poll_next().times(1).return_once(move |_| request());
+        substream.expect_poll_ready().times(1).return_once(|_| Poll::Ready(Ok(())));
+        substream.expect_start_send().times(1).return_once(|_| Ok(()));
+        substream.expect_poll_flush().times(1).return_once(|_| Poll::Ready(Ok(())));
+        substream.expect_poll_next().times(1).return_once(move |_| request());
+        substream.expect_poll_ready().times(1).return_once(|_| Poll::Ready(Ok(())));
+        substream.expect_start_send().times(1).return_once(|_| Ok(()));
+        substream.expect_poll_flush().times(1).return_once(|_| Poll::Ready(Ok(())));
+        substream.expect_poll_next().times(1).return_once(|_| Poll::Ready(None));
+
+        kademlia
+            .on_inbound_substream(
+                peer,
+                Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
+            )
+            .await;
+
+        // the mock panics on drop if either request went unanswered
+        drain_executor(&mut kademlia).await;
+    }
+
+    #[tokio::test]
+    async fn add_provider_keeps_the_substream_serving() {
+        let (mut kademlia, _context, _manager) = make_kademlia();
+
+        let peer = PeerId::random();
+        let provider = ContentProvider {
+            peer,
+            addresses: vec![Multiaddr::from_str("/dns/provider.com/tcp/30333").unwrap()],
+        };
+        let add_provider = KademliaMessage::add_provider(RecordKey::from(vec![1, 2, 3]), provider);
+
+        let mut substream = MockSubstream::new();
+        substream
+            .expect_poll_next()
+            .times(1)
+            .return_once(move |_| Poll::Ready(Some(Ok(BytesMut::from(&add_provider[..])))));
+        // `ADD_PROVIDER` has no response, so the next thing that happens on the substream is
+        // another read
+        substream.expect_poll_next().times(1).return_once(|_| Poll::Ready(None));
+
+        kademlia
+            .on_inbound_substream(
+                peer,
+                Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
+            )
+            .await;
+
+        drain_executor(&mut kademlia).await;
+        assert_eq!(
+            kademlia.store.get_providers(&RecordKey::from(vec![1, 2, 3])).len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn inbound_substream_failure_leaves_the_peer_alone() {
+        let (mut kademlia, _context, _manager) = make_kademlia();
+
+        let peer = PeerId::random();
+        let query_id = QueryId(0);
+        kademlia.peers.entry(peer).or_default().add_pending_action(
+            SubstreamId::from(0usize),
+            PeerAction::SendFindNode(query_id),
+        );
+
+        kademlia
+            .on_query_result(QueryContext {
+                peer,
+                query_id: None,
+                result: QueryResult::ReadFailure {
+                    reason: executor::FailureReason::Timeout,
+                },
+            })
+            .await;
+
+        // the outbound query we have in flight with the peer is untouched
+        assert!(kademlia.peers.contains_key(&peer));
     }
 }
