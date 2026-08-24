@@ -482,12 +482,19 @@ impl SubstreamHandle {
             WriterState::FinAck => Poll::Ready(None),
         }
     }
-}
 
-impl Stream for SubstreamHandle {
-    type Item = Message;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    /// Drive the substream state machine, optionally pulling outbound payload.
+    ///
+    /// `pull_payload` is set to `false` by the connection while the underlying data
+    /// channel is backpressured, so that no new payload is pulled from the protocol
+    /// side. All other transitions are driven regardless, they must make progress
+    /// even when the peer is not draining the channel, otherwise the channel could
+    /// never be closed and would leak its resources.
+    pub(super) fn poll_progress(
+        &mut self,
+        cx: &mut Context<'_>,
+        pull_payload: bool,
+    ) -> Poll<Option<Message>> {
         // There are three states which need to be taken into consideration to poll the stream:
         // - channel_state: it preempts any other state if Reset has been entered
         //
@@ -529,10 +536,19 @@ impl Stream for SubstreamHandle {
         //   simply be forwarded.
         let writer_state_stream_result = match self.writer_state.get() {
             WriterState::Open => {
-                match self.message_rx.poll_recv(cx) {
-                    // Writes are finished, start half close procedure.
-                    Poll::Ready(None) => self.poll_half_close(cx),
-                    res => res,
+                if pull_payload {
+                    match self.message_rx.poll_recv(cx) {
+                        // Writes are finished, start half close procedure.
+                        Poll::Ready(None) => self.poll_half_close(cx),
+                        res => res,
+                    }
+                } else if self.message_rx.is_closed() && self.message_rx.is_empty() {
+                    // The protocol side is gone and its buffered payload is fully
+                    // drained, the half close can start.
+                    self.poll_half_close(cx)
+                } else {
+                    // Backpressure, leave the payload in the channel.
+                    Poll::Pending
                 }
             }
             WriterState::Fin | WriterState::StopSending => self.poll_half_close(cx),
@@ -550,6 +566,14 @@ impl Stream for SubstreamHandle {
         }
 
         Poll::Pending
+    }
+}
+
+impl Stream for SubstreamHandle {
+    type Item = Message;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.get_mut().poll_progress(cx, true)
     }
 }
 
@@ -682,6 +706,102 @@ mod tests {
     use super::*;
     use futures::StreamExt;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+
+    #[tokio::test]
+    async fn backpressured_handle_still_emits_local_reset() {
+        let (_substream, mut handle) = Substream::new();
+
+        // Simulate the inbound-flood detection initiating a local reset.
+        handle.channel_state.set(ChannelState::InitReset);
+
+        // Even with payload pulling suppressed (backpressured channel), the reset
+        // must be emitted and the handle must conclude.
+        let message = futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await;
+        assert_eq!(
+            message,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::ResetStream),
+            })
+        );
+
+        let message = futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await;
+        assert_eq!(message, None);
+    }
+
+    #[tokio::test]
+    async fn backpressured_handle_replies_fin_ack() {
+        let (_substream, mut handle) = Substream::new();
+
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::Fin),
+            })
+            .await
+            .unwrap();
+
+        // The FIN_ACK reply must be emitted even while the channel is backpressured.
+        let message = futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await;
+        assert_eq!(
+            message,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::FinAck),
+            })
+        );
+        assert!(matches!(handle.reader_state.get(), ReaderState::FinAck));
+    }
+
+    #[tokio::test]
+    async fn backpressured_handle_starts_half_close_after_substream_drop() {
+        let (substream, mut handle) = Substream::new();
+
+        // While the protocol side is alive, a backpressured handle stays pending
+        // without pulling payload.
+        futures::future::poll_fn(|cx| match handle.poll_progress(cx, false) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(event) => panic!("unexpected event: {event:?}"),
+        })
+        .await;
+
+        drop(substream);
+
+        // Once the protocol side is gone (and no payload is buffered), the half close
+        // starts even while backpressured.
+        let message = futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await;
+        assert_eq!(
+            message,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::Fin),
+            })
+        );
+        assert!(matches!(handle.writer_state.get(), WriterState::Fin));
+    }
+
+    #[tokio::test]
+    async fn backpressured_handle_does_not_pull_payload() {
+        let (mut substream, mut handle) = Substream::new();
+
+        substream.write_all(&[0u8; 128]).await.unwrap();
+
+        // Backpressured: the payload must stay buffered.
+        futures::future::poll_fn(|cx| match handle.poll_progress(cx, false) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(event) => panic!("unexpected event: {event:?}"),
+        })
+        .await;
+
+        // Back to normal polling: the payload is delivered.
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![0u8; 128],
+                flag: None,
+            })
+        );
+    }
 
     #[tokio::test]
     async fn write_small_frame() {
