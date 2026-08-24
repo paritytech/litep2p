@@ -9,10 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 The WebRTC transport now drops any datagram that isn't STUN or DTLS at ingress, rather than letting str0m reject it and tear down a live connection. Also bumps str0m to 0.23.1.
 
-### Changed
-
-- build(deps): bump Swatinem/rust-cache from 2.8.2 to 2.9.2  ([#645](https://github.com/paritytech/litep2p/pull/645))
-
 ### Fixed
 
 - webrtc: drop non-STUN/DTLS datagrams at ingress and str0m bump  ([#646](https://github.com/paritytech/litep2p/pull/646))
