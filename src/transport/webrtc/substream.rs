@@ -248,6 +248,8 @@ impl Substream {
             message_tx: Some(inbound_message_tx),
             message_rx: outbound_message_rx,
             fin_ack_timeout: None,
+            stop_sending_sent: false,
+            read_close_timeout: None,
         };
 
         (
@@ -282,6 +284,13 @@ pub struct SubstreamHandle {
     /// Timeout for waiting on FIN_ACK after sending FIN
     /// Boxed to maintain Unpin for Substream while allowing the Sleep to be polled.
     fin_ack_timeout: Option<Pin<Box<tokio::time::Sleep>>>,
+    /// Whether `STOP_SENDING` has already been emitted
+    /// after the protocol side dropped the `Substream`.
+    stop_sending_sent: bool,
+    /// Deadline for the read half once the protocol side is gone,
+    /// if the peer never sends its FIN, the substream is reset
+    /// instead of staying half-open until the connection dies.
+    read_close_timeout: Option<Pin<Box<tokio::time::Sleep>>>,
 }
 
 impl SubstreamHandle {
@@ -519,6 +528,19 @@ impl SubstreamHandle {
             }
         }
 
+        // Substream has been dropped while the peer's write half is
+        // still open, tell the peer we will no longer read.
+        if !self.stop_sending_sent
+            && matches!(self.reader_state.get(), ReaderState::Open)
+            && self.message_tx.as_ref().is_some_and(|tx| tx.is_closed())
+        {
+            self.stop_sending_sent = true;
+            return Poll::Ready(Some(Message {
+                payload: vec![],
+                flag: Some(Flag::StopSending),
+            }));
+        }
+
         // - reader_state: this is mainly driven by the `on_message` function which reacts to
         //   incoming messages, there are 2 side effects which connects the two streams:
         //   1. If FIN arrived then FIN_ACK is expected to be sent back.
@@ -563,6 +585,25 @@ impl SubstreamHandle {
         // state then graceful shutdown has been carried, close the Stream.
         if matches!(self.reader_state.get(), ReaderState::FinAck) {
             return Poll::Ready(None);
+        }
+
+        // The writer has concluded but the peer never sent its FIN.
+        // Bound the wait and escalate to a reset instead of staying
+        // half-open until the connection dies.
+        //
+        // NOTE: closing the write half and continuing to read is a legitimate pattern,
+        // thus this is only applied if `Substream` is not alive anymore.
+        if self.message_tx.as_ref().is_none_or(|tx| tx.is_closed()) {
+            let timeout = self
+                .read_close_timeout
+                .get_or_insert_with(|| Box::pin(tokio::time::sleep(FIN_ACK_TIMEOUT)));
+            if timeout.as_mut().poll(cx).is_ready() {
+                self.channel_state.set(ChannelState::Reset);
+                return Poll::Ready(Some(Message {
+                    payload: vec![],
+                    flag: Some(Flag::ResetStream),
+                }));
+            }
         }
 
         Poll::Pending
@@ -767,8 +808,18 @@ mod tests {
 
         drop(substream);
 
-        // Once the protocol side is gone (and no payload is buffered), the half close
-        // starts even while backpressured.
+        // Once the protocol side is gone, the peer is first told we no longer read.
+        let message = futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await;
+        assert_eq!(
+            message,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::StopSending),
+            })
+        );
+
+        // Then, since no payload is buffered, the half close starts even while
+        // backpressured.
         let message = futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await;
         assert_eq!(
             message,
@@ -1737,16 +1788,129 @@ mod tests {
 
         // Wait for shutdown to complete and Substream to drop
         shutdown_task.await.unwrap();
-
         assert!(matches!(handle.writer_state.get(), WriterState::FinAck));
-        // If reader_state.inner.state is also closed, then we can expect a None.
-        handle.reader_state.set(ReaderState::FinAck);
+
+        // The protocol side is gone, the peer is told we no longer read.
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::StopSending)
+            })
+        );
+
+        // The peer reacts with its own FIN, which is acknowledged.
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::Fin),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::FinAck)
+            })
+        );
+
         // Verify handle signals closure (returns None)
         assert_eq!(
             handle.next().await,
             None,
             "SubstreamHandle should signal closure after Substream is dropped"
         );
+    }
+
+    #[tokio::test]
+    async fn read_half_deadline_resets_after_substream_dropped() {
+        use futures::StreamExt;
+
+        let (substream, mut handle) = Substream::new();
+        drop(substream);
+
+        // The peer is told we no longer read, then the write half closes.
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::StopSending)
+            })
+        );
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::Fin)
+            })
+        );
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::FinAck),
+            })
+            .await
+            .unwrap();
+
+        // The peer never sends its FIN. Expire the read-half deadline manually
+        // instead of waiting out FIN_ACK_TIMEOUT.
+        handle.read_close_timeout = Some(Box::pin(tokio::time::sleep(Duration::ZERO)));
+
+        // The read half is reset instead of staying half-open until the
+        // connection dies.
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::ResetStream)
+            })
+        );
+        assert!(matches!(handle.channel_state.get(), ChannelState::Reset));
+        assert_eq!(handle.next().await, None);
+    }
+
+    #[tokio::test]
+    async fn no_read_deadline_while_substream_is_alive() {
+        use futures::StreamExt;
+
+        let (mut substream, mut handle) = Substream::new();
+
+        // Close only the write half, keeping the `Substream` alive for reading:
+        // this is a legitimate pattern and must never be reset by a deadline.
+        let shutdown_task = tokio::spawn(async move {
+            substream.shutdown().await.unwrap();
+            substream
+        });
+
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::Fin)
+            })
+        );
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::FinAck),
+            })
+            .await
+            .unwrap();
+
+        // Shutdown completes, the `Substream` stays alive for reading.
+        let _substream = shutdown_task.await.unwrap();
+        assert!(matches!(handle.writer_state.get(), WriterState::FinAck));
+
+        // The handle stays pending: no STOP_SENDING is emitted and no read
+        // deadline is armed, the read half is still in use.
+        futures::future::poll_fn(|cx| match handle.poll_progress(cx, true) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(event) => panic!("unexpected event: {event:?}"),
+        })
+        .await;
+        assert!(handle.read_close_timeout.is_none());
+        assert!(matches!(handle.channel_state.get(), ChannelState::Open));
     }
 
     #[tokio::test]
