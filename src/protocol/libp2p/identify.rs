@@ -440,7 +440,7 @@ impl Identify {
                                 protocol_version: response.protocol_version,
                                 user_agent: response.user_agent,
                                 supported_protocols: response.supported_protocols.into_iter().map(From::from).collect(),
-                                observed_address: response.observed_address.map_or(Multiaddr::empty(), |address| address),
+                                observed_address: response.observed_address.unwrap_or(Multiaddr::empty()),
                                 listen_addresses: response.listen_addresses,
                             })
                             .await;
