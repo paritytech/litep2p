@@ -44,7 +44,7 @@ use bytes::{Bytes, BytesMut};
 use futures::{task::AtomicWaker, Stream, StreamExt};
 use indexmap::IndexMap;
 use str0m::{
-    channel::{Channel, ChannelConfig, ChannelId},
+    channel::{Channel, ChannelConfig, ChannelId, Reliability},
     net::{Protocol as Str0mProtocol, Receive},
     Event, IceConnectionState, Input, Output, Rtc,
 };
@@ -1038,8 +1038,8 @@ impl WebRtcConnection {
     ) {
         let channel_id = self.rtc.direct_api().create_data_channel(ChannelConfig {
             label: "".to_string(),
-            ordered: false,
-            reliability: Default::default(),
+            ordered: true,
+            reliability: Reliability::Reliable,
             negotiated: None,
             protocol: protocol.to_string(),
         });
