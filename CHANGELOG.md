@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-08-24
+
+- webrtc: drop non-STUN/DTLS datagrams at ingress and str0m bump  ([#646](https://github.com/paritytech/litep2p/pull/646))
+- build(deps): bump Swatinem/rust-cache from 2.8.2 to 2.9.2  ([#645](https://github.com/paritytech/litep2p/pull/645))
+
 ## [0.15.0] - 2026-08-17
 
 This release focuses on WebRTC. It is the first release with official WebRTC support. Expect things to break and get fixed in subsequent point releases.
