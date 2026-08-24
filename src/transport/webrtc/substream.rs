@@ -50,7 +50,7 @@ const FIN_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 /// Timeout bounding the entire remaining teardown once the `Substream`
 /// has been dropped: payload flush, FIN/FIN_ACK and the peer's
 /// FIN must all complete within this window, otherwise the substream is reset.
-/// 
+///
 /// Mirrors [`FIN_ACK_TIMEOUT`] and go-libp2p's stream close timeout.
 const TEARDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
