@@ -853,7 +853,6 @@ impl WebRtcConnection {
                     ?channel_id,
                     "data received from an unknown channel",
                 );
-                debug_assert!(false);
                 Error::InvalidState
             })?
             .on_message(message)
@@ -877,6 +876,18 @@ impl WebRtcConnection {
             channel_state = ?self.channels.get(&channel_id),
             "received channel data",
         );
+
+        // Data for an unknown channel must not create a `recv_buffers` entry.
+        if !self.channels.contains_key(&channel_id) {
+            tracing::warn!(
+                target: LOG_TARGET,
+                peer = ?self.peer,
+                ?channel_id,
+                data_len = data.len(),
+                "data received over a channel that doesn't exist",
+            );
+            return Err(Error::InvalidState);
+        }
 
         self.recv_buffers.entry(channel_id).or_default().extend_from_slice(&data);
 
@@ -910,7 +921,6 @@ impl WebRtcConnection {
                 ?channel_id,
                 "data received over a channel that doesn't exist",
             );
-            debug_assert!(false);
             return Err(Error::InvalidState);
         };
 
