@@ -363,11 +363,42 @@ impl WebRtcConnection {
         };
 
         let fallback_names = std::mem::take(&mut context.fallback_names);
-        let (dialer_state, message) =
-            WebRtcDialerState::propose(context.protocol.clone(), fallback_names)?;
-        let message = WebRtcMessage::encode(message, None);
+        let res = match WebRtcDialerState::propose(context.protocol.clone(), fallback_names) {
+            Ok((dialer_state, message)) => self
+                .write(channel_id, WebRtcMessage::encode(message, None))
+                .map(|()| dialer_state),
+            Err(error) => Err(error),
+        };
 
-        self.write(channel_id, message)?;
+        let dialer_state = match res {
+            Ok(dialer_state) => dialer_state,
+            Err(error) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    peer = ?self.peer,
+                    ?channel_id,
+                    ?error,
+                    "failed to open outbound substream",
+                );
+
+                // The substream open failure must be reported and the channel closed,
+                // otherwise the protocol waits out its own timeout and the channel is
+                // left open until the connection dies.
+                let _ = self
+                    .protocol_set
+                    .report_substream_open_failure(
+                        context.protocol,
+                        context.substream_id,
+                        SubstreamError::WriteFailure(Some(context.substream_id)),
+                    )
+                    .await;
+
+                self.rtc.direct_api().close_data_channel(channel_id);
+                self.channels.insert(channel_id, ChannelState::Closing);
+
+                return Err(error);
+            }
+        };
 
         self.channels.insert(
             channel_id,
