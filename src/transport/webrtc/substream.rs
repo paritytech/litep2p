@@ -248,6 +248,8 @@ impl Substream {
             message_tx: Some(inbound_message_tx),
             message_rx: outbound_message_rx,
             fin_ack_timeout: None,
+            stop_sending_sent: false,
+            read_close_timeout: None,
         };
 
         (
@@ -282,6 +284,13 @@ pub struct SubstreamHandle {
     /// Timeout for waiting on FIN_ACK after sending FIN
     /// Boxed to maintain Unpin for Substream while allowing the Sleep to be polled.
     fin_ack_timeout: Option<Pin<Box<tokio::time::Sleep>>>,
+    /// Whether `STOP_SENDING` has already been emitted
+    /// after the protocol side dropped the `Substream`.
+    stop_sending_sent: bool,
+    /// Deadline for the read half once the protocol side is gone,
+    /// if the peer never sends its FIN, the substream is reset
+    /// instead of staying half-open until the connection dies.
+    read_close_timeout: Option<Pin<Box<tokio::time::Sleep>>>,
 }
 
 impl SubstreamHandle {
@@ -482,12 +491,19 @@ impl SubstreamHandle {
             WriterState::FinAck => Poll::Ready(None),
         }
     }
-}
 
-impl Stream for SubstreamHandle {
-    type Item = Message;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    /// Drive the substream state machine, optionally pulling outbound payload.
+    ///
+    /// `pull_payload` is set to `false` by the connection while the underlying data
+    /// channel is backpressured, so that no new payload is pulled from the protocol
+    /// side. All other transitions are driven regardless, they must make progress
+    /// even when the peer is not draining the channel, otherwise the channel could
+    /// never be closed and would leak its resources.
+    pub(super) fn poll_progress(
+        &mut self,
+        cx: &mut Context<'_>,
+        pull_payload: bool,
+    ) -> Poll<Option<Message>> {
         // There are three states which need to be taken into consideration to poll the stream:
         // - channel_state: it preempts any other state if Reset has been entered
         //
@@ -512,6 +528,19 @@ impl Stream for SubstreamHandle {
             }
         }
 
+        // Substream has been dropped while the peer's write half is
+        // still open, tell the peer we will no longer read.
+        if !self.stop_sending_sent
+            && matches!(self.reader_state.get(), ReaderState::Open)
+            && self.message_tx.as_ref().is_some_and(|tx| tx.is_closed())
+        {
+            self.stop_sending_sent = true;
+            return Poll::Ready(Some(Message {
+                payload: vec![],
+                flag: Some(Flag::StopSending),
+            }));
+        }
+
         // - reader_state: this is mainly driven by the `on_message` function which reacts to
         //   incoming messages, there are 2 side effects which connects the two streams:
         //   1. If FIN arrived then FIN_ACK is expected to be sent back.
@@ -529,10 +558,19 @@ impl Stream for SubstreamHandle {
         //   simply be forwarded.
         let writer_state_stream_result = match self.writer_state.get() {
             WriterState::Open => {
-                match self.message_rx.poll_recv(cx) {
-                    // Writes are finished, start half close procedure.
-                    Poll::Ready(None) => self.poll_half_close(cx),
-                    res => res,
+                if pull_payload {
+                    match self.message_rx.poll_recv(cx) {
+                        // Writes are finished, start half close procedure.
+                        Poll::Ready(None) => self.poll_half_close(cx),
+                        res => res,
+                    }
+                } else if self.message_rx.is_closed() && self.message_rx.is_empty() {
+                    // The protocol side is gone and its buffered payload is fully
+                    // drained, the half close can start.
+                    self.poll_half_close(cx)
+                } else {
+                    // Backpressure, leave the payload in the channel.
+                    Poll::Pending
                 }
             }
             WriterState::Fin | WriterState::StopSending => self.poll_half_close(cx),
@@ -549,7 +587,34 @@ impl Stream for SubstreamHandle {
             return Poll::Ready(None);
         }
 
+        // The writer has concluded but the peer never sent its FIN.
+        // Bound the wait and escalate to a reset instead of staying
+        // half-open until the connection dies.
+        //
+        // NOTE: closing the write half and continuing to read is a legitimate pattern,
+        // thus this is only applied if `Substream` is not alive anymore.
+        if self.message_tx.as_ref().is_none_or(|tx| tx.is_closed()) {
+            let timeout = self
+                .read_close_timeout
+                .get_or_insert_with(|| Box::pin(tokio::time::sleep(FIN_ACK_TIMEOUT)));
+            if timeout.as_mut().poll(cx).is_ready() {
+                self.channel_state.set(ChannelState::Reset);
+                return Poll::Ready(Some(Message {
+                    payload: vec![],
+                    flag: Some(Flag::ResetStream),
+                }));
+            }
+        }
+
         Poll::Pending
+    }
+}
+
+impl Stream for SubstreamHandle {
+    type Item = Message;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.get_mut().poll_progress(cx, true)
     }
 }
 
@@ -682,6 +747,112 @@ mod tests {
     use super::*;
     use futures::StreamExt;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+
+    #[tokio::test]
+    async fn backpressured_handle_still_emits_local_reset() {
+        let (_substream, mut handle) = Substream::new();
+
+        // Simulate the inbound-flood detection initiating a local reset.
+        handle.channel_state.set(ChannelState::InitReset);
+
+        // Even with payload pulling suppressed (backpressured channel), the reset
+        // must be emitted and the handle must conclude.
+        let message = futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await;
+        assert_eq!(
+            message,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::ResetStream),
+            })
+        );
+
+        let message = futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await;
+        assert_eq!(message, None);
+    }
+
+    #[tokio::test]
+    async fn backpressured_handle_replies_fin_ack() {
+        let (_substream, mut handle) = Substream::new();
+
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::Fin),
+            })
+            .await
+            .unwrap();
+
+        // The FIN_ACK reply must be emitted even while the channel is backpressured.
+        let message = futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await;
+        assert_eq!(
+            message,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::FinAck),
+            })
+        );
+        assert!(matches!(handle.reader_state.get(), ReaderState::FinAck));
+    }
+
+    #[tokio::test]
+    async fn backpressured_handle_starts_half_close_after_substream_drop() {
+        let (substream, mut handle) = Substream::new();
+
+        // While the protocol side is alive, a backpressured handle stays pending
+        // without pulling payload.
+        futures::future::poll_fn(|cx| match handle.poll_progress(cx, false) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(event) => panic!("unexpected event: {event:?}"),
+        })
+        .await;
+
+        drop(substream);
+
+        // Once the protocol side is gone, the peer is first told we no longer read.
+        let message = futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await;
+        assert_eq!(
+            message,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::StopSending),
+            })
+        );
+
+        // Then, since no payload is buffered, the half close starts even while
+        // backpressured.
+        let message = futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await;
+        assert_eq!(
+            message,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::Fin),
+            })
+        );
+        assert!(matches!(handle.writer_state.get(), WriterState::Fin));
+    }
+
+    #[tokio::test]
+    async fn backpressured_handle_does_not_pull_payload() {
+        let (mut substream, mut handle) = Substream::new();
+
+        substream.write_all(&[0u8; 128]).await.unwrap();
+
+        // Backpressured: the payload must stay buffered.
+        futures::future::poll_fn(|cx| match handle.poll_progress(cx, false) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(event) => panic!("unexpected event: {event:?}"),
+        })
+        .await;
+
+        // Back to normal polling: the payload is delivered.
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![0u8; 128],
+                flag: None,
+            })
+        );
+    }
 
     #[tokio::test]
     async fn write_small_frame() {
@@ -1617,16 +1788,129 @@ mod tests {
 
         // Wait for shutdown to complete and Substream to drop
         shutdown_task.await.unwrap();
-
         assert!(matches!(handle.writer_state.get(), WriterState::FinAck));
-        // If reader_state.inner.state is also closed, then we can expect a None.
-        handle.reader_state.set(ReaderState::FinAck);
+
+        // The protocol side is gone, the peer is told we no longer read.
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::StopSending)
+            })
+        );
+
+        // The peer reacts with its own FIN, which is acknowledged.
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::Fin),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::FinAck)
+            })
+        );
+
         // Verify handle signals closure (returns None)
         assert_eq!(
             handle.next().await,
             None,
             "SubstreamHandle should signal closure after Substream is dropped"
         );
+    }
+
+    #[tokio::test]
+    async fn read_half_deadline_resets_after_substream_dropped() {
+        use futures::StreamExt;
+
+        let (substream, mut handle) = Substream::new();
+        drop(substream);
+
+        // The peer is told we no longer read, then the write half closes.
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::StopSending)
+            })
+        );
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::Fin)
+            })
+        );
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::FinAck),
+            })
+            .await
+            .unwrap();
+
+        // The peer never sends its FIN. Expire the read-half deadline manually
+        // instead of waiting out FIN_ACK_TIMEOUT.
+        handle.read_close_timeout = Some(Box::pin(tokio::time::sleep(Duration::ZERO)));
+
+        // The read half is reset instead of staying half-open until the
+        // connection dies.
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::ResetStream)
+            })
+        );
+        assert!(matches!(handle.channel_state.get(), ChannelState::Reset));
+        assert_eq!(handle.next().await, None);
+    }
+
+    #[tokio::test]
+    async fn no_read_deadline_while_substream_is_alive() {
+        use futures::StreamExt;
+
+        let (mut substream, mut handle) = Substream::new();
+
+        // Close only the write half, keeping the `Substream` alive for reading:
+        // this is a legitimate pattern and must never be reset by a deadline.
+        let shutdown_task = tokio::spawn(async move {
+            substream.shutdown().await.unwrap();
+            substream
+        });
+
+        assert_eq!(
+            handle.next().await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::Fin)
+            })
+        );
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::FinAck),
+            })
+            .await
+            .unwrap();
+
+        // Shutdown completes, the `Substream` stays alive for reading.
+        let _substream = shutdown_task.await.unwrap();
+        assert!(matches!(handle.writer_state.get(), WriterState::FinAck));
+
+        // The handle stays pending: no STOP_SENDING is emitted and no read
+        // deadline is armed, the read half is still in use.
+        futures::future::poll_fn(|cx| match handle.poll_progress(cx, true) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(event) => panic!("unexpected event: {event:?}"),
+        })
+        .await;
+        assert!(handle.read_close_timeout.is_none());
+        assert!(matches!(handle.channel_state.get(), ChannelState::Open));
     }
 
     #[tokio::test]

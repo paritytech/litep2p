@@ -172,21 +172,23 @@ impl Stream for SubstreamHandleSet {
                 return Poll::Ready(None);
             };
 
-            if !self.pending.contains(key) {
-                let Some((key, stream)) = self.handles.get_index_mut(index) else {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        index,
-                        num_handles = self.handles.len(),
-                        "substream handles index out of bounds",
-                    );
-                    return Poll::Ready(None);
-                };
+            // A backpressured (pending) channel must not produce new outbound payload,
+            // but its state machine is still driven.
+            let pull_payload = !self.pending.contains(key);
 
-                match stream.poll_next_unpin(cx) {
-                    Poll::Pending => {}
-                    Poll::Ready(event) => return Poll::Ready(Some((*key, event))),
-                }
+            let Some((key, stream)) = self.handles.get_index_mut(index) else {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    index,
+                    num_handles = self.handles.len(),
+                    "substream handles index out of bounds",
+                );
+                return Poll::Ready(None);
+            };
+
+            match stream.poll_progress(cx, pull_payload) {
+                Poll::Pending => {}
+                Poll::Ready(event) => return Poll::Ready(Some((*key, event))),
             }
 
             if self.index == start_index + len {
@@ -1248,7 +1250,20 @@ impl WebRtcConnection {
                     Event::ChannelBufferedAmountLow(_channel_id) => {
                         let channel_ids: Vec<_> = self.pending_messages.keys().cloned().collect();
                         for channel_id in channel_ids {
-                            let _ = self.write_pending(channel_id);
+                            if let Err(error) = self.write_pending(channel_id) {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    peer = ?self.peer,
+                                    ?channel_id,
+                                    ?error,
+                                    "failed to flush pending messages, closing channel",
+                                );
+
+                                self.rtc.direct_api().close_data_channel(channel_id);
+                                self.channels.insert(channel_id, ChannelState::Closing);
+                                self.handles.remove(&channel_id);
+                                self.pending_messages.remove(&channel_id);
+                            }
                         }
                         continue;
                     }
