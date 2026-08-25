@@ -47,6 +47,13 @@ use std::{
 /// Matches go-libp2p and js-libp2p's 10-second stream close timeout.
 const FIN_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Timeout bounding the entire remaining teardown once the `Substream`
+/// has been dropped: payload flush, FIN/FIN_ACK and the peer's
+/// FIN must all complete within this window, otherwise the substream is reset.
+///
+/// Mirrors [`FIN_ACK_TIMEOUT`] and go-libp2p's stream close timeout.
+const TEARDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Maximum number of in flight messages between
 /// [`Substream`] and [`SubstreamHandle`], in both directions.
 const MAX_INFLIGHT_MESSAGES: usize = 256;
@@ -249,7 +256,7 @@ impl Substream {
             message_rx: outbound_message_rx,
             fin_ack_timeout: None,
             stop_sending_sent: false,
-            read_close_timeout: None,
+            teardown_deadline: None,
         };
 
         (
@@ -287,10 +294,10 @@ pub struct SubstreamHandle {
     /// Whether `STOP_SENDING` has already been emitted
     /// after the protocol side dropped the `Substream`.
     stop_sending_sent: bool,
-    /// Deadline for the read half once the protocol side is gone,
-    /// if the peer never sends its FIN, the substream is reset
-    /// instead of staying half-open until the connection dies.
-    read_close_timeout: Option<Pin<Box<tokio::time::Sleep>>>,
+    /// Deadline bounding the entire remaining teardown once the protocol side is
+    /// gone: payload flush, FIN/FIN_ACK and the peer's FIN. On expiry the substream
+    /// is reset instead of staying half-open until the connection dies.
+    teardown_deadline: Option<Pin<Box<tokio::time::Sleep>>>,
 }
 
 impl SubstreamHandle {
@@ -492,6 +499,18 @@ impl SubstreamHandle {
         }
     }
 
+    /// Poll the teardown deadline, arming it on first use.
+    ///
+    /// Called once the `Substream` has been dropped, or
+    /// its buffered payload can no longer be delivered.
+    /// Teardown is bounded instead of depending on the peer to make progress.
+    fn poll_teardown_deadline(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        let deadline = self
+            .teardown_deadline
+            .get_or_insert_with(|| Box::pin(tokio::time::sleep(TEARDOWN_TIMEOUT)));
+        deadline.as_mut().poll(cx)
+    }
+
     /// Drive the substream state machine, optionally pulling outbound payload.
     ///
     /// `pull_payload` is set to `false` by the connection while the underlying data
@@ -541,6 +560,20 @@ impl SubstreamHandle {
             }));
         }
 
+        // The protocol side dropped the `Substream`, bound the remaining teardown.
+        //
+        // NOTE: closing the write half and continuing to read is a legitimate pattern,
+        // thus this is only applied if `Substream` is not alive anymore.
+        if self.message_tx.as_ref().is_some_and(|tx| tx.is_closed())
+            && self.poll_teardown_deadline(cx).is_ready()
+        {
+            self.channel_state.set(ChannelState::Reset);
+            return Poll::Ready(Some(Message {
+                payload: vec![],
+                flag: Some(Flag::ResetStream),
+            }));
+        }
+
         // - reader_state: this is mainly driven by the `on_message` function which reacts to
         //   incoming messages, there are 2 side effects which connects the two streams:
         //   1. If FIN arrived then FIN_ACK is expected to be sent back.
@@ -568,6 +601,18 @@ impl SubstreamHandle {
                     // The protocol side is gone and its buffered payload is fully
                     // drained, the half close can start.
                     self.poll_half_close(cx)
+                } else if self.message_rx.is_closed() {
+                    // The protocol side is gone but its buffered payload cannot be
+                    // delivered while backpressured. Bound the flush with the
+                    // teardown deadline.
+                    if self.poll_teardown_deadline(cx).is_ready() {
+                        self.channel_state.set(ChannelState::Reset);
+                        return Poll::Ready(Some(Message {
+                            payload: vec![],
+                            flag: Some(Flag::ResetStream),
+                        }));
+                    }
+                    Poll::Pending
                 } else {
                     // Backpressure, leave the payload in the channel.
                     Poll::Pending
@@ -585,25 +630,6 @@ impl SubstreamHandle {
         // state then graceful shutdown has been carried, close the Stream.
         if matches!(self.reader_state.get(), ReaderState::FinAck) {
             return Poll::Ready(None);
-        }
-
-        // The writer has concluded but the peer never sent its FIN.
-        // Bound the wait and escalate to a reset instead of staying
-        // half-open until the connection dies.
-        //
-        // NOTE: closing the write half and continuing to read is a legitimate pattern,
-        // thus this is only applied if `Substream` is not alive anymore.
-        if self.message_tx.as_ref().is_none_or(|tx| tx.is_closed()) {
-            let timeout = self
-                .read_close_timeout
-                .get_or_insert_with(|| Box::pin(tokio::time::sleep(FIN_ACK_TIMEOUT)));
-            if timeout.as_mut().poll(cx).is_ready() {
-                self.channel_state.set(ChannelState::Reset);
-                return Poll::Ready(Some(Message {
-                    payload: vec![],
-                    flag: Some(Flag::ResetStream),
-                }));
-            }
         }
 
         Poll::Pending
@@ -1824,7 +1850,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_half_deadline_resets_after_substream_dropped() {
+    async fn teardown_deadline_resets_after_substream_dropped() {
         use futures::StreamExt;
 
         let (substream, mut handle) = Substream::new();
@@ -1853,9 +1879,9 @@ mod tests {
             .await
             .unwrap();
 
-        // The peer never sends its FIN. Expire the read-half deadline manually
-        // instead of waiting out FIN_ACK_TIMEOUT.
-        handle.read_close_timeout = Some(Box::pin(tokio::time::sleep(Duration::ZERO)));
+        // The peer never sends its FIN. Expire the teardown deadline manually
+        // instead of waiting out TEARDOWN_TIMEOUT.
+        handle.teardown_deadline = Some(Box::pin(tokio::time::sleep(Duration::ZERO)));
 
         // The read half is reset instead of staying half-open until the
         // connection dies.
@@ -1871,7 +1897,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_read_deadline_while_substream_is_alive() {
+    async fn no_teardown_deadline_while_substream_is_alive() {
         use futures::StreamExt;
 
         let (mut substream, mut handle) = Substream::new();
@@ -1902,15 +1928,108 @@ mod tests {
         let _substream = shutdown_task.await.unwrap();
         assert!(matches!(handle.writer_state.get(), WriterState::FinAck));
 
-        // The handle stays pending: no STOP_SENDING is emitted and no read
+        // The handle stays pending: no STOP_SENDING is emitted and no teardown
         // deadline is armed, the read half is still in use.
         futures::future::poll_fn(|cx| match handle.poll_progress(cx, true) {
             Poll::Pending => Poll::Ready(()),
             Poll::Ready(event) => panic!("unexpected event: {event:?}"),
         })
         .await;
-        assert!(handle.read_close_timeout.is_none());
+        assert!(handle.teardown_deadline.is_none());
         assert!(matches!(handle.channel_state.get(), ChannelState::Open));
+    }
+
+    #[tokio::test]
+    async fn teardown_deadline_bounds_backpressured_drop() {
+        let (mut substream, mut handle) = Substream::new();
+
+        // Payload is buffered while the channel is backpressured.
+        substream.write_all(&[1u8; 128]).await.unwrap();
+        drop(substream);
+
+        // The peer is told we no longer read.
+        let message = futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await;
+        assert_eq!(
+            message,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::StopSending),
+            })
+        );
+
+        // FIN cannot be sent while payload is buffered and the channel is
+        // backpressured: the handle stays pending, with the teardown deadline armed.
+        futures::future::poll_fn(|cx| match handle.poll_progress(cx, false) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(event) => panic!("unexpected event: {event:?}"),
+        })
+        .await;
+        assert!(handle.teardown_deadline.is_some());
+
+        // The peer never drains the channel. Expire the deadline manually instead
+        // of waiting out TEARDOWN_TIMEOUT.
+        handle.teardown_deadline = Some(Box::pin(tokio::time::sleep(Duration::ZERO)));
+
+        // The substream is reset, discarding the buffered payload.
+        let message = futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await;
+        assert_eq!(
+            message,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::ResetStream),
+            })
+        );
+        assert!(matches!(handle.channel_state.get(), ChannelState::Reset));
+        let message = futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await;
+        assert_eq!(message, None);
+    }
+
+    #[tokio::test]
+    async fn teardown_deadline_bounds_stuck_flush_after_peer_fin() {
+        let (mut substream, mut handle) = Substream::new();
+
+        // Peer closes its write half first, the reader concludes.
+        handle
+            .on_message(WebRtcMessage {
+                payload: None,
+                flag: Some(Flag::Fin),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::FinAck),
+            })
+        );
+
+        // Payload is buffered while the channel is backpressured, then the
+        // `Substream` is dropped: the flush can never make progress.
+        substream.write_all(&[1u8; 128]).await.unwrap();
+        drop(substream);
+
+        futures::future::poll_fn(|cx| match handle.poll_progress(cx, false) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(event) => panic!("unexpected event: {event:?}"),
+        })
+        .await;
+        assert!(handle.teardown_deadline.is_some());
+
+        handle.teardown_deadline = Some(Box::pin(tokio::time::sleep(Duration::ZERO)));
+
+        assert_eq!(
+            futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await,
+            Some(Message {
+                payload: vec![],
+                flag: Some(Flag::ResetStream),
+            })
+        );
+        assert!(matches!(handle.channel_state.get(), ChannelState::Reset));
+        assert_eq!(
+            futures::future::poll_fn(|cx| handle.poll_progress(cx, false)).await,
+            None
+        );
     }
 
     #[tokio::test]
