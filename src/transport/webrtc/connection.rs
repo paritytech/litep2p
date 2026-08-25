@@ -1260,7 +1260,22 @@ impl WebRtcConnection {
                                 );
 
                                 self.rtc.direct_api().close_data_channel(channel_id);
-                                self.channels.insert(channel_id, ChannelState::Closing);
+
+                                if let Some(ChannelState::OutboundOpening { context, .. }) =
+                                    self.channels.insert(channel_id, ChannelState::Closing)
+                                {
+                                    let _ = self
+                                        .protocol_set
+                                        .report_substream_open_failure(
+                                            context.protocol,
+                                            context.substream_id,
+                                            SubstreamError::WriteFailure(Some(
+                                                context.substream_id,
+                                            )),
+                                        )
+                                        .await;
+                                }
+
                                 self.handles.remove(&channel_id);
                                 self.pending_messages.remove(&channel_id);
                             }
