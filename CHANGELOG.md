@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-08-26
+
+This release hardens the WebRTC transport.
+Substream teardown is now always driven and bounded under backpressure, fixing leaks when substreams are dropped.
+Substream open and write failures are reported to upper-layer protocols instead of leaving them hanging on substreams that will never open.
+Data channels are now ordered and reliable, and any datagram that isn't STUN or DTLS is dropped at ingress, rather than letting str0m reject it and tear down a live connection.
+Also bumps str0m to 0.23.1.
+
+### Changed
+
+- webrtc: use ordered & reliable data channels  ([#651](https://github.com/paritytech/litep2p/pull/651))
+
+### Fixed
+
+- webrtc: report failure when write_pending tears down `OutboundOpening`  ([#658](https://github.com/paritytech/litep2p/pull/658))
+- webrtc: bound teardown of dropped substreams under backpressure  ([#657](https://github.com/paritytech/litep2p/pull/657))
+- webrtc: don't create recv_buffers entries for unknown channels  ([#654](https://github.com/paritytech/litep2p/pull/654))
+- webrtc: report outbound open failures in `on_channel_opened`  ([#653](https://github.com/paritytech/litep2p/pull/653))
+- webrtc: always drive substream teardown (backpressure + drop leaks)  ([#652](https://github.com/paritytech/litep2p/pull/652))
+- webrtc: drop non-STUN/DTLS datagrams at ingress and str0m bump  ([#646](https://github.com/paritytech/litep2p/pull/646))
+
 ## [0.15.0] - 2026-08-17
 
 This release focuses on WebRTC. It is the first release with official WebRTC support. Expect things to break and get fixed in subsequent point releases.
