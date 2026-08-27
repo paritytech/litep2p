@@ -261,7 +261,8 @@ impl NoiseContext {
 
     /// Build a WebRTC Noise responder with a prologue. Fuzz-only: litep2p is listen-only and never
     /// runs the responder in production, so this lets a fuzz client complete the handshake. Mirrors
-    /// [`NoiseContext::with_prologue`] with `build_responder()`; `assemble` still signs the payload.
+    /// [`NoiseContext::with_prologue`] with `build_responder()`; `assemble` still signs the
+    /// payload.
     #[cfg(all(feature = "webrtc", feature = "fuzz"))]
     pub fn with_prologue_responder(
         id_keys: &Keypair,

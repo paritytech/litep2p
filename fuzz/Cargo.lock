@@ -2769,7 +2769,6 @@ name = "webrtc-datagram"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "futures",
  "litep2p",
  "multiaddr",
  "str0m",

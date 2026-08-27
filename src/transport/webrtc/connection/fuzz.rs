@@ -37,19 +37,21 @@ pub struct FuzzConnection {
     connection: WebRtcConnection,
 
     /// Channels in creation order, plus whether still open. Never removed, so an index keeps
-    /// addressing the same channel across a mutated script, including data delivered after a close.
+    /// addressing the same channel across a mutated script, including data delivered after a
+    /// close.
     channels: Vec<(ChannelId, bool)>,
 
     /// Local ends of the substreams [`Self::open_negotiated_channel()`] installs, indexed with
-    /// `channels`. Held to keep each handle's peer live: dropping a `Substream` starts a half-close
-    /// and collapses the `Open` state.
+    /// `channels`. Held to keep each handle's peer live: dropping a `Substream` starts a
+    /// half-close and collapses the `Open` state.
     substreams: Vec<Option<Substream>>,
 
     /// Held so the connection's datagram receiver does not observe a closed sender.
     _dgram_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
 
     /// Drained by [`Self::drain_events()`]: both hold 256 events and `ProtocolSet` sends with
-    /// `.await`, so an unread receiver would hang on the 257th and read as a timeout, not a finding.
+    /// `.await`, so an unread receiver would hang on the 257th and read as a timeout, not a
+    /// finding.
     mgr_rx: tokio::sync::mpsc::Receiver<crate::transport::manager::TransportManagerEvent>,
     protocol_rx: tokio::sync::mpsc::Receiver<crate::protocol::InnerTransportEvent>,
 }
@@ -308,7 +310,8 @@ impl FuzzConnection {
         self.channels.len()
     }
 
-    /// Total bytes across all reassembly buffers. Each is capped at `MAX_FRAME_SIZE`; the sum is not.
+    /// Total bytes across all reassembly buffers. Each is capped at `MAX_FRAME_SIZE`; the sum is
+    /// not.
     pub fn buffered_bytes(&self) -> usize {
         self.connection.recv_buffers.values().map(|buffer| buffer.len()).sum()
     }

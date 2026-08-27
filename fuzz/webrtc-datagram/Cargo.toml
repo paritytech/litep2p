@@ -13,7 +13,6 @@ bytes = "1.10.1"
 # spending real wall-clock time per iteration.
 tokio = { version = "1.44.1", features = ["full", "test-util"] }
 multiaddr = "0.18.2"
-futures = "0.3.31"
 # The end-to-end client (`src/client.rs`) drives a real str0m `Rtc` against the litep2p listener.
 # Version and features match the transitive dep pulled in by litep2p so the build unifies rather
 # than compiling a second str0m.
