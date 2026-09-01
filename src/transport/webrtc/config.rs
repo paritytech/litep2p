@@ -30,9 +30,9 @@ use crate::transport::webrtc::certificate::DtlsCertificate;
 /// otherwise, the WebRTC transport is not initialized.
 #[derive(Debug)]
 pub struct Config {
-    /// WebRTC listening address.
+    /// WebRTC listen addresses.
     ///
-    /// Unspecified addresses (`0.0.0.0` / `[::]`) are not supported.
+    /// Wildcard addresses are expanded to specific interface addresses when advertised.
     pub listen_addresses: Vec<Multiaddr>,
 
     /// Connection datagram buffer size.

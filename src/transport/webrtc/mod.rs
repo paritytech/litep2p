@@ -26,7 +26,7 @@ use crate::{
         manager::TransportHandle,
         webrtc::{
             config::Config, connection::WebRtcConnection, listener::WebRtcListener,
-            opening::OpeningWebRtcConnection,
+            opening::OpeningWebRtcConnection, socket::WebRtcSocket,
         },
         Endpoint, Transport, TransportBuilder, TransportEvent,
     },
@@ -38,7 +38,6 @@ use futures::{future::BoxFuture, stream::FuturesUnordered, Future, Stream, Strea
 use futures_timer::Delay;
 use hickory_resolver::TokioResolver;
 use multiaddr::Multiaddr;
-use multihash_codetable::MultihashDigest;
 use str0m::{
     channel::{ChannelConfig, ChannelId},
     config::DtlsCert,
@@ -47,10 +46,7 @@ use str0m::{
     Candidate, Input, Rtc, RtcError,
 };
 
-use tokio::{
-    io::ReadBuf,
-    sync::mpsc::{channel, error::TrySendError, Sender},
-};
+use tokio::sync::mpsc::{channel, error::TrySendError, Sender};
 
 use std::{
     collections::{hash_map::Entry, HashMap, VecDeque},
@@ -67,6 +63,7 @@ mod certificate;
 mod connection;
 mod listener;
 mod opening;
+mod socket;
 mod substream;
 mod util;
 
@@ -89,9 +86,6 @@ const LOG_TARGET: &str = "litep2p::webrtc";
 /// Hardcoded remote fingerprint.
 const REMOTE_FINGERPRINT: &str =
     "sha-256 FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF";
-
-/// Max Capacity of a WebRtc buffer used to receive a single inbound UDP datagram.
-const WEBRTC_BUFFER_SIZE: usize = 16 * 1024;
 
 /// Connection context.
 struct ConnectionContext {
@@ -127,14 +121,15 @@ enum ConnectionEvent {
     },
 }
 
-/// Endpoints of a received UDP datagram: which local socket received it,
+/// Endpoints of a received UDP datagram: its local destination address,
 /// and the remote socket that sent it.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 struct AddressPair {
-    /// Address of the local listening socket that received the datagram.
+    /// Local destination address of the datagram;
+    /// a concrete IP even for wildcard listening sockets.
     local: SocketAddr,
     /// Address of the remote peer that sent the datagram.
-    source: SocketAddr,
+    remote: SocketAddr,
 }
 
 /// WebRTC transport.
@@ -174,13 +169,12 @@ pub(crate) struct WebRtcTransport {
 }
 
 impl WebRtcTransport {
-    /// Create RTC client and open channel for Noise handshake.
-    fn make_rtc_client(
+    /// Create [`str0m::Rtc`] object for a new session and open a channel for Noise handshake.
+    fn make_rtc(
         &self,
         ufrag: &str,
         pass: &str,
-        source: SocketAddr,
-        destination: SocketAddr,
+        addrs: &AddressPair,
     ) -> crate::Result<(Rtc, ChannelId)> {
         let mut rtc = Rtc::builder()
             .set_ice_lite(true)
@@ -188,10 +182,10 @@ impl WebRtcTransport {
             .set_fingerprint_verification(false)
             .build(std::time::Instant::now());
         rtc.add_local_candidate(
-            Candidate::host(destination, Str0mProtocol::Udp).map_err(RtcError::Ice)?,
+            Candidate::host(addrs.local, Str0mProtocol::Udp).map_err(RtcError::Ice)?,
         );
         rtc.add_remote_candidate(
-            Candidate::host(source, Str0mProtocol::Udp).map_err(RtcError::Ice)?,
+            Candidate::host(addrs.remote, Str0mProtocol::Udp).map_err(RtcError::Ice)?,
         );
         rtc.direct_api().set_remote_fingerprint(
             REMOTE_FINGERPRINT
@@ -257,24 +251,25 @@ impl WebRtcTransport {
                 opening::WebRtcEvent::Transmit {
                     destination,
                     datagram,
-                } => {
-                    let Some(socket) = self.listener.socket(&addrs.local) else {
-                        tracing::warn!(
-                            target: LOG_TARGET,
-                            ?addrs,
-                            "no socket bound to local address in listener, dropping outbound datagram",
-                        );
-                        continue;
-                    };
-                    if let Err(error) = socket.try_send_to(&datagram, destination) {
-                        tracing::warn!(
-                            target: LOG_TARGET,
-                            ?addrs,
-                            ?error,
-                            "failed to send datagram",
-                        );
-                    }
-                }
+                } =>
+                    if let Err(error) =
+                        connection.socket().try_send_to(&datagram, destination, addrs.local.ip())
+                    {
+                        if error.kind() == std::io::ErrorKind::WouldBlock {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                ?addrs,
+                                "UDP send buffer full, dropping datagram (str0m will retransmit)",
+                            );
+                        } else {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                ?addrs,
+                                ?error,
+                                "failed to send datagram",
+                            );
+                        }
+                    },
                 opening::WebRtcEvent::ConnectionClosed => return ConnectionEvent::ConnectionClosed,
                 opening::WebRtcEvent::ConnectionOpened { peer, endpoint } => {
                     return ConnectionEvent::ConnectionEstablished { peer, endpoint };
@@ -291,7 +286,29 @@ impl WebRtcTransport {
     /// until it timeouts.
     ///
     /// Returns `true` if the client should be polled.
-    fn on_socket_input(&mut self, addrs: AddressPair, buffer: Vec<u8>) -> crate::Result<bool> {
+    fn on_socket_input(
+        &mut self,
+        addrs: AddressPair,
+        socket: &Arc<WebRtcSocket>,
+        buffer: Vec<u8>,
+    ) -> crate::Result<bool> {
+        // Drop anything that is not STUN or DTLS before it reaches str0m.
+        // No media is ever negotiated, so RTP/RTCP is always rejected.
+        //
+        // Drop silently rather than erroring,
+        // an invalid datagram must not tear down a live peer.
+        if !is_forwardable(&buffer) {
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?addrs,
+                first_byte = buffer.first().copied(),
+                len = buffer.len(),
+                "dropping non-STUN/DTLS datagram",
+            );
+
+            return Ok(false);
+        }
+
         if let Entry::Occupied(mut entry) = self.open.entry(addrs) {
             let ConnectionContext {
                 peer,
@@ -325,12 +342,6 @@ impl WebRtcTransport {
                     return Ok(false);
                 }
             }
-        }
-
-        if buffer.is_empty() {
-            // str0m crate panics if the buffer doesn't contain at least one byte:
-            // https://github.com/algesten/str0m/blob/2c5dc8ee8ddead08699dd6852a27476af6992a5c/src/io/mod.rs#L222
-            return Err(Error::InvalidData);
         }
 
         // if the peer doesn't exist, decode the message and expect to receive `Stun`
@@ -387,13 +398,12 @@ impl WebRtcTransport {
         );
 
         // create new `Rtc` object for the peer and give it the received STUN message
-        let (mut rtc, noise_channel_id) =
-            self.make_rtc_client(ufrag, pass, addrs.source, addrs.local)?;
+        let (mut rtc, noise_channel_id) = self.make_rtc(ufrag, pass, &addrs)?;
 
         rtc.handle_input(Input::Receive(
             Instant::now(),
             Receive {
-                source: addrs.source,
+                source: addrs.remote,
                 proto: Str0mProtocol::Udp,
                 destination: addrs.local,
                 contents,
@@ -406,8 +416,8 @@ impl WebRtcTransport {
             connection_id,
             noise_channel_id,
             self.context.keypair.clone(),
-            addrs.source,
-            addrs.local,
+            addrs,
+            socket.clone(),
         );
         self.opening.insert(addrs, connection);
 
@@ -435,30 +445,28 @@ impl TransportBuilder for WebRtcTransport {
             ));
         }
 
-        tracing::info!(
+        tracing::debug!(
             target: LOG_TARGET,
             listen_addresses = ?config.listen_addresses,
             "start webrtc transport",
         );
 
-        let dtls_cert: DtlsCert = match config.certificate {
-            Some(certificate) => certificate.into(),
+        let dtls_cert = match config.certificate {
+            Some(certificate) => certificate,
             None => {
-                tracing::debug!(target: LOG_TARGET, "generating temporary WebRtc certificate");
-                DtlsCertificate::new()?.into()
+                tracing::debug!(target: LOG_TARGET, "generating temporary WebRTC certificate");
+                DtlsCertificate::new()?
             }
         };
 
-        // OpenSsl is used as crypto backend to generate the certificate, it uses sha256.
-        let cert_hash = multihash_codetable::Code::Sha2_256.digest(&dtls_cert.certificate);
-
         let (listener, listen_multi_addresses) =
-            WebRtcListener::new(config.listen_addresses, cert_hash)?;
+            WebRtcListener::new(config.listen_addresses, dtls_cert.certhash())?;
+        let read_buffer = vec![0; listener.max_read_size()];
 
         Ok((
             Self {
                 context,
-                dtls_cert,
+                dtls_cert: dtls_cert.into(),
                 listener,
                 open: HashMap::new(),
                 closed_connections: FuturesUnordered::new(),
@@ -467,7 +475,7 @@ impl TransportBuilder for WebRtcTransport {
                 timeouts: HashMap::new(),
                 pending_events: VecDeque::new(),
                 datagram_buffer_size: config.datagram_buffer_size,
-                read_buffer: vec![0; WEBRTC_BUFFER_SIZE],
+                read_buffer,
             },
             listen_multi_addresses,
         ))
@@ -543,6 +551,7 @@ impl Transport for WebRtcTransport {
             Error::InvalidState
         })?;
 
+        let socket = connection.socket().clone();
         let rtc = connection.on_accept()?;
         let (tx, rx) = channel(self.datagram_buffer_size);
         let mut protocol_set = self.context.protocol_set(connection_id);
@@ -566,30 +575,13 @@ impl Transport for WebRtcTransport {
             },
         );
 
-        let Some(socket) = self.listener.socket(&addrs.local) else {
-            tracing::warn!(
-                target: LOG_TARGET,
-                ?addrs,
-                "no socket for local address; aborting connection"
-            );
-            return Err(Error::InvalidState);
-        };
-
         Ok(Box::pin(async move {
             // First, notify all protocols about the connection establishment
             protocol_set.report_connection_established(peer, endpoint_clone).await?;
 
             // After protocols are notified, create connection and spawn event loop
-            let connection = WebRtcConnection::new(
-                rtc,
-                peer,
-                addrs.source,
-                addrs.local,
-                socket,
-                protocol_set,
-                endpoint,
-                rx,
-            );
+            let connection =
+                WebRtcConnection::new(rtc, peer, addrs, socket, protocol_set, endpoint, rx);
 
             executor.run(Box::pin(async move {
                 connection.run_event_loop().await;
@@ -666,25 +658,54 @@ impl Stream for WebRtcTransport {
         }
 
         loop {
-            let mut read_buf = ReadBuf::new(&mut this.read_buffer);
-            let addrs = match this.listener.poll_recv_from(cx, &mut read_buf) {
-                // No error is expected to be returned by the listener.
-                Poll::Ready(Err(error)) => {
-                    tracing::info!(
-                        target: LOG_TARGET,
-                        ?error,
-                        "webrtc udp socket closed",
-                    );
-                    return Poll::Ready(None);
-                }
-                Poll::Pending => break,
-                Poll::Ready(Ok(addrs)) => addrs,
+            let (addrs, meta, socket) =
+                match this.listener.poll_recv_from(cx, &mut this.read_buffer) {
+                    // No error is expected to be returned by the listener.
+                    Poll::Ready(Err(error)) => {
+                        tracing::info!(
+                            target: LOG_TARGET,
+                            ?error,
+                            "webrtc udp socket closed",
+                        );
+                        return Poll::Ready(None);
+                    }
+                    Poll::Pending => break,
+                    Poll::Ready(Ok(res)) => res,
+                };
+
+            // `stride == 0` is only possible with `len == 0`
+            // (`quinn-udp` sets `stride = len` when GRO info is absent),
+            // normalize it to keep the loop below finite.
+            let stride = if meta.stride == 0 {
+                meta.len
+            } else {
+                meta.stride
             };
 
-            let buf = read_buf.filled().to_vec();
-            match this.on_socket_input(addrs, buf) {
-                Ok(false) => {}
-                Ok(true) => loop {
+            // The read may contain multiple GRO-coalesced datagrams,
+            // feed them to the connection one by one.
+            let mut should_poll = false;
+            let mut offset = 0;
+            while offset < meta.len {
+                let len = stride.min(meta.len - offset);
+                let datagram = this.read_buffer[offset..offset + len].to_vec();
+                offset += len;
+
+                match this.on_socket_input(addrs, &socket, datagram) {
+                    Ok(poll) => should_poll |= poll,
+                    Err(error) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?addrs,
+                            ?error,
+                            "failed to handle datagram",
+                        );
+                    }
+                }
+            }
+
+            if should_poll {
+                loop {
                     match this.poll_connection(&addrs) {
                         ConnectionEvent::ConnectionEstablished { peer, endpoint } => {
                             this.connections
@@ -712,14 +733,6 @@ impl Stream for WebRtcTransport {
                             break;
                         }
                     }
-                },
-                Err(error) => {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?addrs,
-                        ?error,
-                        "failed to handle datagram",
-                    );
                 }
             }
         }
@@ -791,4 +804,96 @@ fn is_stun_packet(bytes: &[u8]) -> bool {
     const STUN_MAGIC_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];
     // 20 bytes for the header, then follows attributes.
     bytes.len() >= 20 && bytes[0] < 2 && bytes[4..8] == STUN_MAGIC_COOKIE
+}
+
+/// Check whether a datagram may be forwarded to str0m.
+///
+/// Datagrams are demultiplexed by their first byte.
+/// The only kinds a libp2p WebRTC transport legitimately receives
+/// are STUN and DTLS, SCTP is not demultiplexed on its own
+/// but carried inside DTLS.
+/// RTP/RTCP never arrive, since no media is negotiated.
+///
+/// The accepted set mirrors str0m's own classifier (`str0m::io::MultiplexKind`):
+/// STUN is `byte0 < 2` with a full 20-byte header,
+/// DTLS is `byte0` in `20..=63`.
+///
+/// A datagram that passes this filter but that str0m then rejects
+/// closes the connection which would tear down a live peer.
+fn is_forwardable(bytes: &[u8]) -> bool {
+    match bytes.first().copied() {
+        // STUN messages always carry a 20-byte header,
+        // shorter ones are rejected by str0m.
+        Some(0..=1) => bytes.len() >= 20,
+        Some(20..=63) => true,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A STUN-shaped datagram of `len` bytes, carrying the magic cookie.
+    fn stun_datagram(len: usize) -> Vec<u8> {
+        let mut datagram = vec![0x00; len];
+        if len >= 8 {
+            datagram[4..8].copy_from_slice(&[0x21, 0x12, 0xA4, 0x42]);
+        }
+        datagram
+    }
+
+    #[test]
+    fn stun_and_dtls_are_forwardable() {
+        // STUN, which always carries a 20-byte header.
+        assert!(is_forwardable(&stun_datagram(20)));
+        assert!(is_forwardable(&stun_datagram(64)));
+        assert!(is_forwardable(&[0x01; 20]));
+
+        // DTLS, at any length.
+        for byte in 20..=63 {
+            assert!(is_forwardable(&[byte]), "{byte:#04x} should be forwardable");
+            assert!(
+                is_forwardable(&[byte; 20]),
+                "{byte:#04x} should be forwardable"
+            );
+        }
+    }
+
+    #[test]
+    fn truncated_stun_datagrams_are_not_forwardable() {
+        // str0m only classifies `byte0 < 2` as STUN once the 20-byte header is complete, and
+        // errors otherwise. Forwarding these would let a spoofed datagram close a live
+        // connection, so they must be dropped here.
+        for len in 0..20 {
+            assert!(
+                !is_forwardable(&stun_datagram(len)),
+                "{len}-byte stun datagram should not be forwardable"
+            );
+            assert!(
+                !is_forwardable(&vec![0x01; len]),
+                "{len}-byte stun datagram should not be forwardable"
+            );
+        }
+    }
+
+    #[test]
+    fn rtp_rtcp_and_unknown_datagrams_are_not_forwardable() {
+        // RTP/RTCP, and the gaps between the STUN, DTLS and RTP/RTCP ranges. Length never
+        // rescues any of them.
+        let rejected = (2..=19).chain(64..=255);
+        for byte in rejected {
+            assert!(
+                !is_forwardable(&[byte]),
+                "{byte:#04x} should not be forwardable"
+            );
+            assert!(
+                !is_forwardable(&[byte; 20]),
+                "{byte:#04x} should not be forwardable"
+            );
+        }
+
+        // Empty datagram.
+        assert!(!is_forwardable(&[]));
+    }
 }

@@ -29,8 +29,10 @@ use crate::{
     transport::{
         webrtc::{
             schema::webrtc::message::Flag,
+            socket::WebRtcSocket,
             substream::{Message, Substream as WebRtcSubstream, SubstreamHandle},
             util::{extract_framed_message, WebRtcMessage},
+            AddressPair,
         },
         Endpoint, SUBSTREAM_OPEN_TIMEOUT,
     },
@@ -42,15 +44,14 @@ use bytes::{Bytes, BytesMut};
 use futures::{task::AtomicWaker, Stream, StreamExt};
 use indexmap::IndexMap;
 use str0m::{
-    channel::{Channel, ChannelConfig, ChannelId},
+    channel::{Channel, ChannelConfig, ChannelId, Reliability},
     net::{Protocol as Str0mProtocol, Receive},
     Event, IceConnectionState, Input, Output, Rtc,
 };
-use tokio::{net::UdpSocket, sync::mpsc::Receiver};
+use tokio::sync::mpsc::Receiver;
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -171,21 +172,23 @@ impl Stream for SubstreamHandleSet {
                 return Poll::Ready(None);
             };
 
-            if !self.pending.contains(key) {
-                let Some((key, stream)) = self.handles.get_index_mut(index) else {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        index,
-                        num_handles = self.handles.len(),
-                        "substream handles index out of bounds",
-                    );
-                    return Poll::Ready(None);
-                };
+            // A backpressured (pending) channel must not produce new outbound payload,
+            // but its state machine is still driven.
+            let pull_payload = !self.pending.contains(key);
 
-                match stream.poll_next_unpin(cx) {
-                    Poll::Pending => {}
-                    Poll::Ready(event) => return Poll::Ready(Some((*key, event))),
-                }
+            let Some((key, stream)) = self.handles.get_index_mut(index) else {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    index,
+                    num_handles = self.handles.len(),
+                    "substream handles index out of bounds",
+                );
+                return Poll::Ready(None);
+            };
+
+            match stream.poll_progress(cx, pull_payload) {
+                Poll::Pending => {}
+                Poll::Ready(event) => return Poll::Ready(Some((*key, event))),
             }
 
             if self.index == start_index + len {
@@ -244,14 +247,11 @@ pub struct WebRtcConnection {
     /// Endpoint.
     endpoint: Endpoint,
 
-    /// Peer address
-    peer_address: SocketAddr,
-
-    /// Local address.
-    local_address: SocketAddr,
+    /// Addresses of the session.
+    addrs: AddressPair,
 
     /// Transport socket.
-    socket: Arc<UdpSocket>,
+    socket: Arc<WebRtcSocket>,
 
     /// RX channel for receiving datagrams from the transport.
     dgram_rx: Receiver<Vec<u8>>,
@@ -296,9 +296,8 @@ impl WebRtcConnection {
     pub fn new(
         rtc: Rtc,
         peer: PeerId,
-        peer_address: SocketAddr,
-        local_address: SocketAddr,
-        socket: Arc<UdpSocket>,
+        addrs: AddressPair,
+        socket: Arc<WebRtcSocket>,
         protocol_set: ProtocolSet,
         endpoint: Endpoint,
         dgram_rx: Receiver<Vec<u8>>,
@@ -307,8 +306,7 @@ impl WebRtcConnection {
             rtc,
             protocol_set,
             peer,
-            peer_address,
-            local_address,
+            addrs,
             socket,
             endpoint,
             dgram_rx,
@@ -365,11 +363,42 @@ impl WebRtcConnection {
         };
 
         let fallback_names = std::mem::take(&mut context.fallback_names);
-        let (dialer_state, message) =
-            WebRtcDialerState::propose(context.protocol.clone(), fallback_names)?;
-        let message = WebRtcMessage::encode(message, None);
+        let res = match WebRtcDialerState::propose(context.protocol.clone(), fallback_names) {
+            Ok((dialer_state, message)) => self
+                .write(channel_id, WebRtcMessage::encode(message, None))
+                .map(|()| dialer_state),
+            Err(error) => Err(error),
+        };
 
-        self.write(channel_id, message)?;
+        let dialer_state = match res {
+            Ok(dialer_state) => dialer_state,
+            Err(error) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    peer = ?self.peer,
+                    ?channel_id,
+                    ?error,
+                    "failed to open outbound substream",
+                );
+
+                // The substream open failure must be reported and the channel closed,
+                // otherwise the protocol waits out its own timeout and the channel is
+                // left open until the connection dies.
+                let _ = self
+                    .protocol_set
+                    .report_substream_open_failure(
+                        context.protocol,
+                        context.substream_id,
+                        SubstreamError::WriteFailure(Some(context.substream_id)),
+                    )
+                    .await;
+
+                self.rtc.direct_api().close_data_channel(channel_id);
+                self.channels.insert(channel_id, ChannelState::Closing);
+
+                return Err(error);
+            }
+        };
 
         self.channels.insert(
             channel_id,
@@ -826,7 +855,6 @@ impl WebRtcConnection {
                     ?channel_id,
                     "data received from an unknown channel",
                 );
-                debug_assert!(false);
                 Error::InvalidState
             })?
             .on_message(message)
@@ -850,6 +878,18 @@ impl WebRtcConnection {
             channel_state = ?self.channels.get(&channel_id),
             "received channel data",
         );
+
+        // Data for an unknown channel must not create a `recv_buffers` entry.
+        if !self.channels.contains_key(&channel_id) {
+            tracing::warn!(
+                target: LOG_TARGET,
+                peer = ?self.peer,
+                ?channel_id,
+                data_len = data.len(),
+                "data received over a channel that doesn't exist",
+            );
+            return Err(Error::InvalidState);
+        }
 
         self.recv_buffers.entry(channel_id).or_default().extend_from_slice(&data);
 
@@ -883,7 +923,6 @@ impl WebRtcConnection {
                 ?channel_id,
                 "data received over a channel that doesn't exist",
             );
-            debug_assert!(false);
             return Err(Error::InvalidState);
         };
 
@@ -1042,8 +1081,8 @@ impl WebRtcConnection {
     ) {
         let channel_id = self.rtc.direct_api().create_data_channel(ChannelConfig {
             label: "".to_string(),
-            ordered: false,
-            reliability: Default::default(),
+            ordered: true,
+            reliability: Reliability::Reliable,
             negotiated: None,
             protocol: protocol.to_string(),
         });
@@ -1134,7 +1173,9 @@ impl WebRtcConnection {
                         "transmit data",
                     );
 
-                    if let Err(error) = self.socket.try_send_to(&v.contents, v.destination) {
+                    if let Err(error) =
+                        self.socket.try_send_to(&v.contents, v.destination, self.addrs.local.ip())
+                    {
                         if error.kind() == std::io::ErrorKind::WouldBlock {
                             tracing::trace!(
                                 target: LOG_TARGET,
@@ -1209,7 +1250,35 @@ impl WebRtcConnection {
                     Event::ChannelBufferedAmountLow(_channel_id) => {
                         let channel_ids: Vec<_> = self.pending_messages.keys().cloned().collect();
                         for channel_id in channel_ids {
-                            let _ = self.write_pending(channel_id);
+                            if let Err(error) = self.write_pending(channel_id) {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    peer = ?self.peer,
+                                    ?channel_id,
+                                    ?error,
+                                    "failed to flush pending messages, closing channel",
+                                );
+
+                                self.rtc.direct_api().close_data_channel(channel_id);
+
+                                if let Some(ChannelState::OutboundOpening { context, .. }) =
+                                    self.channels.insert(channel_id, ChannelState::Closing)
+                                {
+                                    let _ = self
+                                        .protocol_set
+                                        .report_substream_open_failure(
+                                            context.protocol,
+                                            context.substream_id,
+                                            SubstreamError::WriteFailure(Some(
+                                                context.substream_id,
+                                            )),
+                                        )
+                                        .await;
+                                }
+
+                                self.handles.remove(&channel_id);
+                                self.pending_messages.remove(&channel_id);
+                            }
                         }
                         continue;
                     }
@@ -1266,8 +1335,8 @@ impl WebRtcConnection {
                             Instant::now(),
                             Receive {
                                 proto: Str0mProtocol::Udp,
-                                source: self.peer_address,
-                                destination: self.local_address,
+                                source: self.addrs.remote,
+                                destination: self.addrs.local,
                                 contents,
                             },
                         );
