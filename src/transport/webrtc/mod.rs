@@ -87,6 +87,20 @@ const LOG_TARGET: &str = "litep2p::webrtc";
 const REMOTE_FINGERPRINT: &str =
     "sha-256 FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF";
 
+/// Maximum size of a datagram forwarded to str0m.
+///
+/// str0m sizes its DTLS packets to fit within the network MTU (Maximum
+/// Transmission Unit): it targets 1150 bytes and never exceeds 1500, so a
+/// legitimate peer never sends a DTLS datagram larger than that.
+///
+/// The cap exists because str0m's OpenSSL DTLS backend appends every incoming
+/// datagram to a cumulative buffer, undrained bytes from one datagram can
+/// end up into the next.
+/// 
+/// 2048 stays above above the 1500-byte MTU ceiling while staying 
+/// a lot below the str0m's max buffer size.
+const MAX_DTLS_DATAGRAM_SIZE: usize = 2048;
+
 /// Connection context.
 struct ConnectionContext {
     /// Remote peer ID.
@@ -821,6 +835,10 @@ fn is_stun_packet(bytes: &[u8]) -> bool {
 /// A datagram that passes this filter but that str0m then rejects
 /// closes the connection which would tear down a live peer.
 fn is_forwardable(bytes: &[u8]) -> bool {
+    if bytes.len() >= MAX_DTLS_DATAGRAM_SIZE {
+        return false
+    }
+
     match bytes.first().copied() {
         // STUN messages always carry a 20-byte header,
         // shorter ones are rejected by str0m.
