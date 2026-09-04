@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.2] - 2026-09-04
+
+This is a security release.
+
+A remote host could send an oversized UDP datagram (possibly reassembled from IP fragments) to a WebRTC endpoint and crash the entire process. Datagrams larger than 2000 bytes are now dropped at ingress, pending a fix upstream in `str0m`. Only nodes with the WebRTC transport enabled are affected — upgrading is strongly recommended for all such deployments.
+
+### Fixed
+
+- webrtc: mitigate panic in `str0m` when handling oversized datagrams ([#661](https://github.com/paritytech/litep2p/pull/661))
+
 ## [0.15.1] - 2026-08-26
 
 This release hardens the WebRTC transport.
