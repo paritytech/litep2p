@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.15.2] - 2026-09-04
 
-This is a security release. A remote host could send an oversized UDP datagram (possibly reassembled from IP fragments) to a WebRTC endpoint and crash the entire process. Datagrams larger than 2000 bytes are now dropped at ingress, pending a fix upstream in `str0m`. Only nodes with the WebRTC transport enabled are affected — upgrading is strongly recommended for all such deployments.
+This is a security release.
+
+A remote host could send an oversized UDP datagram (possibly reassembled from IP fragments) to a WebRTC endpoint and crash the entire process. Datagrams larger than 2000 bytes are now dropped at ingress, pending a fix upstream in `str0m`. Only nodes with the WebRTC transport enabled are affected — upgrading is strongly recommended for all such deployments.
 
 ### Fixed
 
