@@ -87,6 +87,9 @@ const LOG_TARGET: &str = "litep2p::webrtc";
 const REMOTE_FINGERPRINT: &str =
     "sha-256 FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF";
 
+/// A maximum single UDP payload size that we forward to `str0m`.
+const MAX_UDP_PAYLOAD_SIZE: usize = 2000;
+
 /// Connection context.
 struct ConnectionContext {
     /// Remote peer ID.
@@ -680,6 +683,12 @@ impl Stream for WebRtcTransport {
                 meta.len
             } else {
                 meta.stride
+            };
+
+            // Reassembled oversized datagrams crash `str0m`. Drop them.
+            if stride > MAX_UDP_PAYLOAD_SIZE {
+                tracing::trace!(target: LOG_TARGET, ?addrs, "dropping oversized datagram(s)");
+                continue;
             };
 
             // The read may contain multiple GRO-coalesced datagrams,
