@@ -38,7 +38,7 @@ use crate::{
 use futures::{future::BoxFuture, StreamExt};
 use std::{
     collections::{hash_map::Entry, HashMap},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// Logging target for the file.
@@ -65,7 +65,12 @@ pub struct MemoryStore {
     /// Provider records.
     provider_keys: HashMap<Key, Vec<ProviderRecord>>,
     /// Local providers.
-    local_providers: HashMap<Key, (ContentProvider, Quorum)>,
+    ///
+    /// Maps provider key -> (provider, quorum, next_refresh_at).
+    /// `next_refresh_at` is the wall-clock instant at which the next refresh is
+    /// scheduled to fire; it is populated when the provider is first inserted
+    /// (or resumed) and updated every time a refresh actually happens.
+    local_providers: HashMap<Key, (ContentProvider, Quorum, Instant)>,
     /// Futures to signal it's time to republish a local provider.
     pending_provider_refresh: FuturesStream<BoxFuture<'static, Key>>,
 }
@@ -278,7 +283,8 @@ impl MemoryStore {
 
         if self.put_provider(key.clone(), provider.clone()) {
             let refresh_interval = self.config.provider_refresh_interval;
-            self.local_providers.insert(key.clone(), (provider, quorum));
+            let next_refresh_at = Instant::now() + refresh_interval;
+            self.local_providers.insert(key.clone(), (provider, quorum, next_refresh_at));
             self.pending_provider_refresh.push(Box::pin(async move {
                 tokio::time::sleep(refresh_interval).await;
                 key
@@ -288,6 +294,47 @@ impl MemoryStore {
         } else {
             false
         }
+    }
+
+    /// Resume providing `key` without publishing it to the network immediately.
+    ///
+    /// This is used to restore provider state after a node restart. The provider is added to the
+    /// local store and a refresh is scheduled at `next_refresh_at`. If `next_refresh_at` is in the
+    /// past, the refresh fires immediately (the sleep duration is clamped to zero).
+    ///
+    /// Returns `true` if the provider was added, `false` otherwise (e.g. store is at capacity).
+    pub fn resume_provider(&mut self, key: Key, quorum: Quorum, next_refresh_at: Instant) -> bool {
+        let provider = ContentProvider {
+            peer: self.local_peer_id,
+            addresses: vec![],
+        };
+
+        if self.put_provider(key.clone(), provider.clone()) {
+            let now = Instant::now();
+            let delay = next_refresh_at.saturating_duration_since(now);
+
+            self.local_providers.insert(key.clone(), (provider, quorum, next_refresh_at));
+            self.pending_provider_refresh.push(Box::pin(async move {
+                tokio::time::sleep(delay).await;
+                key
+            }));
+
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Return all local providers together with their scheduled next-refresh [`Instant`].
+    ///
+    /// This can be used to persist provider state before shutting down the node and later
+    /// restore it via [`MemoryStore::resume_provider`] so that providers whose refresh time
+    /// has not yet elapsed are not unnecessarily republished on startup.
+    pub fn local_providers(&self) -> Vec<(Key, Instant)> {
+        self.local_providers
+            .iter()
+            .map(|(key, (_, _, next_refresh_at))| (key.clone(), *next_refresh_at))
+            .collect()
     }
 
     /// Remove local provider for `key`.
@@ -333,12 +380,16 @@ impl MemoryStore {
     pub async fn next_action(&mut self) -> Option<MemoryStoreAction> {
         // [`FuturesStream`] never terminates, so `and_then()` below is always triggered.
         self.pending_provider_refresh.next().await.and_then(|key| {
-            if let Some((provider, quorum)) = self.local_providers.get(&key).cloned() {
+            if let Some((provider, quorum, _)) = self.local_providers.get(&key).cloned() {
                 tracing::trace!(
                     target: LOG_TARGET,
                     ?key,
                     "refresh provider"
                 );
+
+                if let Some(entry) = self.local_providers.get_mut(&key) {
+                    entry.2 = Instant::now() + self.config.provider_refresh_interval;
+                }
 
                 Some(MemoryStoreAction::RefreshProvider {
                     provided_key: key,
@@ -863,8 +914,8 @@ mod tests {
         assert!(store.put_local_provider(key.clone(), quorum));
 
         assert_eq!(
-            store.local_providers.get(&key),
-            Some(&(local_provider, quorum)),
+            store.local_providers.get(&key).map(|(p, q, _)| (p.clone(), *q)),
+            Some((local_provider, quorum)),
         );
         assert_eq!(store.pending_provider_refresh.len(), 1);
     }
@@ -900,8 +951,8 @@ mod tests {
         assert!(got_providers.contains(&local_provider));
 
         assert_eq!(
-            store.local_providers.get(&key),
-            Some(&(local_provider, quorum))
+            store.local_providers.get(&key).map(|(p, q, _)| (p.clone(), *q)),
+            Some((local_provider, quorum))
         );
         assert_eq!(store.pending_provider_refresh.len(), 1);
     }
@@ -923,8 +974,8 @@ mod tests {
         assert!(store.put_local_provider(key.clone(), quorum));
 
         assert_eq!(
-            store.local_providers.get(&key),
-            Some(&(local_provider, quorum))
+            store.local_providers.get(&key).map(|(p, q, _)| (p.clone(), *q)),
+            Some((local_provider, quorum))
         );
 
         store.remove_local_provider(key.clone());
@@ -961,8 +1012,8 @@ mod tests {
         assert!(got_providers.contains(&local_provider));
 
         assert_eq!(
-            store.local_providers.get(&key),
-            Some(&(local_provider, quorum))
+            store.local_providers.get(&key).map(|(p, q, _)| (p.clone(), *q)),
+            Some((local_provider, quorum))
         );
 
         store.remove_local_provider(key.clone());
@@ -993,8 +1044,8 @@ mod tests {
 
         assert_eq!(store.get_providers(&key), vec![local_provider.clone()]);
         assert_eq!(
-            store.local_providers.get(&key),
-            Some(&(local_provider.clone(), quorum))
+            store.local_providers.get(&key).map(|(p, q, _)| (p.clone(), *q)),
+            Some((local_provider.clone(), quorum))
         );
 
         // No actions are instantly generated.
@@ -1049,8 +1100,8 @@ mod tests {
         assert!(got_providers.contains(&local_provider));
 
         assert_eq!(
-            store.local_providers.get(&key),
-            Some(&(local_provider.clone(), quorum))
+            store.local_providers.get(&key).map(|(p, q, _)| (p.clone(), *q)),
+            Some((local_provider.clone(), quorum))
         );
 
         // No actions are instantly generated.
@@ -1093,8 +1144,8 @@ mod tests {
 
         assert_eq!(store.get_providers(&key), vec![local_provider.clone()]);
         assert_eq!(
-            store.local_providers.get(&key),
-            Some(&(local_provider, quorum))
+            store.local_providers.get(&key).map(|(p, q, _)| (p.clone(), *q)),
+            Some((local_provider, quorum))
         );
 
         store.remove_local_provider(key);
@@ -1108,5 +1159,128 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(5), store.next_action()).await,
             Err(_),
         ));
+    }
+
+    #[test]
+    fn resume_provider_registers_in_store() {
+        let local_peer_id = PeerId::random();
+        let mut store = MemoryStore::new(local_peer_id);
+
+        let key = Key::from(vec![1, 2, 3]);
+        let next_refresh = Instant::now() + Duration::from_secs(3600);
+        let quorum = Quorum::One;
+
+        assert!(store.local_providers.is_empty());
+        assert!(store.resume_provider(key.clone(), quorum, next_refresh));
+
+        // Provider is accessible in the store.
+        let local_provider = ContentProvider {
+            peer: local_peer_id,
+            addresses: vec![],
+        };
+        assert_eq!(store.get_providers(&key), vec![local_provider]);
+
+        // next_refresh_at is preserved.
+        let stored_refresh = store.local_providers.get(&key).map(|(_, _, t)| *t);
+        assert_eq!(stored_refresh, Some(next_refresh));
+
+        // A pending refresh future was queued.
+        assert_eq!(store.pending_provider_refresh.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn resumed_provider_fires_at_correct_time() {
+        let local_peer_id = PeerId::random();
+        let mut store = MemoryStore::with_config(
+            local_peer_id,
+            MemoryStoreConfig {
+                provider_refresh_interval: Duration::from_secs(30),
+                ..Default::default()
+            },
+        );
+
+        let key = Key::from(vec![7, 8, 9]);
+        let local_provider = ContentProvider {
+            peer: local_peer_id,
+            addresses: vec![],
+        };
+        let quorum = Quorum::All;
+
+        // Schedule refresh in 3 seconds from now.
+        let next_refresh = Instant::now() + Duration::from_secs(3);
+        assert!(store.resume_provider(key.clone(), quorum, next_refresh));
+
+        // Nothing fires immediately.
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_millis(500), store.next_action()).await,
+            Err(_),
+        ));
+
+        // But it fires within ~3 seconds, well before the 30s refresh interval.
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(8), store.next_action()).await.unwrap(),
+            Some(MemoryStoreAction::RefreshProvider {
+                provided_key: key,
+                provider: local_provider,
+                quorum,
+            }),
+        );
+    }
+
+    #[tokio::test]
+    async fn resumed_provider_with_past_time_fires_immediately() {
+        let local_peer_id = PeerId::random();
+        let mut store = MemoryStore::new(local_peer_id);
+
+        let key = Key::from(vec![0xAA, 0xBB]);
+        let quorum = Quorum::One;
+        let local_provider = ContentProvider {
+            peer: local_peer_id,
+            addresses: vec![],
+        };
+
+        // next_refresh_at is already in the past.
+        let next_refresh = Instant::now() - Duration::from_secs(100);
+        assert!(store.resume_provider(key.clone(), quorum, next_refresh));
+
+        // Fires almost immediately (within 1 second).
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), store.next_action()).await.unwrap(),
+            Some(MemoryStoreAction::RefreshProvider {
+                provided_key: key,
+                provider: local_provider,
+                quorum,
+            }),
+        );
+    }
+
+    #[test]
+    fn local_providers_returns_all_providers_and_refresh_times() {
+        let local_peer_id = PeerId::random();
+        let mut store = MemoryStore::new(local_peer_id);
+
+        let key1 = Key::from(vec![1]);
+        let key2 = Key::from(vec![2]);
+        let key3 = Key::from(vec![3]);
+
+        let refresh1 = Instant::now() + Duration::from_secs(1000);
+        let refresh2 = Instant::now() + Duration::from_secs(2000);
+
+        // Two providers added via resume_provider, one via put_local_provider.
+        assert!(store.resume_provider(key1.clone(), Quorum::One, refresh1));
+        assert!(store.resume_provider(key2.clone(), Quorum::All, refresh2));
+        assert!(store.put_local_provider(key3.clone(), Quorum::One));
+
+        let mut providers = store.local_providers();
+        providers.sort_by(|(a, _), (b, _)| a.to_vec().cmp(&b.to_vec()));
+
+        assert_eq!(providers.len(), 3);
+
+        let find = |k: &Key| providers.iter().find(|(key, _)| key == k).map(|(_, t)| *t);
+
+        assert_eq!(find(&key1), Some(refresh1));
+        assert_eq!(find(&key2), Some(refresh2));
+        // key3 was added via put_local_provider – just verify it's present.
+        assert!(find(&key3).is_some());
     }
 }
