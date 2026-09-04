@@ -399,7 +399,7 @@ mod tests {
             KBucketEntry::Occupied(entry) => {
                 assert_eq!(entry.key, key);
                 assert_eq!(entry.peer, peer);
-                assert_eq!(entry.addresses(), addresses);
+                assert_eq!(entry.addresses().cloned().collect::<Vec<_>>(), addresses);
                 assert_eq!(entry.connection, ConnectionType::Connected);
             }
             state => panic!("invalid state for `KBucketEntry`: {state:?}"),
@@ -417,7 +417,7 @@ mod tests {
             KBucketEntry::Occupied(entry) => {
                 assert_eq!(entry.key, key);
                 assert_eq!(entry.peer, peer);
-                assert_eq!(entry.addresses(), addresses);
+                assert_eq!(entry.addresses().cloned().collect::<Vec<_>>(), addresses);
                 assert_eq!(entry.connection, ConnectionType::NotConnected);
             }
             state => panic!("invalid state for `KBucketEntry`: {state:?}"),
@@ -507,7 +507,7 @@ mod tests {
             KBucketEntry::Occupied(entry) => {
                 assert_eq!(entry.key, key);
                 assert_eq!(entry.peer, peer);
-                assert_eq!(entry.addresses(), addresses);
+                assert_eq!(entry.addresses().cloned().collect::<Vec<_>>(), addresses);
                 assert_eq!(entry.connection, ConnectionType::CanConnect);
             }
             state => panic!("invalid state for `KBucketEntry`: {state:?}"),
