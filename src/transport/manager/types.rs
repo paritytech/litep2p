@@ -37,6 +37,9 @@ pub enum SupportedTransport {
     /// WebSocket
     #[cfg(feature = "websocket")]
     WebSocket,
+
+    /// Custom transport
+    Custom(&'static str),
 }
 
 /// Peer context.
