@@ -227,16 +227,11 @@ impl TransportManagerHandle {
         false
     }
 
-    /// Add one or more known addresses for peer.
-    ///
-    /// If peer doesn't exist, it will be added to known peers.
-    ///
-    /// Returns the number of added addresses after non-supported transports were filtered out.
-    pub fn add_known_address(
-        &mut self,
+    fn get_valid_addresses(
+        &self,
         peer: &PeerId,
         addresses: impl Iterator<Item = Multiaddr>,
-    ) -> usize {
+    ) -> HashSet<Multiaddr> {
         let mut peer_addresses = HashSet::new();
 
         for address in addresses {
@@ -270,6 +265,20 @@ impl TransportManagerHandle {
             }
         }
 
+        peer_addresses
+    }
+
+    /// Add one or more known addresses for peer.
+    ///
+    /// If peer doesn't exist, it will be added to known peers.
+    ///
+    /// Returns the number of added addresses after non-supported transports were filtered out.
+    pub fn add_known_address(
+        &mut self,
+        peer: &PeerId,
+        addresses: impl Iterator<Item = Multiaddr>,
+    ) -> usize {
+        let peer_addresses = self.get_valid_addresses(peer, addresses);
         let num_added = peer_addresses.len();
 
         tracing::trace!(
@@ -287,7 +296,32 @@ impl TransportManagerHandle {
         entry
             .addresses
             .extend(peer_addresses.into_iter().filter_map(AddressRecord::from_multiaddr));
+        num_added
+    }
 
+    /// Similar to `[Self::add_known_address]` but adds the addresses with priority, meaning they
+    /// will be returned by the store before the other addresses.
+    pub fn add_priority_address(
+        &mut self,
+        peer: &PeerId,
+        addresses: impl Iterator<Item = Multiaddr>,
+    ) -> usize {
+        let peer_addresses = self.get_valid_addresses(peer, addresses);
+        let num_added = peer_addresses.len();
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?peer,
+            ?peer_addresses,
+            "add priority addresses",
+        );
+
+        let mut peers = self.peers.write();
+        let entry = peers.entry(*peer).or_default();
+
+        // All addresses should be valid at this point, since the peer ID was either added or
+        // double checked.
+        entry.addresses.insert_with_priority(peer_addresses.into_iter().collect());
         num_added
     }
 
