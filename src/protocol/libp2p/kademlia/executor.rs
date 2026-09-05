@@ -182,30 +182,28 @@ impl QueryExecutor {
         }));
     }
 
-    /// Read message from remote peer with timeout.
-    pub fn read_message(
-        &mut self,
-        peer: PeerId,
-        query_id: Option<QueryId>,
-        mut substream: Substream,
-    ) {
+    /// Wait for a request on a substream the remote peer opened.
+    ///
+    /// Call this again once the request has been served to keep the substream available for the
+    /// peer's next request, which also restarts the idle window.
+    pub fn read_request(&mut self, peer: PeerId, mut substream: Substream) {
         self.futures.push(Box::pin(async move {
             match tokio::time::timeout(READ_TIMEOUT, substream.next()).await {
                 Err(_) => QueryContext {
                     peer,
-                    query_id,
+                    query_id: None,
                     result: QueryResult::ReadFailure {
                         reason: FailureReason::Timeout,
                     },
                 },
                 Ok(Some(Ok(message))) => QueryContext {
                     peer,
-                    query_id,
+                    query_id: None,
                     result: QueryResult::ReadSuccess { substream, message },
                 },
                 Ok(None) | Ok(Some(Err(_))) => QueryContext {
                     peer,
-                    query_id,
+                    query_id: None,
                     result: QueryResult::ReadFailure {
                         reason: FailureReason::SubstreamClosed,
                     },
@@ -344,14 +342,14 @@ mod tests {
     use crate::{mock::substream::MockSubstream, types::SubstreamId};
 
     #[tokio::test]
-    async fn substream_read_timeout() {
+    async fn read_request_idle_timeout() {
         let mut executor = QueryExecutor::new();
         let peer = PeerId::random();
         let mut substream = MockSubstream::new();
         substream.expect_poll_next().returning(|_| Poll::Pending);
         let substream = Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream));
 
-        executor.read_message(peer, None, substream);
+        executor.read_request(peer, substream);
 
         match tokio::time::timeout(Duration::from_secs(20), executor.next()).await {
             Ok(Some(QueryContext {
@@ -373,7 +371,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn substream_read_substream_closed() {
+    async fn read_request_substream_closed() {
         let mut executor = QueryExecutor::new();
         let peer = PeerId::random();
         let mut substream = MockSubstream::new();
@@ -381,9 +379,8 @@ mod tests {
             Poll::Ready(Some(Err(crate::error::SubstreamError::ConnectionClosed)))
         });
 
-        executor.read_message(
+        executor.read_request(
             peer,
-            Some(QueryId(1338)),
             Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
         );
 
@@ -394,7 +391,7 @@ mod tests {
                 result,
             })) => {
                 assert_eq!(peer, queried_peer);
-                assert_eq!(query_id, Some(QueryId(1338)));
+                assert!(query_id.is_none());
                 assert!(std::matches!(
                     result,
                     QueryResult::ReadFailure {
@@ -477,77 +474,6 @@ mod tests {
                 assert!(std::matches!(
                     result,
                     QueryResult::SendFailure {
-                        reason: FailureReason::SubstreamClosed
-                    }
-                ));
-            }
-            result => panic!("invalid result received: {result:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn read_message_timeout() {
-        let mut executor = QueryExecutor::new();
-        let peer = PeerId::random();
-
-        // prepare substream which succeeds in sending the message but closes right after
-        let mut substream = MockSubstream::new();
-        substream.expect_poll_next().returning(|_| Poll::Pending);
-
-        executor.read_message(
-            peer,
-            Some(QueryId(1336)),
-            Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
-        );
-
-        match tokio::time::timeout(Duration::from_secs(20), executor.next()).await {
-            Ok(Some(QueryContext {
-                peer: queried_peer,
-                query_id,
-                result,
-            })) => {
-                assert_eq!(peer, queried_peer);
-                assert_eq!(query_id, Some(QueryId(1336)));
-                assert!(std::matches!(
-                    result,
-                    QueryResult::ReadFailure {
-                        reason: FailureReason::Timeout
-                    }
-                ));
-            }
-            result => panic!("invalid result received: {result:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn read_message_substream_closed() {
-        let mut executor = QueryExecutor::new();
-        let peer = PeerId::random();
-
-        // prepare substream which succeeds in sending the message but closes right after
-        let mut substream = MockSubstream::new();
-        substream
-            .expect_poll_next()
-            .times(1)
-            .return_once(|_| Poll::Ready(Some(Err(crate::error::SubstreamError::ChannelClogged))));
-
-        executor.read_message(
-            peer,
-            Some(QueryId(1335)),
-            Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
-        );
-
-        match tokio::time::timeout(Duration::from_secs(20), executor.next()).await {
-            Ok(Some(QueryContext {
-                peer: queried_peer,
-                query_id,
-                result,
-            })) => {
-                assert_eq!(peer, queried_peer);
-                assert_eq!(query_id, Some(QueryId(1335)));
-                assert!(std::matches!(
-                    result,
-                    QueryResult::ReadFailure {
                         reason: FailureReason::SubstreamClosed
                     }
                 ));
