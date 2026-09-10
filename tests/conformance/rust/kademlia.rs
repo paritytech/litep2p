@@ -421,6 +421,7 @@ async fn get_record() {
             }
             KademliaEvent::GetRecordSuccess { .. } => break,
             KademliaEvent::RoutingTableUpdate { .. } => {}
+            KademliaEvent::PeersDiscovered { .. } => {}
             event => panic!("invalid event received {event:?}"),
         }
     }
