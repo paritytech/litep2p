@@ -1085,3 +1085,67 @@ async fn client_mode_not_advertised_via_identify() {
         }
     }
 }
+
+#[tokio::test]
+async fn discovered_peers_reported_but_not_added_to_routing_table() {
+    // node1 queries node2, which knows node3; node3 runs in client mode so it never
+    // answers node1 and must not be inserted into node1's routing table
+    let (kad_config1, mut kad_handle1) = KademliaConfigBuilder::new().build();
+    let (kad_config2, mut kad_handle2) = KademliaConfigBuilder::new().build();
+    let (kad_config3, mut kad_handle3) =
+        KademliaConfigBuilder::new().with_mode(KademliaMode::Client).build();
+
+    let make_config = |kad_config| {
+        ConfigBuilder::new()
+            .with_tcp(TcpConfig {
+                listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+                ..Default::default()
+            })
+            .with_libp2p_kademlia(kad_config)
+            .build()
+    };
+
+    let mut litep2p1 = Litep2p::new(make_config(kad_config1)).unwrap();
+    let mut litep2p2 = Litep2p::new(make_config(kad_config2)).unwrap();
+    let mut litep2p3 = Litep2p::new(make_config(kad_config3)).unwrap();
+
+    let peer2 = *litep2p2.local_peer_id();
+    let peer3 = *litep2p3.local_peer_id();
+
+    kad_handle2
+        .add_known_peer(peer3, litep2p3.listen_addresses().cloned().collect())
+        .await;
+    kad_handle1
+        .add_known_peer(peer2, litep2p2.listen_addresses().cloned().collect())
+        .await;
+    let query = kad_handle1.find_node(PeerId::random()).await;
+
+    let mut discovered = Vec::new();
+    let mut routing_table_updates = Vec::new();
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
+                panic!("query did not finish in 10 secs")
+            }
+            _ = litep2p1.next_event() => {}
+            _ = litep2p2.next_event() => {}
+            _ = litep2p3.next_event() => {}
+            _ = kad_handle2.next() => {}
+            _ = kad_handle3.next() => {}
+            event = kad_handle1.next() => match event {
+                Some(KademliaEvent::PeersDiscovered { peers }) => discovered.extend(peers),
+                Some(KademliaEvent::RoutingTableUpdate { peers }) => routing_table_updates.extend(peers),
+                Some(KademliaEvent::FindNodeSuccess { query_id, .. }) => {
+                    assert_eq!(query_id, query);
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // node3 was learned from node2's response but only node2 proved it operates in server mode
+    assert_eq!(discovered, vec![peer3]);
+    assert_eq!(routing_table_updates, vec![peer2]);
+}
