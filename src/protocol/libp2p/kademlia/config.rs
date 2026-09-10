@@ -116,13 +116,12 @@ pub struct Config {
 }
 
 /// Kademlia operating mode.
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum KademliaMode {
     /// Don't answer inbound requests and don't advertise the protocol via identify.
     Client,
 
     /// Answer inbound requests and participate fully in the DHT.
-    #[default]
     Server,
 }
 
@@ -227,7 +226,7 @@ impl ConfigBuilder {
             known_peers: HashMap::new(),
             protocol_names: Vec::new(),
             update_mode: RoutingTableUpdateMode::Automatic,
-            mode: KademliaMode::default(),
+            mode: KademliaMode::Server,
             validation_mode: IncomingRecordValidationMode::Automatic,
             record_ttl: DEFAULT_TTL,
             memory_store_config: Default::default(),
@@ -255,12 +254,10 @@ impl ConfigBuilder {
 
     /// Sets the operating mode.
     ///
-    /// By default, Substrate nodes operate in server mode.
+    /// By default, litep2p operates in server mode.
     ///
     /// Light clients, or nodes that need to query DHT information without
     /// participating in DHT routing, should use client mode.
-    ///
-    /// Defaults to [`KademliaMode::Server`].
     pub fn with_mode(mut self, mode: KademliaMode) -> Self {
         self.mode = mode;
         self

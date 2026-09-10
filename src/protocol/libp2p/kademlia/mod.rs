@@ -432,15 +432,21 @@ impl Kademlia {
         self.executor.read_message(peer, None, substream);
     }
 
-    /// Register the addresses of the peers discovered in a query response.
+    /// Register the addresses of the peers discovered in a query response and inform the user.
     ///
     /// Discovered peers are not inserted into the routing table as they haven't proven
     /// they operate in server mode; they remain usable as query candidates.
-    fn register_discovered_peers(&mut self, peers: &[KademliaPeer]) {
+    async fn register_discovered_peers(&mut self, peers: &[KademliaPeer]) {
         let local_peer_id = self.service.local_peer_id();
+        let mut discovered = Vec::with_capacity(peers.len());
 
         for info in peers.iter().filter(|peer| peer.peer != local_peer_id) {
             self.service.add_known_address(&info.peer, info.addresses().into_iter());
+            discovered.push(info.peer);
+        }
+
+        if !discovered.is_empty() {
+            let _ = self.event_tx.send(KademliaEvent::PeersDiscovered { peers: discovered }).await;
         }
     }
 
@@ -495,7 +501,7 @@ impl Kademlia {
 
                         // register the discovered peers and update routing table with the
                         // proven responder
-                        self.register_discovered_peers(&peers);
+                        self.register_discovered_peers(&peers).await;
                         if let Some(proven) = self.engine.register_response(
                             query_id,
                             peer,
@@ -581,7 +587,7 @@ impl Kademlia {
 
                         // register the discovered peers and update routing table with the
                         // proven responder
-                        self.register_discovered_peers(&peers);
+                        self.register_discovered_peers(&peers).await;
                         if let Some(proven) = self.engine.register_response(
                             query_id,
                             peer,
@@ -689,7 +695,7 @@ impl Kademlia {
 
                         // register the discovered peers and update routing table with the
                         // proven responder
-                        self.register_discovered_peers(&peers);
+                        self.register_discovered_peers(&peers).await;
                         if let Some(proven) = self.engine.register_response(
                             query_id,
                             peer,
@@ -1742,7 +1748,7 @@ mod tests {
 
         // simulate handling a `FIND_NODE` response from the responder listing `discovered`
         let peers = vec![discovered.clone()];
-        kademlia.register_discovered_peers(&peers);
+        kademlia.register_discovered_peers(&peers).await;
         let proven = kademlia
             .engine
             .register_response(
@@ -1766,7 +1772,14 @@ mod tests {
             KBucketEntry::Vacant(_)
         ));
 
-        // only the routing table update of the proven responder is reported to the user
+        // the discovered peer is reported to the user, followed by the routing table update
+        // of the proven responder
+        match context.event_rx.try_recv() {
+            Ok(KademliaEvent::PeersDiscovered { peers }) => {
+                assert_eq!(peers, vec![discovered_peer]);
+            }
+            event => panic!("unexpected event: {event:?}"),
+        }
         match context.event_rx.try_recv() {
             Ok(KademliaEvent::RoutingTableUpdate { peers }) => {
                 assert_eq!(peers, vec![responder_peer]);

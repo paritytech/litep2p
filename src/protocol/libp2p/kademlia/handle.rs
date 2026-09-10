@@ -204,6 +204,16 @@ pub enum KademliaEvent {
         peers: Vec<PeerId>,
     },
 
+    /// Peers discovered in a query response.
+    ///
+    /// Discovered peers are not added to the routing table because they haven't proven they
+    /// operate in server mode. Their addresses are known to litep2p, so upper-level protocols
+    /// can still make use of them.
+    PeersDiscovered {
+        /// Discovered peers.
+        peers: Vec<PeerId>,
+    },
+
     /// `GET_VALUE` query succeeded.
     GetRecordSuccess {
         /// Query ID.
