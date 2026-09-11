@@ -237,6 +237,8 @@ pub struct ProtocolSet {
     fallback_names: HashMap<ProtocolName, ProtocolName>,
     /// Connection keep-alive settings for both main & fallback protocol names.
     keep_alives: HashMap<ProtocolName, SubstreamKeepAlive>,
+    /// Outbound substreams handed to the transport whose result hasn't been reported yet.
+    pending_outbound: HashMap<SubstreamId, ProtocolName>,
 }
 
 impl ProtocolSet {
@@ -286,6 +288,7 @@ impl ProtocolSet {
             next_substream_id,
             fallback_names,
             keep_alives,
+            pending_outbound: HashMap::new(),
             connection: ConnectionHandle::new(connection_id, tx),
         }
     }
@@ -326,6 +329,10 @@ impl ProtocolSet {
         opening_permit: Permit,
     ) -> Result<(), SubstreamError> {
         tracing::debug!(target: LOG_TARGET, %protocol, ?peer, ?direction, "substream opened");
+
+        if let Direction::Outbound(substream_id) = &direction {
+            self.pending_outbound.remove(substream_id);
+        }
 
         let (protocol, fallback) = match self.fallback_names.get(&protocol) {
             Some(main_protocol) => (main_protocol.clone(), Some(protocol)),
@@ -383,6 +390,7 @@ impl ProtocolSet {
             "failed to open substream",
         );
 
+        self.pending_outbound.remove(&substream);
         self.protocols
             .get_mut(&protocol)
             .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?
@@ -435,6 +443,28 @@ impl ProtocolSet {
         peer: PeerId,
         connection_id: ConnectionId,
     ) -> crate::Result<()> {
+        // Fail outbound opens still in flight or queued. A protocol switched to a secondary
+        // connection receives no `ConnectionClosed` and would otherwise never learn about them.
+        while let Ok(command) = self.rx.try_recv() {
+            if let ProtocolCommand::OpenSubstream {
+                protocol,
+                substream_id,
+                ..
+            } = command
+            {
+                self.pending_outbound.insert(substream_id, protocol);
+            }
+        }
+        for (substream_id, protocol) in std::mem::take(&mut self.pending_outbound) {
+            let _ = self
+                .report_substream_open_failure(
+                    protocol,
+                    substream_id,
+                    SubstreamError::ConnectionClosed,
+                )
+                .await;
+        }
+
         let mut futures = self
             .protocols
             .iter()
@@ -491,7 +521,16 @@ impl Stream for ProtocolSet {
     type Item = ProtocolCommand;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.rx.poll_recv(cx)
+        let command = futures::ready!(self.rx.poll_recv(cx));
+        if let Some(ProtocolCommand::OpenSubstream {
+            protocol,
+            substream_id,
+            ..
+        }) = &command
+        {
+            self.pending_outbound.insert(*substream_id, protocol.clone());
+        }
+        Poll::Ready(command)
     }
 }
 
@@ -708,5 +747,98 @@ mod tests {
             }
             _ => panic!("invalid event received"),
         }
+    }
+
+    #[tokio::test]
+    async fn pending_outbound_substreams_fail_on_connection_closed() {
+        let (mgr_tx, mut mgr_rx) = channel(64);
+        let (protocol_tx, mut protocol_rx) = channel(64);
+        let peer = PeerId::random();
+        let connection_id = ConnectionId::from(0usize);
+        let protocol = ProtocolName::from("/notif/1");
+
+        let mut protocol_set = ProtocolSet::new(
+            connection_id,
+            mgr_tx,
+            Default::default(),
+            HashMap::from_iter([(
+                protocol.clone(),
+                ProtocolContext {
+                    tx: protocol_tx,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
+                    keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
+                },
+            )]),
+        );
+
+        // Substream 0 opens, substream 1 is taken by the transport but never completes and
+        // substream 2 is still queued when the connection closes.
+        let mut handle = protocol_set.connection.clone();
+        for id in 0..3usize {
+            let permit = protocol_set.try_get_permit().unwrap();
+            handle
+                .open_substream(
+                    protocol.clone(),
+                    Vec::new(),
+                    SubstreamId::from(id),
+                    permit,
+                    SubstreamKeepAlive::Yes,
+                )
+                .unwrap();
+        }
+        for _ in 0..2 {
+            assert!(matches!(
+                protocol_set.next().await,
+                Some(ProtocolCommand::OpenSubstream { .. })
+            ));
+        }
+        let permit = protocol_set.try_get_permit().unwrap();
+        protocol_set
+            .report_substream_open(
+                peer,
+                protocol.clone(),
+                Direction::Outbound(SubstreamId::from(0usize)),
+                Substream::new_mock(
+                    peer,
+                    SubstreamId::from(0usize),
+                    Box::new(MockSubstream::new()),
+                ),
+                permit,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            protocol_rx.recv().await,
+            Some(InnerTransportEvent::SubstreamOpened { .. })
+        ));
+
+        protocol_set.report_connection_closed(peer, connection_id).await.unwrap();
+
+        let mut failed = HashSet::new();
+        for _ in 0..2 {
+            match protocol_rx.recv().await {
+                Some(InnerTransportEvent::SubstreamOpenFailure {
+                    substream,
+                    error: SubstreamError::ConnectionClosed,
+                }) => {
+                    failed.insert(substream);
+                }
+                event => panic!("unexpected event: {event:?}"),
+            }
+        }
+        assert_eq!(
+            failed,
+            HashSet::from([SubstreamId::from(1usize), SubstreamId::from(2usize)])
+        );
+        assert!(matches!(
+            protocol_rx.recv().await,
+            Some(InnerTransportEvent::ConnectionClosed { .. })
+        ));
+        assert!(matches!(
+            mgr_rx.recv().await,
+            Some(TransportManagerEvent::ConnectionClosed { .. })
+        ));
     }
 }
