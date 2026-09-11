@@ -24,7 +24,7 @@ use crate::{
         ed25519::Keypair,
         noise::{self, NoiseSocket},
     },
-    error::{Error, NegotiationError, SubstreamError},
+    error::{NegotiationError, SubstreamError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet, SubstreamKeepAlive},
     substream,
@@ -515,11 +515,11 @@ impl TcpConnection {
 
     /// Handles the yamux substream.
     ///
-    /// Returns `true` if the connection handler should exit.
+    /// Returns `true` if the connection is closed.
     async fn handle_yamux_substream(
         &mut self,
         substream: Option<Result<crate::yamux::Stream, crate::yamux::ConnectionError>>,
-    ) -> crate::Result<bool> {
+    ) -> bool {
         match substream {
             Some(Ok(stream)) => {
                 let substream_id = {
@@ -530,7 +530,14 @@ impl TcpConnection {
                 // This permit will be passed on until the substream is reported to the
                 // [`TransportService`](crate::protocol::TransportService), where the connection
                 // will be upgraded and the permit won't be needed anymore.
-                let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
+                let Some(permit) = self.protocol_set.try_get_permit() else {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        peer = ?self.peer,
+                        "protocols have disconnected, closing connection",
+                    );
+                    return true;
+                };
                 let open_timeout = self.substream_open_timeout;
 
                 self.pending_substreams.push(Box::pin(async move {
@@ -559,7 +566,7 @@ impl TcpConnection {
                     }
                 }));
 
-                Ok(false)
+                false
             }
             Some(Err(error)) => {
                 tracing::debug!(
@@ -568,27 +575,22 @@ impl TcpConnection {
                     ?error,
                     "connection closed with error",
                 );
-
-                self.protocol_set
-                    .report_connection_closed(self.peer, self.endpoint.connection_id())
-                    .await?;
-                Ok(true)
+                true
             }
             None => {
                 tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "connection closed");
-                self.protocol_set
-                    .report_connection_closed(self.peer, self.endpoint.connection_id())
-                    .await?;
-                Ok(true)
+                true
             }
         }
     }
 
     /// Handles negotiated substream results.
+    ///
+    /// Returns `true` if the connection is closed.
     async fn handle_negotiated_substream(
         &mut self,
         result: Result<NegotiatedSubstream, ConnectionError>,
-    ) -> crate::Result<()> {
+    ) -> bool {
         match result {
             Err(error) => {
                 tracing::debug!(
@@ -613,22 +615,21 @@ impl TcpConnection {
                     } => (protocol, substream_id, error),
                 };
 
-                match (protocol, substream_id) {
-                    (Some(protocol), Some(substream_id)) => {
-                        self.protocol_set
-                            .report_substream_open_failure(protocol.clone(), substream_id, error)
-                            .await
-                            .inspect_err(|error| {
-                                tracing::error!(
-                                    target: LOG_TARGET,
-                                    ?protocol,
-                                    endpoint = ?self.endpoint,
-                                    ?error,
-                                    "failed to register substream open failure to protocol"
-                                );
-                            })?;
+                if let (Some(protocol), Some(substream_id)) = (protocol, substream_id) {
+                    if let Err(error) = self
+                        .protocol_set
+                        .report_substream_open_failure(protocol.clone(), substream_id, error)
+                        .await
+                    {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            ?protocol,
+                            endpoint = ?self.endpoint,
+                            ?error,
+                            "failed to register substream open failure to protocol"
+                        );
+                        return true;
                     }
-                    _ => {}
                 }
             }
             Ok(substream) => {
@@ -647,7 +648,8 @@ impl TcpConnection {
                     self.protocol_set.protocol_codec(&protocol),
                 );
 
-                self.protocol_set
+                if let Err(error) = self
+                    .protocol_set
                     .report_substream_open(
                         self.peer,
                         protocol.clone(),
@@ -656,29 +658,27 @@ impl TcpConnection {
                         opening_permit,
                     )
                     .await
-                    .inspect_err(|error| {
-                        tracing::error!(
-                            target: LOG_TARGET,
-                            ?protocol,
-                            peer = ?self.peer,
-                            endpoint = ?self.endpoint,
-                            ?error,
-                            "failed to register opened substream to protocol",
-                        );
-                    })?;
+                {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?protocol,
+                        peer = ?self.peer,
+                        endpoint = ?self.endpoint,
+                        ?error,
+                        "failed to register opened substream to protocol",
+                    );
+                    return true;
+                }
             }
         }
 
-        Ok(())
+        false
     }
 
     /// Handles protocol command.
     ///
-    /// Returns `true` if the connection handler should exit.
-    async fn handle_protocol_command(
-        &mut self,
-        command: Option<ProtocolCommand>,
-    ) -> crate::Result<bool> {
+    /// Returns `true` if the connection is closed.
+    async fn handle_protocol_command(&mut self, command: Option<ProtocolCommand>) -> bool {
         match command {
             Some(ProtocolCommand::OpenSubstream {
                 protocol,
@@ -727,7 +727,7 @@ impl TcpConnection {
                     }
                 }));
 
-                Ok(false)
+                false
             }
             Some(ProtocolCommand::ForceClose) => {
                 tracing::debug!(
@@ -736,52 +736,211 @@ impl TcpConnection {
                     connection_id = ?self.endpoint.connection_id(),
                     "force closing connection",
                 );
-
-                self.protocol_set
-                    .report_connection_closed(self.peer, self.endpoint.connection_id())
-                    .await?;
-                Ok(true)
+                true
             }
             None => {
                 tracing::debug!(target: LOG_TARGET, "protocols have disconnected, closing connection");
-                self.protocol_set
-                    .report_connection_closed(self.peer, self.endpoint.connection_id())
-                    .await?;
-                Ok(true)
+                true
             }
         }
     }
 
     /// Start the connection event loop without notifying protocols.
     /// This is used when protocols have already been notified during accept().
-    pub(crate) async fn start(mut self) -> crate::Result<()> {
+    ///
+    /// Runs until the connection is closed.
+    pub(crate) async fn start(mut self) {
         loop {
             tokio::select! {
                 substream = self.connection.next() => {
-                    if self.handle_yamux_substream(substream).await? {
-                        return Ok(());
+                    if self.handle_yamux_substream(substream).await {
+                        break;
                     }
                 },
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
-                    self.handle_negotiated_substream(substream).await?;
+                    if self.handle_negotiated_substream(substream).await {
+                        break;
+                    }
                 }
                 protocol = self.protocol_set.next() => {
-                    if self.handle_protocol_command(protocol).await? {
-                        return Ok(())
+                    if self.handle_protocol_command(protocol).await {
+                        break;
                     }
                 }
             }
+        }
+
+        if let Err(error) = self
+            .protocol_set
+            .report_connection_closed(self.peer, self.endpoint.connection_id())
+            .await
+        {
+            tracing::debug!(
+                target: LOG_TARGET,
+                peer = ?self.peer,
+                connection_id = ?self.endpoint.connection_id(),
+                ?error,
+                "failed to report connection closed",
+            );
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::transport::tcp::TcpTransport;
+    use crate::{
+        codec::ProtocolCodec,
+        protocol::InnerTransportEvent,
+        transport::{
+            manager::{InboundProtocol, ProtocolContext, TransportManagerEvent},
+            tcp::TcpTransport,
+        },
+    };
 
     use super::*;
+    use futures::AsyncWriteExt as _;
     use hickory_resolver::{net::runtime::TokioRuntimeProvider, TokioResolver};
-    use tokio::{io::AsyncWriteExt, net::TcpListener};
+    use tokio::{io::AsyncWriteExt, net::TcpListener, sync::mpsc::channel};
+
+    /// Negotiate a TCP + noise + yamux connection pair over loopback.
+    ///
+    /// Returns the listener side first and the dialer side second.
+    async fn negotiated_pair() -> (NegotiatedConnection, NegotiatedConnection) {
+        let listener = TcpListener::bind("[::1]:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+
+        let dialer = tokio::spawn(async move {
+            let stream = TcpStream::connect(address).await.unwrap();
+            TcpConnection::negotiate_connection(
+                stream,
+                None,
+                ConnectionId::from(1usize),
+                Keypair::generate(),
+                Role::Dialer,
+                AddressType::Socket(address),
+                Default::default(),
+                5,
+                2,
+                Duration::from_secs(10),
+            )
+            .await
+            .unwrap()
+        });
+
+        let (stream, remote_address) = listener.accept().await.unwrap();
+        let listener = TcpConnection::negotiate_connection(
+            stream,
+            None,
+            ConnectionId::from(0usize),
+            Keypair::generate(),
+            Role::Listener,
+            AddressType::Socket(remote_address),
+            Default::default(),
+            5,
+            2,
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+
+        (listener, dialer.await.unwrap())
+    }
+
+    /// The remote opens a substream at the same time the last protocol handle is dropped.
+    ///
+    /// In `start()` both the yamux substream and the closed command channel are ready and
+    /// `select!` may serve the substream first. `handle_yamux_substream()` then fails to acquire
+    /// a permit and must close the connection, after which `start()` reports the closed
+    /// connection to the protocols and the manager.
+    #[tokio::test]
+    async fn inbound_substream_after_protocols_disconnected_reports_connection_closed() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (local, remote) = negotiated_pair().await;
+        let peer = local.peer;
+        let connection_id = local.endpoint.connection_id();
+
+        let (mgr_tx, mut mgr_rx) = channel(64);
+        let (protocol_tx, mut protocol_rx) = channel(64);
+        let mut protocol_set = ProtocolSet::new(
+            connection_id,
+            mgr_tx,
+            Default::default(),
+            HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolContext {
+                    tx: protocol_tx,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
+                    keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
+                },
+            )]),
+        );
+        protocol_set
+            .report_connection_established(peer, local.endpoint.clone())
+            .await
+            .unwrap();
+        let handle = match protocol_rx.recv().await.unwrap() {
+            InnerTransportEvent::ConnectionEstablished { sender, .. } => sender,
+            event => panic!("unexpected event: {event:?}"),
+        };
+        let mut connection = TcpConnection::new(
+            local,
+            protocol_set,
+            BandwidthSink::new(),
+            Default::default(),
+        );
+
+        // The remote opens a substream while the connection is still active.
+        let NegotiatedConnection {
+            connection: mut remote_connection,
+            control: mut remote_control,
+            ..
+        } = remote;
+        tokio::spawn(async move { while remote_connection.next().await.is_some() {} });
+        let mut remote_stream = remote_control.open_stream().await.unwrap();
+        remote_stream.write_all(b"/notif/1").await.unwrap();
+
+        // The last protocol handle is dropped before the inbound substream is served.
+        drop(handle);
+        assert!(connection.protocol_set.try_get_permit().is_none());
+
+        let substream = connection.connection.next().await;
+        assert!(std::matches!(substream, Some(Ok(_))));
+        assert!(
+            connection.handle_yamux_substream(substream).await,
+            "connection must close when no protocol holds it"
+        );
+
+        // The event loop exits and reports the closed connection.
+        tokio::time::timeout(Duration::from_secs(10), connection.start())
+            .await
+            .expect("connection event loop must exit");
+
+        match mgr_rx.recv().await {
+            Some(TransportManagerEvent::ConnectionClosed {
+                peer: closed_peer,
+                connection: closed_connection,
+            }) => {
+                assert_eq!(closed_peer, peer);
+                assert_eq!(closed_connection, connection_id);
+            }
+            None => panic!("manager was not notified about the closed connection"),
+        }
+        match protocol_rx.recv().await {
+            Some(InnerTransportEvent::ConnectionClosed {
+                peer: closed_peer,
+                connection: closed_connection,
+            }) => {
+                assert_eq!(closed_peer, peer);
+                assert_eq!(closed_connection, connection_id);
+            }
+            event => panic!("protocol was not notified about the closed connection: {event:?}"),
+        }
+    }
 
     #[tokio::test]
     async fn multistream_select_not_supported_dialer() {

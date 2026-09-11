@@ -356,8 +356,8 @@ impl Transport for QuicTransport {
             protocol_set.report_connection_established(peer, endpoint_clone).await?;
 
             // After protocols are notified, spawn the connection event loop
-            executor.run(Box::pin(async move {
-                let _ = QuicConnection::new(
+            executor.run(Box::pin(
+                QuicConnection::new(
                     peer,
                     endpoint,
                     connection.connection,
@@ -365,9 +365,8 @@ impl Transport for QuicTransport {
                     bandwidth_sink,
                     substream_open_timeout,
                 )
-                .start()
-                .await;
-            }));
+                .start(),
+            ));
 
             Ok(())
         }))

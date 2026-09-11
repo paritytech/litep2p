@@ -417,20 +417,10 @@ impl Transport for TcpTransport {
             protocol_set.report_connection_established(peer, endpoint).await?;
 
             // After protocols are notified, spawn the connection event loop
-            executor.run(Box::pin(async move {
-                if let Err(error) =
-                    TcpConnection::new(context, protocol_set, bandwidth_sink, next_substream_id)
-                        .start()
-                        .await
-                {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?connection_id,
-                        ?error,
-                        "connection exited with error",
-                    );
-                }
-            }));
+            executor.run(Box::pin(
+                TcpConnection::new(context, protocol_set, bandwidth_sink, next_substream_id)
+                    .start(),
+            ));
 
             Ok(())
         }))
