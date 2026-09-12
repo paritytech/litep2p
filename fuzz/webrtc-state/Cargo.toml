@@ -1,0 +1,29 @@
+[package]
+name = "webrtc-state"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ziggy = { version = "1.3.1", default-features = false }
+litep2p = { path = "../..", features = ["webrtc", "fuzz"] }
+bincode = "1.0.0"
+serde = { version = "1.0.219", features = ["derive"] }
+futures = "0.3.31"
+# `test-util` gives the harness `tokio::time::pause()`, so the 10s FIN_ACK timeout is
+# reachable within a fuzz iteration without patching the production constant.
+tokio = { version = "1.44.1", features = ["full", "test-util"] }
+
+# Only the tests need `bytes`, to hand a `BytesMut` to `extract_framed_message` when
+# checking that the committed negotiation seed really reaches the listener.
+[dev-dependencies]
+bytes = "1.10.1"
+
+
+[[bin]]
+name = "webrtc-state"
+path = "src/main.rs"
+
+# Regenerates the committed seed corpus; not part of fuzzing.
+[[bin]]
+name = "gen_seeds"
+path = "src/gen_seeds.rs"
