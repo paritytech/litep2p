@@ -146,7 +146,7 @@ pub(crate) struct RequestResponseProtocol {
     /// Pending outbound responses.
     ///
     /// The future listens to a `oneshot::Sender` which is given to `RequestResponseHandle`.
-    /// If the request is accepted by the local node, the response is sent over the channel to the
+    /// If the request is accepted by the local node, the response is sent over the channel to
     /// the future which sends it to remote peer and closes the substream.
     ///
     /// If the substream is rejected by the local node, the `oneshot::Sender` is dropped which
@@ -457,7 +457,7 @@ impl RequestResponseProtocol {
         Ok(())
     }
 
-    /// Handle pending inbound response.
+    /// Handle pending inbound request.
     async fn on_inbound_request(
         &mut self,
         peer: PeerId,
