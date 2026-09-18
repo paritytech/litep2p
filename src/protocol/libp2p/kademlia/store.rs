@@ -62,7 +62,10 @@ pub struct MemoryStore {
     config: MemoryStoreConfig,
     /// Records.
     records: HashMap<Key, Record>,
-    /// Provider records.
+    /// Provider records of remote peers. Never contains the local provider: local providers
+    /// are tracked in `local_providers` and merged into `get_providers()` results on the fly,
+    /// so that they never compete with remote providers for the `max_providers_per_key`
+    /// capacity.
     provider_keys: HashMap<Key, Vec<ProviderRecord>>,
     /// Local providers.
     local_providers: HashMap<Key, (ContentProvider, Quorum)>,
@@ -157,7 +160,8 @@ impl MemoryStore {
 
     /// Try to get providers from local store for `key`.
     ///
-    /// Returns a non-empty list of providers, if any.
+    /// Returns a non-empty list of providers, if any. The list is sorted by distance from the
+    /// provided key and includes the local provider if we provide `key`.
     pub fn get_providers(&mut self, key: &Key) -> Vec<ContentProvider> {
         let drop_key = self.provider_keys.get_mut(key).is_some_and(|providers| {
             let now = std::time::Instant::now();
@@ -168,30 +172,55 @@ impl MemoryStore {
 
         if drop_key {
             self.provider_keys.remove(key);
-
-            Vec::default()
-        } else {
-            self.provider_keys
-                .get(key)
-                .cloned()
-                .unwrap_or_else(Vec::default)
-                .into_iter()
-                .map(|p| ContentProvider {
-                    peer: p.provider,
-                    addresses: p.addresses,
-                })
-                .collect()
         }
+
+        let mut providers = self
+            .provider_keys
+            .get(key)
+            .cloned()
+            .unwrap_or_else(Vec::default)
+            .into_iter()
+            .map(|p| ContentProvider {
+                peer: p.provider,
+                addresses: p.addresses,
+            })
+            .collect::<Vec<_>>();
+
+        // The local provider is not stored in `provider_keys`, so merge it into the result, keeping
+        // the providers sorted by distance from the provided key.
+        if let Some((local_provider, _)) = self.local_providers.get(key) {
+            let target = KademliaKey::new(key.clone());
+            let local_distance = KademliaKey::from(self.local_peer_id).distance(&target);
+            let position = providers
+                .binary_search_by(|p| {
+                    KademliaKey::from(p.peer).distance(&target).cmp(&local_distance)
+                })
+                .unwrap_or_else(|i| i);
+            providers.insert(position, local_provider.clone());
+        }
+
+        providers
     }
 
-    /// Try to add a provider for `key`. If there are already `max_providers_per_key` for
-    /// this `key`, the new provider is only inserted if its closer to `key` than
+    /// Try to add a remote provider for `key`. If there are already `max_providers_per_key`
+    /// for this `key`, the new provider is only inserted if its closer to `key` than
     /// the furthest already inserted provider. The furthest provider is then discarded.
     ///
-    /// Returns `true` if the provider was added, `false` otherwise.
+    /// The local provider must be registered via [`MemoryStore::put_local_provider`] instead:
+    /// it is tracked separately and never competes with remote providers for the
+    /// `max_providers_per_key` capacity.
     ///
-    /// `quorum` is only relevant for local providers.
+    /// Returns `true` if the provider was added, `false` otherwise.
     pub fn put_provider(&mut self, key: Key, provider: ContentProvider) -> bool {
+        if provider.peer == self.local_peer_id {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?key,
+                "ignoring an attempt to store the local peer as a remote provider",
+            );
+            return false;
+        }
+
         // Make sure we have no more than `max_provider_addresses`.
         let provider_record = {
             let mut record = ProviderRecord {
@@ -265,10 +294,22 @@ impl MemoryStore {
         }
     }
 
-    /// Try to add ourself as a provider for `key`.
+    /// Register ourself as a provider for `key`.
     ///
-    /// Returns `true` if the provider was added, `false` otherwise.
+    /// The local provider is not stored in `provider_keys`, so it is not subject to
+    /// `max_providers_per_key` eviction or expiration: we provide `key` until
+    /// [`MemoryStore::remove_local_provider`] is called. The number of keys we provide is
+    /// still bounded by `max_provider_keys`, accounted separately from the provider records
+    /// of remote peers, so that remote records can never crowd out local registrations and
+    /// vice versa.
+    ///
+    /// Returns `true` if we provide `key` from now on, `false` if the registration was
+    /// rejected because the local provider key limit was reached. Renewing an existing
+    /// registration always succeeds. On success a refresh of the provider record is
+    /// scheduled via [`MemoryStore::next_action`].
     pub fn put_local_provider(&mut self, key: Key, quorum: Quorum) -> bool {
+        let can_insert_new_key = self.local_providers.len() < self.config.max_provider_keys;
+
         let provider = ContentProvider {
             peer: self.local_peer_id,
             // For local providers addresses are populated when replying to `GET_PROVIDERS`
@@ -276,57 +317,43 @@ impl MemoryStore {
             addresses: vec![],
         };
 
-        if self.put_provider(key.clone(), provider.clone()) {
-            let refresh_interval = self.config.provider_refresh_interval;
-            self.local_providers.insert(key.clone(), (provider, quorum));
-            self.pending_provider_refresh.push(Box::pin(async move {
-                tokio::time::sleep(refresh_interval).await;
-                key
-            }));
+        match self.local_providers.entry(key.clone()) {
+            Entry::Occupied(mut entry) => {
+                entry.insert((provider, quorum));
+            }
+            Entry::Vacant(entry) =>
+                if can_insert_new_key {
+                    entry.insert((provider, quorum));
+                } else {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        ?key,
+                        max_provider_keys = self.config.max_provider_keys,
+                        "discarding a local provider, because the provider key limit reached",
+                    );
 
-            true
-        } else {
-            false
+                    return false;
+                },
         }
+
+        let refresh_interval = self.config.provider_refresh_interval;
+        self.pending_provider_refresh.push(Box::pin(async move {
+            tokio::time::sleep(refresh_interval).await;
+            key
+        }));
+
+        true
     }
 
     /// Remove local provider for `key`.
     pub fn remove_local_provider(&mut self, key: Key) {
         if self.local_providers.remove(&key).is_none() {
-            tracing::warn!(?key, "trying to remove nonexistent local provider",);
-            return;
-        };
-
-        match self.provider_keys.entry(key.clone()) {
-            Entry::Vacant(_) => {
-                tracing::error!(?key, "local provider key not found during removal",);
-                debug_assert!(false);
-            }
-            Entry::Occupied(mut entry) => {
-                let providers = entry.get_mut();
-
-                // Providers are sorted by distance.
-                let local_provider_distance =
-                    KademliaKey::from(self.local_peer_id).distance(&KademliaKey::new(key.clone()));
-                let provider_position =
-                    providers.binary_search_by(|p| p.distance().cmp(&local_provider_distance));
-
-                match provider_position {
-                    Ok(i) => {
-                        providers.remove(i);
-                    }
-                    Err(_) => {
-                        tracing::error!(?key, "local provider not found during removal",);
-                        debug_assert!(false);
-                        return;
-                    }
-                }
-
-                if providers.is_empty() {
-                    entry.remove();
-                }
-            }
-        };
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?key,
+                "trying to remove nonexistent local provider",
+            );
+        }
     }
 
     /// Poll next action from the store.
@@ -1108,5 +1135,227 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(5), store.next_action()).await,
             Err(_),
         ));
+    }
+
+    /// Generate `n + 1` random peers and return the one farthest to `key` as the local peer
+    /// along with `n` remote providers closer to `key` than the local peer.
+    fn local_peer_and_closer_remote_providers(
+        key: &Key,
+        n: usize,
+    ) -> (PeerId, Vec<ContentProvider>) {
+        let target = KademliaKey::new(key.clone());
+        let mut peers = (0..n + 1).map(|_| PeerId::random()).collect::<Vec<_>>();
+        peers.sort_by_key(|peer| KademliaKey::from(*peer).distance(&target));
+
+        let local_peer_id = peers.pop().unwrap();
+        let providers = peers
+            .into_iter()
+            .map(|peer| ContentProvider {
+                peer,
+                addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
+            })
+            .collect();
+
+        (local_peer_id, providers)
+    }
+
+    #[test]
+    fn local_provider_not_evicted_by_closer_remote_providers() {
+        let key = Key::from(vec![1, 2, 3]);
+        let max_providers_per_key = 10;
+        let (local_peer_id, remote_providers) =
+            local_peer_and_closer_remote_providers(&key, max_providers_per_key);
+        let mut store = MemoryStore::with_config(
+            local_peer_id,
+            MemoryStoreConfig {
+                max_providers_per_key,
+                ..Default::default()
+            },
+        );
+
+        assert!(store.put_local_provider(key.clone(), Quorum::All));
+
+        for provider in &remote_providers {
+            assert!(store.put_provider(key.clone(), provider.clone()));
+        }
+
+        // The local provider is not evicted and is returned last, as the farthest one.
+        let got_providers = store.get_providers(&key);
+        assert_eq!(got_providers.len(), max_providers_per_key + 1);
+        assert_eq!(got_providers.last().unwrap().peer, local_peer_id);
+
+        // Removing the local provider must not trip the store bookkeeping even though the key
+        // holds `max_providers_per_key` closer remote records.
+        store.remove_local_provider(key.clone());
+        assert!(store.local_providers.is_empty());
+
+        let got_providers = store.get_providers(&key);
+        assert_eq!(got_providers.len(), max_providers_per_key);
+        assert!(got_providers.iter().all(|p| p.peer != local_peer_id));
+    }
+
+    #[tokio::test]
+    async fn local_provider_registered_and_refreshed_when_provider_list_is_full() {
+        let key = Key::from(vec![1, 2, 3]);
+        let max_providers_per_key = 10;
+        let (local_peer_id, remote_providers) =
+            local_peer_and_closer_remote_providers(&key, max_providers_per_key);
+        let mut store = MemoryStore::with_config(
+            local_peer_id,
+            MemoryStoreConfig {
+                max_provider_keys: 1,
+                max_providers_per_key,
+                provider_refresh_interval: Duration::from_secs(1),
+                ..Default::default()
+            },
+        );
+
+        for provider in &remote_providers {
+            assert!(store.put_provider(key.clone(), provider.clone()));
+        }
+
+        assert!(store.put_local_provider(key.clone(), Quorum::One));
+
+        let got_providers = store.get_providers(&key);
+        assert_eq!(got_providers.len(), max_providers_per_key + 1);
+        assert_eq!(got_providers.last().unwrap().peer, local_peer_id);
+
+        // Refresh succeeds with both the local key budget and the remote provider list full.
+        for _ in 0..2 {
+            match tokio::time::timeout(Duration::from_secs(5), store.next_action()).await.unwrap() {
+                Some(MemoryStoreAction::RefreshProvider {
+                    provided_key,
+                    quorum,
+                    ..
+                }) => {
+                    assert_eq!(provided_key, key);
+                    assert!(store.put_local_provider(provided_key, quorum));
+                }
+                action => panic!("unexpected action: {action:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn get_providers_merges_local_provider_sorted_by_distance() {
+        let key = Key::from(vec![1, 2, 3]);
+        let target = KademliaKey::new(key.clone());
+
+        let mut peers = (0..11).map(|_| PeerId::random()).collect::<Vec<_>>();
+        peers.sort_by_key(|peer| KademliaKey::from(*peer).distance(&target));
+
+        let local_peer_id = peers.remove(5);
+        let mut store = MemoryStore::new(local_peer_id);
+
+        let remote_providers = peers
+            .into_iter()
+            .map(|peer| ContentProvider {
+                peer,
+                addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
+            })
+            .collect::<Vec<_>>();
+        for provider in &remote_providers {
+            assert!(store.put_provider(key.clone(), provider.clone()));
+        }
+        assert!(store.put_local_provider(key.clone(), Quorum::One));
+
+        // Local provider is merged into the result at the position matching its distance,
+        // with empty addresses.
+        let expected = {
+            let mut providers = remote_providers;
+            providers.insert(
+                5,
+                ContentProvider {
+                    peer: local_peer_id,
+                    addresses: vec![],
+                },
+            );
+            providers
+        };
+        assert_eq!(store.get_providers(&key), expected);
+    }
+
+    #[test]
+    fn local_provider_not_dropped_with_expired_remote_providers() {
+        let local_peer_id = PeerId::random();
+        let mut store = MemoryStore::with_config(
+            local_peer_id,
+            MemoryStoreConfig {
+                provider_ttl: Duration::ZERO,
+                ..Default::default()
+            },
+        );
+        let key = Key::from(vec![1, 2, 3]);
+        let remote_provider = ContentProvider {
+            peer: PeerId::random(),
+            addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
+        };
+
+        assert!(store.put_provider(key.clone(), remote_provider.clone()));
+        assert!(store.put_local_provider(key.clone(), Quorum::One));
+
+        // The remote provider is already expired, the local one is not.
+        let local_provider = ContentProvider {
+            peer: local_peer_id,
+            addresses: vec![],
+        };
+        assert_eq!(store.get_providers(&key), vec![local_provider]);
+
+        // Removing the local provider leaves the store empty.
+        store.remove_local_provider(key.clone());
+        assert!(store.get_providers(&key).is_empty());
+        assert!(store.local_providers.is_empty());
+    }
+
+    #[test]
+    fn local_provider_keys_limited_independently_from_remote_keys() {
+        let local_peer_id = PeerId::random();
+        let mut store = MemoryStore::with_config(
+            local_peer_id,
+            MemoryStoreConfig {
+                max_provider_keys: 1,
+                ..Default::default()
+            },
+        );
+
+        // Exhaust the provider key budget of remote records.
+        let remote_key = Key::from(vec![1, 1, 1]);
+        assert!(store.put_provider(
+            remote_key.clone(),
+            ContentProvider {
+                peer: PeerId::random(),
+                addresses: vec![multiaddr!(Ip4([127, 0, 0, 1]), Tcp(10000u16))],
+            },
+        ));
+
+        // Local registrations have their own budget, so the first key is still accepted.
+        let key1 = Key::from(vec![2, 2, 2]);
+        assert!(store.put_local_provider(key1.clone(), Quorum::One));
+
+        // The second key exceeds the local provider key limit and is rejected.
+        let key2 = Key::from(vec![3, 3, 3]);
+        assert!(!store.put_local_provider(key2.clone(), Quorum::One));
+
+        assert!(store.local_providers.contains_key(&key1));
+        assert!(!store.local_providers.contains_key(&key2));
+        assert_eq!(store.pending_provider_refresh.len(), 1);
+        assert!(store.get_providers(&key2).is_empty());
+    }
+
+    #[test]
+    fn put_provider_rejects_local_peer() {
+        let local_peer_id = PeerId::random();
+        let mut store = MemoryStore::new(local_peer_id);
+        let key = Key::from(vec![1, 2, 3]);
+
+        assert!(!store.put_provider(
+            key.clone(),
+            ContentProvider {
+                peer: local_peer_id,
+                addresses: vec![],
+            },
+        ));
+        assert!(store.get_providers(&key).is_empty());
+        assert!(store.provider_keys.is_empty());
     }
 }
