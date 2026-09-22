@@ -312,6 +312,9 @@ impl ConfigBuilder {
 
     /// Set maximum number of provider keys in the memory store.
     ///
+    /// The limit applies separately to the provider keys of remote peers and to the keys this
+    /// node provides itself, so up to twice this many keys can be held in total.
+    ///
     /// If unspecified, the default maximum number of provider keys is 1024.
     pub fn with_max_provider_keys(mut self, max_provider_keys: usize) -> Self {
         self.memory_store_config.max_provider_keys = max_provider_keys;
