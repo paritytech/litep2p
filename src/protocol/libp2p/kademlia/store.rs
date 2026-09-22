@@ -62,10 +62,7 @@ pub struct MemoryStore {
     config: MemoryStoreConfig,
     /// Records.
     records: HashMap<Key, Record>,
-    /// Provider records of remote peers. Never contains the local provider: local providers
-    /// are tracked in `local_providers` and merged into `get_providers()` results on the fly,
-    /// so that they never compete with remote providers for the `max_providers_per_key`
-    /// capacity.
+    /// Provider records of remote peers. Never contains the local provider.
     provider_keys: HashMap<Key, Vec<ProviderRecord>>,
     /// Local providers.
     local_providers: HashMap<Key, (ContentProvider, Quorum)>,
@@ -294,19 +291,13 @@ impl MemoryStore {
         }
     }
 
-    /// Register ourself as a provider for `key`.
+    /// Register ourself as a provider for `key` and schedule its refresh.
     ///
-    /// The local provider is not stored in `provider_keys`, so it is not subject to
-    /// `max_providers_per_key` eviction or expiration: we provide `key` until
-    /// [`MemoryStore::remove_local_provider`] is called. The number of keys we provide is
-    /// still bounded by `max_provider_keys`, accounted separately from the provider records
-    /// of remote peers, so that remote records can never crowd out local registrations and
-    /// vice versa.
+    /// Local providers are kept apart from remote records: they are never evicted or expired,
+    /// only removed via [`MemoryStore::remove_local_provider`]. The number of provided keys is
+    /// bounded by `max_provider_keys`, counted separately from remote provider keys.
     ///
-    /// Returns `true` if we provide `key` from now on, `false` if the registration was
-    /// rejected because the local provider key limit was reached. Renewing an existing
-    /// registration always succeeds. On success a refresh of the provider record is
-    /// scheduled via [`MemoryStore::next_action`].
+    /// Returns `false` if `key` is new and the limit is reached. Renewals always succeed.
     pub fn put_local_provider(&mut self, key: Key, quorum: Quorum) -> bool {
         let can_insert_new_key = self.local_providers.len() < self.config.max_provider_keys;
 
@@ -394,6 +385,9 @@ pub struct MemoryStoreConfig {
     pub max_record_size_bytes: usize,
 
     /// Maximum number of provider keys this node stores.
+    ///
+    /// The limit applies separately to the provider keys of remote peers and to the keys this
+    /// node provides itself, so up to `2 * max_provider_keys` keys can be held in total.
     pub max_provider_keys: usize,
 
     /// Maximum number of cached addresses per provider.
