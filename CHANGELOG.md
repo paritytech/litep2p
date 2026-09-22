@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- kad: Prevent local provider eviction, expiration, and removal panics; enforce separate local/remote key limits and report rejected registrations ([#665](https://github.com/paritytech/litep2p/issues/665))
+- kad: Prevent local provider eviction, expiration, and removal panics; `max_provider_keys` now applies separately to remote provider keys and local registrations (up to 2× in total), and rejected registrations are reported ([#665](https://github.com/paritytech/litep2p/issues/665))
 
 ## [0.15.2] - 2026-09-04
 
