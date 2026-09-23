@@ -94,6 +94,7 @@ impl From<SubstreamError> for RejectReason {
     fn from(error: SubstreamError) -> Self {
         // Convert `ErrorKind::NotConnected` to `RejectReason::ConnectionClosed`.
         match error {
+            SubstreamError::ConnectionClosed => RejectReason::ConnectionClosed,
             SubstreamError::IoError(ErrorKind::NotConnected) => RejectReason::ConnectionClosed,
             SubstreamError::YamuxError(crate::yamux::ConnectionError::Io(error), _)
                 if error.kind() == ErrorKind::NotConnected =>

@@ -21,7 +21,7 @@
 use crate::{
     addresses::PublicAddresses,
     error::{Error, ImmediateDialError, SubstreamError},
-    protocol::{connection::ConnectionHandle, InnerTransportEvent, TransportEvent},
+    protocol::{connection::ConnectionHandle, Direction, InnerTransportEvent, TransportEvent},
     transport::{manager::TransportManagerHandle, Endpoint},
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId, DEFAULT_CHANNEL_SIZE,
@@ -32,7 +32,7 @@ use multiaddr::{Multiaddr, Protocol};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
     pin::Pin,
     sync::{
@@ -306,6 +306,13 @@ pub struct TransportService {
 
     /// Whether this protocol susbstreams should keep connection alive.
     substream_keep_alive: SubstreamKeepAlive,
+
+    /// Outbound substreams whose result hasn't been reported yet, mapped to the connection
+    /// they were requested on.
+    pending_outbound: HashMap<SubstreamId, ConnectionId>,
+
+    /// Events queued for the protocol, since closing a connection may emit multiple events.
+    pending_events: VecDeque<TransportEvent>,
 }
 
 impl TransportService {
@@ -334,6 +341,8 @@ impl TransportService {
                 connections: HashMap::new(),
                 keep_alive_tracker,
                 substream_keep_alive,
+                pending_outbound: HashMap::new(),
+                pending_events: VecDeque::new(),
             },
             tx,
         )
@@ -432,6 +441,20 @@ impl TransportService {
         );
 
         self.keep_alive_tracker.on_connection_closed(peer, connection_id);
+
+        // The connection is gone and will never report these back. This is the only notification
+        // the protocol gets when the connection is replaced by the secondary one, since no
+        // `ConnectionClosed` is emitted in that case.
+        let (failed, pending) = std::mem::take(&mut self.pending_outbound)
+            .into_iter()
+            .partition::<HashMap<_, _>, _>(|(_, id)| id == &connection_id);
+        self.pending_outbound = pending;
+        self.pending_events.extend(failed.into_keys().map(|substream| {
+            TransportEvent::SubstreamOpenFailure {
+                substream,
+                error: SubstreamError::ConnectionClosed,
+            }
+        }));
 
         let Some(context) = self.connections.get_mut(&peer) else {
             tracing::warn!(
@@ -590,15 +613,19 @@ impl TransportService {
             connection.try_upgrade();
         }
 
-        connection
-            .open_substream(
-                self.protocol.clone(),
-                self.fallback_names.clone(),
-                substream_id,
-                permit,
-                self.substream_keep_alive,
-            )
-            .map(|_| substream_id)
+        let result = connection.open_substream(
+            self.protocol.clone(),
+            self.fallback_names.clone(),
+            substream_id,
+            permit,
+            self.substream_keep_alive,
+        );
+
+        if result.is_ok() {
+            self.pending_outbound.insert(substream_id, connection_id);
+        }
+
+        result.map(|_| substream_id)
     }
 
     /// Forcibly close the connection, even if other protocols have substreams open over it.
@@ -642,6 +669,10 @@ impl Stream for TransportService {
         let protocol_name = self.protocol.clone();
         let keep_alive_timeout = self.keep_alive_tracker.keep_alive_timeout;
 
+        if let Some(event) = self.pending_events.pop_front() {
+            return Poll::Ready(Some(event));
+        }
+
         while let Poll::Ready(event) = self.rx.poll_recv(cx) {
             match event {
                 None => {
@@ -665,7 +696,11 @@ impl Stream for TransportService {
                     }
                 }
                 Some(InnerTransportEvent::ConnectionClosed { peer, connection }) => {
-                    if let Some(event) = self.on_connection_closed(peer, connection) {
+                    let closed = self.on_connection_closed(peer, connection);
+                    self.pending_events.extend(closed);
+
+                    // Returning `Ready` guarantees another poll which drains the rest.
+                    if let Some(event) = self.pending_events.pop_front() {
                         return Poll::Ready(Some(event));
                     }
                 }
@@ -678,6 +713,10 @@ impl Stream for TransportService {
                     connection_id,
                     opening_permit,
                 }) => {
+                    if let Direction::Outbound(substream_id) = direction {
+                        self.pending_outbound.remove(&substream_id);
+                    }
+
                     if protocol == self.protocol
                         && self.substream_keep_alive == SubstreamKeepAlive::Yes
                     {
@@ -697,6 +736,14 @@ impl Stream for TransportService {
                         fallback,
                         direction,
                         substream,
+                    }));
+                }
+                Some(InnerTransportEvent::SubstreamOpenFailure { substream, error }) => {
+                    self.pending_outbound.remove(&substream);
+
+                    return Poll::Ready(Some(TransportEvent::SubstreamOpenFailure {
+                        substream,
+                        error,
                     }));
                 }
                 Some(event) => return Poll::Ready(Some(event.into())),
@@ -728,7 +775,9 @@ impl Stream for TransportService {
 mod tests {
     use super::*;
     use crate::{
-        protocol::{ProtocolCommand, SubstreamKeepAlive, TransportService},
+        mock::substream::MockSubstream,
+        protocol::{connection::Permit, ProtocolCommand, SubstreamKeepAlive, TransportService},
+        substream::Substream,
         transport::{
             manager::{handle::InnerTransportManagerCommand, TransportManagerHandle},
             KEEP_ALIVE_TIMEOUT,
@@ -1078,6 +1127,133 @@ mod tests {
         // verify that the primary connection has been replaced
         assert!(!service.connections.contains_key(&peer));
         assert!(cmd_rx2.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn pending_substreams_fail_when_switching_to_secondary_connection() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+
+        // register primary connection
+        let (cmd_tx1, mut cmd_rx1) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(0usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx1.clone()),
+            })
+            .await
+            .unwrap();
+
+        assert!(std::matches!(
+            service.next().await,
+            Some(TransportEvent::ConnectionEstablished { .. })
+        ));
+
+        // register secondary connection
+        let (cmd_tx2, _cmd_rx2) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1usize),
+                endpoint: Endpoint::listener(Multiaddr::empty(), ConnectionId::from(1usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx2),
+            })
+            .await
+            .unwrap();
+
+        futures::future::poll_fn(|cx| match service.poll_next_unpin(cx) {
+            Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
+            Poll::Pending => Poll::Ready(()),
+        })
+        .await;
+
+        // all substreams are opened over the primary connection
+        let opened = service.open_substream(peer).unwrap();
+        let failed = service.open_substream(peer).unwrap();
+        let pending = service.open_substream(peer).unwrap();
+
+        for expected in [opened, failed, pending] {
+            match cmd_rx1.try_recv() {
+                Ok(ProtocolCommand::OpenSubstream {
+                    substream_id,
+                    connection_id,
+                    ..
+                }) => {
+                    assert_eq!(substream_id, expected);
+                    assert_eq!(connection_id, ConnectionId::from(0usize));
+                }
+                command => panic!("unexpected command: {command:?}"),
+            }
+        }
+
+        // the transport reports two of them back before the connection dies
+        sender
+            .send(InnerTransportEvent::SubstreamOpened {
+                peer,
+                protocol: ProtocolName::from("/notif/1"),
+                fallback: None,
+                direction: Direction::Outbound(opened),
+                connection_id: ConnectionId::from(0usize),
+                substream: Substream::new_mock(peer, opened, Box::new(MockSubstream::new())),
+                opening_permit: Permit::new(cmd_tx1),
+            })
+            .await
+            .unwrap();
+
+        assert!(std::matches!(
+            service.next().await,
+            Some(TransportEvent::SubstreamOpened { .. })
+        ));
+
+        sender
+            .send(InnerTransportEvent::SubstreamOpenFailure {
+                substream: failed,
+                error: SubstreamError::ChannelClogged,
+            })
+            .await
+            .unwrap();
+
+        assert!(std::matches!(
+            service.next().await,
+            Some(TransportEvent::SubstreamOpenFailure { .. })
+        ));
+
+        assert_eq!(
+            service.pending_outbound,
+            HashMap::from_iter([(pending, ConnectionId::from(0usize))])
+        );
+
+        // close the primary connection
+        sender
+            .send(InnerTransportEvent::ConnectionClosed {
+                peer,
+                connection: ConnectionId::from(0usize),
+            })
+            .await
+            .unwrap();
+
+        match service.next().await {
+            Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
+                assert_eq!(substream, pending);
+                assert!(std::matches!(error, SubstreamError::ConnectionClosed));
+            }
+            event => panic!("unexpected event: {event:?}"),
+        }
+
+        assert!(service.pending_outbound.is_empty());
+
+        // the protocol is not notified about the closed connection, the secondary took over
+        futures::future::poll_fn(|cx| match service.poll_next_unpin(cx) {
+            Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
+            Poll::Pending => Poll::Ready(()),
+        })
+        .await;
+
+        let context = service.connections.get(&peer).unwrap();
+        assert_eq!(context.primary.connection_id(), &ConnectionId::from(1usize));
+        assert!(context.secondary.is_none());
     }
 
     #[tokio::test]
