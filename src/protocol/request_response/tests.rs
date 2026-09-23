@@ -366,9 +366,7 @@ async fn request_over_replaced_primary_connection_fails() {
             assert_eq!(failed_request, request_id);
             assert!(std::matches!(
                 error,
-                RequestResponseError::Rejected(RejectReason::SubstreamOpenError(
-                    SubstreamError::ConnectionClosed
-                ))
+                RequestResponseError::Rejected(RejectReason::ConnectionClosed)
             ));
         }
         event => panic!("unexpected event: {event:?}"),
