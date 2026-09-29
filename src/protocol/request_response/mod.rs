@@ -312,6 +312,13 @@ impl RequestResponseProtocol {
 
         // sent failure events for all pending outbound requests
         for request_id in context.active {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                protocol = %self.protocol,
+                ?request_id,
+                "removing request_id from active due to peer disconnect",
+            );
             let _ = self
                 .event_tx
                 .send(InnerRequestResponseEvent::RequestFailed {
@@ -627,10 +634,25 @@ impl RequestResponseProtocol {
         if let Some(context) = self.pending_dials.remove(&peer) {
             tracing::debug!(target: LOG_TARGET, ?peer, protocol = %self.protocol, "failed to dial peer");
 
-            let _ = self
-                .peers
-                .get_mut(&peer)
-                .map(|peer_context| peer_context.active.remove(&context.request_id));
+            let Some(peer_context) = self.peers.get_mut(&peer) else {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    "failed to get peer context on dial failure",
+                );
+                return;
+            };
+
+            let removed = peer_context.active.remove(&context.request_id);
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                protocol = %self.protocol,
+                request_id = ?context.request_id,
+                removed,
+                "removed request_id from active (on dial failure)",
+            );
+
             let _ = self
                 .report_request_failure(
                     peer,
@@ -672,12 +694,21 @@ impl RequestResponseProtocol {
             "failed to open substream",
         );
 
-        let _ = self
+        let removed = self
             .peers
             .get_mut(&peer)
             .map(|peer_context| peer_context.active.remove(&request_id));
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            protocol = %self.protocol,
+            ?request_id,
+            removed,
+            "removed request_id from active (on substream open failure)",
+        );
 
-        self.event_tx
+        let _ = self
+            .event_tx
             .send(InnerRequestResponseEvent::RequestFailed {
                 peer,
                 request_id,
@@ -779,6 +810,13 @@ impl RequestResponseProtocol {
         match self.service.open_substream(peer) {
             Ok(substream_id) => {
                 let unique_request_id = context.active.insert(request_id);
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    protocol = %self.protocol,
+                    ?request_id,
+                    "inserted request_id into active",
+                );
                 debug_assert!(unique_request_id);
 
                 self.pending_outbound.insert(
@@ -826,6 +864,14 @@ impl RequestResponseProtocol {
                 "invalid state: received substream event but no active substream",
             );
             return Err(Error::InvalidState);
+        } else {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                protocol = %self.protocol,
+                ?request_id,
+                "removed request_id from active (on substream event)",
+            );
         }
 
         let event = match message {
