@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.3] - 2026-09-29
+
+This release ensures upper-layer protocols are informed about closed connections and substreams that can no longer be opened.
+Errors in TCP, QUIC and WebSocket connections now always close the connection and report it as closed. Previously, a peer could look connected forever and could not be connected to again.
+When the primary connection to a peer closes and the secondary connection takes over, outbound substreams still opening over the closed connection are now reported as `SubstreamOpenFailure`, so requests sent over it fail with `RejectReason::ConnectionClosed` instead of hanging.
+
+### Fixed
+
+- Ensure we report connection closed to the upper layers ([#663](https://github.com/paritytech/litep2p/pull/663))
+- Report `SubstreamOpenFailure` when switching to secondary connection ([#664](https://github.com/paritytech/litep2p/pull/664))
+
 ## [0.15.2] - 2026-09-04
 
 This is a security release.

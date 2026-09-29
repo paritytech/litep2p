@@ -792,7 +792,7 @@ mod tests {
         codec::ProtocolCodec,
         protocol::InnerTransportEvent,
         transport::{
-            manager::{InboundProtocol, ProtocolContext, TransportManagerEvent},
+            manager::{ProtocolContext, TransportManagerEvent},
             tcp::TcpTransport,
         },
     };
@@ -875,7 +875,6 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
-                    inbound: InboundProtocol::Accept,
                 },
             )]),
         );
