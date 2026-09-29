@@ -31,7 +31,7 @@ use crate::{
     },
     substream::Substream,
     transport::{
-        manager::{ProtocolContext, TransportManagerEvent},
+        manager::{InboundProtocol, ProtocolContext, TransportManagerEvent},
         Endpoint,
     },
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
@@ -259,20 +259,22 @@ impl ProtocolSet {
             })
             .collect::<HashMap<_, _>>();
 
+        // Protocols that don't serve inbound substreams are omitted, which makes the negotiation
+        // of their names fail on inbound substreams.
         let main_keep_alives = protocols
             .iter()
+            .filter(|(_, context)| context.inbound == InboundProtocol::Accept)
             .map(|(name, context)| (name.clone(), context.keep_alive))
             .collect::<Vec<_>>();
         let fallback_keep_alives = fallback_names
             .iter()
-            .map(|(fallback, main)| {
-                (
-                    fallback.clone(),
-                    protocols
-                        .get(main)
-                        .expect("all main protocols are present due to construction above; qed")
-                        .keep_alive,
-                )
+            .filter_map(|(fallback, main)| {
+                let context = protocols
+                    .get(main)
+                    .expect("all main protocols are present due to construction above; qed");
+
+                (context.inbound == InboundProtocol::Accept)
+                    .then(|| (fallback.clone(), context.keep_alive))
             })
             .collect::<Vec<_>>();
         let keep_alives = main_keep_alives.into_iter().chain(fallback_keep_alives).collect();
@@ -496,7 +498,7 @@ impl Stream for ProtocolSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mock::substream::MockSubstream;
+    use crate::{mock::substream::MockSubstream, transport::manager::InboundProtocol};
     use std::collections::HashSet;
 
     #[tokio::test]
@@ -518,6 +520,7 @@ mod tests {
                         ProtocolName::from("/notif/1/fallback/2"),
                     ],
                     keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         );
@@ -550,6 +553,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn inbound_negotiation_denied() {
+        let (tx, _rx) = channel(64);
+        let (tx1, _rx1) = channel(64);
+        let (tx2, _rx2) = channel(64);
+
+        let protocol_set = ProtocolSet::new(
+            ConnectionId::from(0usize),
+            tx,
+            Default::default(),
+            HashMap::from_iter([
+                (
+                    ProtocolName::from("/kad/1"),
+                    ProtocolContext {
+                        tx: tx1,
+                        codec: ProtocolCodec::UnsignedVarint(None),
+                        fallback_names: vec![ProtocolName::from("/kad/1/fallback")],
+                        keep_alive: SubstreamKeepAlive::Yes,
+                        inbound: InboundProtocol::Deny,
+                    },
+                ),
+                (
+                    ProtocolName::from("/notif/1"),
+                    ProtocolContext {
+                        tx: tx2,
+                        codec: ProtocolCodec::Identity(32),
+                        fallback_names: vec![ProtocolName::from("/notif/1/fallback")],
+                        keep_alive: SubstreamKeepAlive::Yes,
+                        inbound: InboundProtocol::Accept,
+                    },
+                ),
+            ]),
+        );
+
+        // the denied protocol and its fallback are not offered to remote peers, which makes
+        // `multistream-select` reject them on inbound substreams
+        assert_eq!(
+            protocol_set.protocols_with_keep_alives().into_keys().collect::<HashSet<_>>(),
+            HashSet::from([
+                ProtocolName::from("/notif/1"),
+                ProtocolName::from("/notif/1/fallback"),
+            ]),
+        );
+
+        // the protocol is still installed so that it can open outbound substreams
+        assert_eq!(
+            protocol_set.protocols().into_iter().collect::<HashSet<_>>(),
+            HashSet::from([
+                ProtocolName::from("/kad/1"),
+                ProtocolName::from("/kad/1/fallback"),
+                ProtocolName::from("/notif/1"),
+                ProtocolName::from("/notif/1/fallback"),
+            ]),
+        );
+    }
+
+    #[tokio::test]
     async fn main_protocol_reported_if_main_protocol_negotiated() {
         let (tx, _rx) = channel(64);
         let (tx1, mut rx1) = channel(64);
@@ -568,6 +627,7 @@ mod tests {
                         ProtocolName::from("/notif/1/fallback/2"),
                     ],
                     keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         );
@@ -618,6 +678,7 @@ mod tests {
                         ProtocolName::from("/notif/1/fallback/2"),
                     ],
                     keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         );

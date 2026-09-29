@@ -152,13 +152,13 @@ impl GetRecordContext {
 
     /// Register `GET_VALUE` response from `peer`.
     ///
-    /// Returns some if the response should be propagated to the user.
+    /// Returns the responding peer, proving it operates in server mode.
     pub fn register_response(
         &mut self,
         peer: PeerId,
         record: Option<Record>,
         peers: Vec<KademliaPeer>,
-    ) {
+    ) -> Option<KademliaPeer> {
         tracing::trace!(
             target: LOG_TARGET,
             query = ?self.config.query,
@@ -173,7 +173,7 @@ impl GetRecordContext {
                 ?peer,
                 "`GetRecordContext`: received response from peer but didn't expect it",
             );
-            return;
+            return None;
         };
 
         if let Some(record) = record {
@@ -214,6 +214,8 @@ impl GetRecordContext {
             let distance = self.config.target.distance(&candidate.key);
             self.candidates.insert(distance, candidate);
         }
+
+        Some(peer)
     }
 
     /// Register a failure of sending a `GET_VALUE` request to `peer`.

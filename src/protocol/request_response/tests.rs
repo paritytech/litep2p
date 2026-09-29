@@ -21,23 +21,25 @@
 use crate::{
     mock::substream::{DummySubstream, MockSubstream},
     protocol::{
+        connection::ConnectionHandle,
         request_response::{
-            ConfigBuilder, DialOptions, RequestResponseError, RequestResponseEvent,
+            ConfigBuilder, DialOptions, RejectReason, RequestResponseError, RequestResponseEvent,
             RequestResponseHandle, RequestResponseProtocol,
         },
-        InnerTransportEvent, SubstreamError, SubstreamKeepAlive, TransportService,
+        InnerTransportEvent, ProtocolCommand, SubstreamError, SubstreamKeepAlive, TransportService,
     },
     substream::Substream,
     transport::{
         manager::{TransportManager, TransportManagerBuilder},
-        KEEP_ALIVE_TIMEOUT,
+        Endpoint, KEEP_ALIVE_TIMEOUT,
     },
-    types::{RequestId, SubstreamId},
+    types::{ConnectionId, RequestId, SubstreamId},
     Error, PeerId, ProtocolName,
 };
 
 use futures::StreamExt;
-use tokio::sync::mpsc::Sender;
+use multiaddr::Multiaddr;
+use tokio::sync::mpsc::{channel, Sender};
 
 use std::task::Poll;
 
@@ -298,4 +300,75 @@ async fn request_failure_reported_once() {
         event => panic!("read an unexpected event from handle: {event:?}"),
     })
     .await;
+}
+
+// when the primary connection is closed while a secondary connection exists, the protocol is not
+// notified about the closed connection, but a request that was already issued over it can never
+// succeed and must be reported as failed
+#[tokio::test]
+async fn request_over_replaced_primary_connection_fails() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (protocol, mut handle, _manager, tx) = protocol();
+    let peer = PeerId::random();
+
+    // register primary and secondary connection before the event loop is started so that they
+    // are handled before the request, `RequestResponseProtocol` polls network events first
+    let (cmd_tx1, mut cmd_rx1) = channel(64);
+    tx.send(InnerTransportEvent::ConnectionEstablished {
+        peer,
+        connection: ConnectionId::from(0usize),
+        endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
+        sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx1),
+    })
+    .await
+    .unwrap();
+
+    let (cmd_tx2, _cmd_rx2) = channel(64);
+    tx.send(InnerTransportEvent::ConnectionEstablished {
+        peer,
+        connection: ConnectionId::from(1usize),
+        endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(1usize)),
+        sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx2),
+    })
+    .await
+    .unwrap();
+
+    tokio::spawn(protocol.run());
+
+    let request_id =
+        handle.send_request(peer, vec![1, 3, 3, 7], DialOptions::Reject).await.unwrap();
+
+    // the request is issued over the primary connection and the transport never reports back
+    match cmd_rx1.recv().await {
+        Some(ProtocolCommand::OpenSubstream { connection_id, .. }) => {
+            assert_eq!(connection_id, ConnectionId::from(0usize));
+        }
+        command => panic!("unexpected command: {command:?}"),
+    }
+
+    tx.send(InnerTransportEvent::ConnectionClosed {
+        peer,
+        connection: ConnectionId::from(0usize),
+    })
+    .await
+    .unwrap();
+
+    match handle.next().await {
+        Some(RequestResponseEvent::RequestFailed {
+            peer: failed_peer,
+            request_id: failed_request,
+            error,
+        }) => {
+            assert_eq!(failed_peer, peer);
+            assert_eq!(failed_request, request_id);
+            assert!(std::matches!(
+                error,
+                RequestResponseError::Rejected(RejectReason::ConnectionClosed)
+            ));
+        }
+        event => panic!("unexpected event: {event:?}"),
+    }
 }

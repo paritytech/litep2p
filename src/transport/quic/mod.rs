@@ -356,8 +356,8 @@ impl Transport for QuicTransport {
             protocol_set.report_connection_established(peer, endpoint_clone).await?;
 
             // After protocols are notified, spawn the connection event loop
-            executor.run(Box::pin(async move {
-                let _ = QuicConnection::new(
+            executor.run(Box::pin(
+                QuicConnection::new(
                     peer,
                     endpoint,
                     connection.connection,
@@ -365,9 +365,8 @@ impl Transport for QuicTransport {
                     bandwidth_sink,
                     substream_open_timeout,
                 )
-                .start()
-                .await;
-            }));
+                .start(),
+            ));
 
             Ok(())
         }))
@@ -639,7 +638,7 @@ mod tests {
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
         protocol::SubstreamKeepAlive,
-        transport::manager::{ProtocolContext, TransportHandle},
+        transport::manager::{InboundProtocol, ProtocolContext, TransportHandle},
         types::protocol::ProtocolName,
         BandwidthSink,
     };
@@ -670,6 +669,7 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         };
@@ -698,6 +698,7 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         };

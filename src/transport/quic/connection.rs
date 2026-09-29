@@ -24,7 +24,7 @@ use std::{collections::HashMap, time::Duration};
 
 use crate::{
     config::Role,
-    error::{Error, NegotiationError, SubstreamError},
+    error::{NegotiationError, SubstreamError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet, SubstreamKeepAlive},
     substream,
@@ -241,7 +241,9 @@ impl QuicConnection {
 
     /// Start the connection event loop without notifying protocols.
     /// This is used when protocols have already been notified during accept().
-    pub(crate) async fn start(mut self) -> crate::Result<()> {
+    ///
+    /// Runs until the connection is closed.
+    pub(crate) async fn start(mut self) {
         loop {
             tokio::select! {
                 event = self.connection.accept_bi() => match event {
@@ -249,7 +251,14 @@ impl QuicConnection {
 
                         let substream = self.protocol_set.next_substream_id();
                         let protocols = self.protocol_set.protocols_with_keep_alives();
-                        let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
+                        let Some(permit) = self.protocol_set.try_get_permit() else {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                peer = ?self.peer,
+                                "protocols have disconnected, closing connection",
+                            );
+                            break;
+                        };
                         let stream = NegotiatingSubstream::new(send_stream, receive_stream);
                         let substream_open_timeout = self.substream_open_timeout;
 
@@ -275,7 +284,7 @@ impl QuicConnection {
                     }
                     Err(error) => {
                         tracing::debug!(target: LOG_TARGET, peer = ?self.peer, ?error, "failed to accept substream");
-                        return self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await;
+                        break;
                     }
                 },
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
@@ -297,9 +306,19 @@ impl QuicConnection {
                             };
 
                             if let (Some(protocol), Some(substream_id)) = (protocol, substream_id) {
-                                self.protocol_set
-                                    .report_substream_open_failure(protocol, substream_id, error)
-                                    .await?;
+                                if let Err(error) = self.protocol_set
+                                    .report_substream_open_failure(protocol.clone(), substream_id, error)
+                                    .await
+                                {
+                                    tracing::error!(
+                                        target: LOG_TARGET,
+                                        ?protocol,
+                                        peer = ?self.peer,
+                                        ?error,
+                                        "failed to register substream open failure to protocol",
+                                    );
+                                    break;
+                                }
                             }
                         }
                         Ok(substream) => {
@@ -323,13 +342,22 @@ impl QuicConnection {
                                 self.protocol_set.protocol_codec(&protocol)
                             );
 
-                            self.protocol_set.report_substream_open(
+                            if let Err(error) = self.protocol_set.report_substream_open(
                                 self.peer,
-                                protocol,
+                                protocol.clone(),
                                 direction,
                                 substream,
                                 opening_permit,
-                            ).await?;
+                            ).await {
+                                tracing::error!(
+                                    target: LOG_TARGET,
+                                    ?protocol,
+                                    peer = ?self.peer,
+                                    ?error,
+                                    "failed to register opened substream to protocol",
+                                );
+                                break;
+                            }
                         }
                     }
                 }
@@ -341,10 +369,7 @@ impl QuicConnection {
                             connection_id = ?self.endpoint.connection_id(),
                             "protocols have dropped connection"
                         );
-                        return self.protocol_set.report_connection_closed(
-                            self.peer,
-                            self.endpoint.connection_id(),
-                        ).await;
+                        break;
                     }
                     Some(ProtocolCommand::OpenSubstream {
                         protocol,
@@ -399,11 +424,24 @@ impl QuicConnection {
                             connection_id = ?self.endpoint.connection_id(),
                             "force closing connection",
                         );
-
-                        return self.protocol_set.report_connection_closed(self.peer, self.endpoint.connection_id()).await;
+                        break;
                     }
                 }
             }
+        }
+
+        if let Err(error) = self
+            .protocol_set
+            .report_connection_closed(self.peer, self.endpoint.connection_id())
+            .await
+        {
+            tracing::debug!(
+                target: LOG_TARGET,
+                peer = ?self.peer,
+                connection_id = ?self.endpoint.connection_id(),
+                ?error,
+                "failed to report connection closed",
+            );
         }
     }
 }
