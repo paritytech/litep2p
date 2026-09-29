@@ -1,14 +1,18 @@
-# Tags master and publishes litep2p to crates.io. Triggered manually from the
-# Actions tab once the release-prep PR (version bump + CHANGELOG) is merged.
+# Tags the branch the workflow runs on (master, or a backport branch) and
+# publishes litep2p to crates.io. Triggered manually from the Actions tab once
+# the release-prep PR (version bump + CHANGELOG) is merged.
 #
 # Flow:
-#   - `verify` checks that the requested version matches Cargo.toml on master
-#     and runs the full test suite, so the reviewer sees real results before
-#     approving.
+#   - `verify` checks that the requested version matches Cargo.toml on that
+#     branch and runs the full test suite, so the reviewer sees real results
+#     before approving.
 #   - `publish` is gated by the `release` environment and only runs after
 #     `verify` succeeds and a reviewer approves. It publishes to crates.io
 #     first, then (on success) creates and pushes the `vX.Y.Z` tag and
 #     creates a GitHub Release with notes extracted from CHANGELOG.md.
+#
+# Both jobs check out the commit the run was started on, so pushes to the
+# branch while waiting for approval don't change what gets published.
 
 name: Release Publish
 
@@ -16,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release; must match Cargo.toml on master (e.g. 0.15.0, no leading 'v')"
+        description: "Version to release; must match Cargo.toml on the selected branch (e.g. 0.15.0, no leading 'v')"
         required: true
         type: string
 
@@ -36,10 +40,8 @@ jobs:
       image: paritytech/ci-unified:bullseye-1.93.0-2026-01-27-v202605151311
       options: --sysctl net.ipv6.conf.all.disable_ipv6=0
     steps:
-      - name: Checkout master
+      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: master
 
       - name: Verify requested version matches Cargo.toml
         shell: bash
@@ -51,7 +53,7 @@ jobs:
           echo "Requested version: $VERSION"
           echo "Cargo.toml version: $CRATE_VERSION"
           if [ "$VERSION" != "$CRATE_VERSION" ]; then
-            echo "::error::Requested version ($VERSION) does not match Cargo.toml on master ($CRATE_VERSION). Merge the release-prep PR first, or pass the correct version."
+            echo "::error::Requested version ($VERSION) does not match Cargo.toml on $GITHUB_REF_NAME ($CRATE_VERSION). Merge the release-prep PR first, or pass the correct version."
             exit 1
           fi
 
@@ -70,10 +72,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout master
+      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: master
           fetch-depth: 0
           fetch-tags: true
 
