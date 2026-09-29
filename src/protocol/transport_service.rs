@@ -426,11 +426,7 @@ impl TransportService {
     }
 
     /// Handle connection closed event.
-    fn on_connection_closed(
-        &mut self,
-        peer: PeerId,
-        connection_id: ConnectionId,
-    ) -> Option<TransportEvent> {
+    fn on_connection_closed(&mut self, peer: PeerId, connection_id: ConnectionId) {
         tracing::debug!(
             target: LOG_TARGET,
             ?peer,
@@ -466,7 +462,7 @@ impl TransportService {
             );
 
             debug_assert!(false);
-            return None;
+            return;
         };
 
         // if the primary connection was closed, check if there exist a secondary connection
@@ -483,7 +479,7 @@ impl TransportService {
             match context.secondary.take() {
                 None => {
                     self.connections.remove(&peer);
-                    return Some(TransportEvent::ConnectionClosed { peer });
+                    self.pending_events.push_back(TransportEvent::ConnectionClosed { peer });
                 }
                 Some(handle) => {
                     tracing::debug!(
@@ -495,9 +491,10 @@ impl TransportService {
                     );
 
                     context.primary = handle;
-                    return None;
                 }
             }
+
+            return;
         }
 
         match context.secondary.take() {
@@ -509,8 +506,6 @@ impl TransportService {
                     protocol = %self.protocol,
                     "secondary connection closed",
                 );
-
-                None
             }
             connection_state => {
                 tracing::debug!(
@@ -521,8 +516,6 @@ impl TransportService {
                     protocol = %self.protocol,
                     "connection closed but it doesn't exist",
                 );
-
-                None
             }
         }
     }
@@ -666,16 +659,10 @@ impl Stream for TransportService {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let protocol_name = self.protocol.clone();
-        let keep_alive_timeout = self.keep_alive_tracker.keep_alive_timeout;
-
-        if let Some(event) = self.pending_events.pop_front() {
-            return Poll::Ready(Some(event));
-fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Some(event) = self.pending_events.pop_front() {
             return Poll::Ready(Some(event));
         }
-        
+
         let protocol_name = self.protocol.clone();
         let keep_alive_timeout = self.keep_alive_tracker.keep_alive_timeout;
 
@@ -702,8 +689,7 @@ fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self
                     }
                 }
                 Some(InnerTransportEvent::ConnectionClosed { peer, connection }) => {
-                    let closed = self.on_connection_closed(peer, connection);
-                    self.pending_events.extend(closed);
+                    self.on_connection_closed(peer, connection);
 
                     // Returning `Ready` guarantees another poll which drains the rest.
                     if let Some(event) = self.pending_events.pop_front() {
