@@ -671,7 +671,13 @@ impl Stream for TransportService {
 
         if let Some(event) = self.pending_events.pop_front() {
             return Poll::Ready(Some(event));
+fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Some(event) = self.pending_events.pop_front() {
+            return Poll::Ready(Some(event));
         }
+        
+        let protocol_name = self.protocol.clone();
+        let keep_alive_timeout = self.keep_alive_tracker.keep_alive_timeout;
 
         while let Poll::Ready(event) = self.rx.poll_recv(cx) {
             match event {
