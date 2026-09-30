@@ -1287,17 +1287,22 @@ impl Kademlia {
                                 addresses,
                             };
 
-                            self.store.put_local_provider(key.clone(), quorum);
-
-                            self.engine.start_add_provider(
-                                query_id,
-                                key.clone(),
-                                provider,
-                                self.routing_table
-                                    .closest(&Key::new(key), self.replication_factor)
-                                    .into(),
-                                quorum,
-                            );
+                            if self.store.put_local_provider(key.clone(), quorum) {
+                                self.engine.start_add_provider(
+                                    query_id,
+                                    key.clone(),
+                                    provider,
+                                    self.routing_table
+                                        .closest(&Key::new(key), self.replication_factor)
+                                        .into(),
+                                    quorum,
+                                );
+                            } else {
+                                let _ = self
+                                    .event_tx
+                                    .send(KademliaEvent::QueryFailed { query_id })
+                                    .await;
+                            }
                         }
                         Some(KademliaCommand::StopProviding {
                             key,
