@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-09-30
+
+- kad: Fix local provider eviction and removal panics  ([#666](https://github.com/paritytech/litep2p/pull/666))
+- Report `SubstreamOpenFailure` when switching to secondary connection  ([#664](https://github.com/paritytech/litep2p/pull/664))
+- Ensure we report connection closed to the upper layers  ([#663](https://github.com/paritytech/litep2p/pull/663))
+- kad: Implement client-server mode for Kademlia  ([#611](https://github.com/paritytech/litep2p/pull/611))
+
 ## [Unreleased]
 
 ### Fixed
