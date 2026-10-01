@@ -5,16 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.16.0] - 2026-09-30
+## [0.16.0] - 2026-10-01
 
 This release adds client-server mode to Kademlia. Light clients and DHT crawlers can now run without responding to queries and without being added to remote routing tables, so they no longer pollute the DHT.
 It also fixes a set of panics around local provider records: an active local registration can no longer be evicted or expired out of the memory store, and removing one no longer panics.
+
+Note that `KademliaEvent` is not `#[non_exhaustive]` and [#611](https://github.com/paritytech/litep2p/pull/611) adds a `PeersDiscovered` variant to it, so every exhaustive match over `KademliaEvent` needs a new arm to keep compiling.
 
 Note that `max_provider_keys` now applies separately to the provider keys of remote peers and to the keys this node provides itself, so a node can hold up to twice that many keys in total.
 
 ### Added
 
 - kad: Implement client-server mode for Kademlia ([#611](https://github.com/paritytech/litep2p/pull/611))
+
+### Changed
+
+- kad: `KademliaEvent` gained a `PeersDiscovered` variant; the enum is not `#[non_exhaustive]`, so exhaustive matches over it must add an arm ([#611](https://github.com/paritytech/litep2p/pull/611))
 
 ### Fixed
 
