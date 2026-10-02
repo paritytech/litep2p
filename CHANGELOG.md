@@ -5,11 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.16.0] - 2026-10-01
+
+This release adds client-server mode to Kademlia. Light clients and DHT crawlers can now run without responding to queries and without being added to remote routing tables, so they no longer pollute the DHT.
+It also fixes a set of panics around local provider records: an active local registration can no longer be evicted or expired out of the memory store, and removing one no longer panics.
+
+Note that `KademliaEvent` is not `#[non_exhaustive]` and [#611](https://github.com/paritytech/litep2p/pull/611) adds a `PeersDiscovered` variant to it, so every exhaustive match over `KademliaEvent` needs a new arm to keep compiling.
+
+Note that `max_provider_keys` now applies separately to the provider keys of remote peers and to the keys this node provides itself, so a node can hold up to twice that many keys in total.
+
+### Added
+
+- kad: Implement client-server mode for Kademlia ([#611](https://github.com/paritytech/litep2p/pull/611))
+
+### Changed
+
+- kad: `KademliaEvent` gained a `PeersDiscovered` variant; the enum is not `#[non_exhaustive]`, so exhaustive matches over it must add an arm ([#611](https://github.com/paritytech/litep2p/pull/611))
 
 ### Fixed
 
-- kad: Prevent local provider eviction, expiration, and removal panics; `max_provider_keys` now applies separately to remote provider keys and local registrations (up to 2× in total), and rejected registrations are reported ([#665](https://github.com/paritytech/litep2p/issues/665))
+- kad: Prevent local provider eviction, expiration, and removal panics; `max_provider_keys` now applies separately to remote provider keys and local registrations (up to 2× in total), and rejected registrations are reported ([#666](https://github.com/paritytech/litep2p/pull/666), [#665](https://github.com/paritytech/litep2p/issues/665))
+
+## [0.15.3] - 2026-09-29
+
+This release ensures upper-layer protocols are informed about closed connections and substreams that can no longer be opened.
+Errors in TCP, QUIC and WebSocket connections now always close the connection and report it as closed. Previously, a peer could look connected forever and could not be connected to again.
+When the primary connection to a peer closes and the secondary connection takes over, outbound substreams still opening over the closed connection are now reported as `SubstreamOpenFailure`, so requests sent over it fail with `RejectReason::ConnectionClosed` instead of hanging.
+
+### Fixed
+
+- Ensure we report connection closed to the upper layers ([#663](https://github.com/paritytech/litep2p/pull/663))
+- Report `SubstreamOpenFailure` when switching to secondary connection ([#664](https://github.com/paritytech/litep2p/pull/664))
 
 ## [0.15.2] - 2026-09-04
 
