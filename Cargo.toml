@@ -60,7 +60,7 @@ tokio = { version = "1.45.0", features = [
 ] }
 tracing = { version = "0.1.40", features = ["log"] }
 hickory-resolver = "0.26.1"
-uint = "0.10.0"
+uint = "0.10.2"
 unsigned-varint = { version = "0.8.0", features = ["codec"] }
 url = "2.5.4"
 x25519-dalek = "2.0.1"
