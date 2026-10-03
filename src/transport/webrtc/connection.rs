@@ -1050,6 +1050,49 @@ impl WebRtcConnection {
         Ok(())
     }
 
+    /// Handle one item yielded by the substream handle set.
+    ///
+    /// `None` means the handle finished, `Some` is a message to forward to the peer. Either
+    /// way a failure closes the channel and drops the handle.
+    ///
+    /// Split out of [`Self::run_event_loop()`] so that `FuzzConnection::poll_handles()` drives
+    /// this exact code rather than a copy of it.
+    fn on_handle_message(&mut self, channel_id: ChannelId, message: Option<Message>) {
+        let failed = match message {
+            None => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    peer = ?self.peer,
+                    ?channel_id,
+                    "channel closed",
+                );
+
+                true
+            }
+            Some(Message { payload, flag }) =>
+                match self.on_outbound_data(channel_id, payload, flag) {
+                    Ok(()) => false,
+                    Err(error) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?channel_id,
+                            ?flag,
+                            ?error,
+                            "failed to send data to remote peer",
+                        );
+
+                        true
+                    }
+                },
+        };
+
+        if failed {
+            self.rtc.direct_api().close_data_channel(channel_id);
+            self.channels.insert(channel_id, ChannelState::Closing);
+            self.handles.remove(&channel_id);
+        }
+    }
+
     /// Handle outbound data with optional flag.
     fn on_outbound_data(
         &mut self,
@@ -1367,33 +1410,7 @@ impl WebRtcConnection {
                         );
                         return self.on_connection_closed().await;
                     },
-                    Some((channel_id, None)) => {
-                        tracing::trace!(
-                            target: LOG_TARGET,
-                            peer = ?self.peer,
-                            ?channel_id,
-                            "channel closed",
-                        );
-
-                        self.rtc.direct_api().close_data_channel(channel_id);
-                        self.channels.insert(channel_id, ChannelState::Closing);
-                        self.handles.remove(&channel_id);
-                    }
-                    Some((channel_id, Some(Message { payload, flag }))) => {
-                        if let Err(error) = self.on_outbound_data(channel_id, payload, flag) {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?channel_id,
-                                ?flag,
-                                ?error,
-                                "failed to send data to remote peer",
-                            );
-
-                            self.rtc.direct_api().close_data_channel(channel_id);
-                            self.channels.insert(channel_id, ChannelState::Closing);
-                            self.handles.remove(&channel_id);
-                        }
-                    }
+                    Some((channel_id, message)) => self.on_handle_message(channel_id, message),
                 },
                 command = self.protocol_set.next() => match command {
                     None | Some(ProtocolCommand::ForceClose) => {
@@ -1530,3 +1547,7 @@ impl WebRtcConnection {
         }
     }
 }
+
+/// Test and fuzz scaffolding; see [`fuzz::FuzzConnection`].
+#[cfg(any(test, feature = "fuzz"))]
+pub(crate) mod fuzz;

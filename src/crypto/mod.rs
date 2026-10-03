@@ -27,7 +27,14 @@ pub mod ed25519;
 #[cfg(feature = "rsa")]
 pub mod rsa;
 
+// Exposed under `fuzz`: `webrtc-codec` drives `fuzz_parse_handshake_payload` (the identity-payload
+// parser) from raw bytes, and `webrtc-datagram` uses the responder helpers to complete a real
+// handshake against the listener.
+#[cfg(not(feature = "fuzz"))]
 pub(crate) mod noise;
+#[cfg(feature = "fuzz")]
+pub mod noise;
+
 #[cfg(feature = "quic")]
 pub(crate) mod tls;
 pub(crate) mod keys_proto {
