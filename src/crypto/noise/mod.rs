@@ -257,9 +257,10 @@ impl NoiseContext {
         let mut message = BytesMut::zeroed(size as usize);
         io.read_exact(&mut message).await?;
 
-        // TODO: https://github.com/paritytech/litep2p/issues/332 use correct overhead.
-        let mut out = BytesMut::new();
-        out.resize(message.len() + 200, 0u8);
+        // Noise decryption strips the 16-byte AEAD (Poly1305) tag, so the decrypted
+        // plaintext is never larger than the ciphertext. `message.len()` is therefore
+        // a guaranteed-sufficient upper bound for the output buffer.
+        let mut out = BytesMut::zeroed(message.len());
 
         let NoiseState::Handshake(ref mut noise) = self.noise else {
             tracing::error!(target: LOG_TARGET, "invalid state to read handshake message");
