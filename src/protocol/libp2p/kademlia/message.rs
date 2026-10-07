@@ -357,6 +357,36 @@ impl KademliaMessage {
             }
         }
     }
+
+    /// Remove non-global addresses of the peers carried in the message.
+    ///
+    /// Closer peers left without addresses are dropped, as they are unreachable. Providers are
+    /// kept: the provider identity is the payload and can be resolved with `FIND_NODE`.
+    pub fn retain_global_addresses(&mut self) {
+        fn retain_closer_peers(peers: &mut Vec<KademliaPeer>) {
+            peers.retain_mut(|peer| {
+                if peer.address_store.is_empty() {
+                    return true;
+                }
+                peer.retain_global_addresses();
+                !peer.address_store.is_empty()
+            });
+        }
+
+        match self {
+            Self::FindNode { peers, .. } | Self::GetRecord { peers, .. } =>
+                retain_closer_peers(peers),
+            Self::GetProviders {
+                peers, providers, ..
+            } => {
+                retain_closer_peers(peers);
+                providers.iter_mut().for_each(KademliaPeer::retain_global_addresses);
+            }
+            Self::AddProvider { providers, .. } =>
+                providers.iter_mut().for_each(KademliaPeer::retain_global_addresses),
+            Self::PutValue { .. } => {}
+        }
+    }
 }
 
 fn record_to_schema(record: Record) -> schema::kademlia::Record {
@@ -399,6 +429,7 @@ fn record_from_schema(record: schema::kademlia::Record) -> Option<Record> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use multiaddr::Multiaddr;
 
     #[test]
     fn non_empty_publisher_and_ttl_are_preserved() {
@@ -435,5 +466,55 @@ mod tests {
         let got_record = record_from_schema(record_to_schema(record.clone())).unwrap();
 
         assert_eq!(got_record, record);
+    }
+
+    #[test]
+    fn retain_global_addresses() {
+        let peer = |addresses: &[&str]| {
+            KademliaPeer::new(
+                PeerId::random(),
+                addresses.iter().map(|address| address.parse().unwrap()).collect(),
+                ConnectionType::NotConnected,
+            )
+        };
+        let private_only = peer(&["/ip4/10.0.0.1/tcp/30333", "/ip6/fd00::1/tcp/30333"]);
+        let mixed = peer(&["/ip4/192.168.1.1/tcp/30333", "/ip4/8.8.8.8/tcp/30333"]);
+        let dns = peer(&["/dns/example.com/tcp/30333"]);
+        let no_addresses = peer(&[]);
+
+        let mut message = KademliaMessage::GetProviders {
+            key: None,
+            peers: vec![
+                private_only.clone(),
+                mixed.clone(),
+                dns.clone(),
+                no_addresses.clone(),
+            ],
+            providers: vec![private_only.clone(), mixed.clone()],
+        };
+        message.retain_global_addresses();
+
+        let KademliaMessage::GetProviders {
+            peers, providers, ..
+        } = message
+        else {
+            panic!("message type changed");
+        };
+
+        // Closer peers left without addresses are dropped.
+        assert_eq!(
+            peers.iter().map(|peer| peer.peer).collect::<Vec<_>>(),
+            vec![mixed.peer, dns.peer, no_addresses.peer],
+        );
+        assert_eq!(
+            peers[0].addresses(),
+            vec!["/ip4/8.8.8.8/tcp/30333".parse::<Multiaddr>().unwrap()],
+        );
+        assert_eq!(peers[1].addresses(), dns.addresses());
+
+        // Providers are kept even if left without addresses.
+        assert_eq!(providers[0].peer, private_only.peer);
+        assert!(providers[0].addresses().is_empty());
+        assert_eq!(providers[1].addresses(), peers[0].addresses());
     }
 }

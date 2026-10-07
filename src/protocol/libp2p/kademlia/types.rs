@@ -26,7 +26,7 @@
 
 use crate::{
     protocol::libp2p::kademlia::schema,
-    transport::manager::address::{AddressRecord, AddressStore},
+    transport::manager::address::{is_global_multiaddr, AddressRecord, AddressStore},
     PeerId,
 };
 
@@ -287,6 +287,11 @@ impl KademliaPeer {
     /// Returns the addresses of the peer.
     pub fn addresses(&self) -> Vec<Multiaddr> {
         self.address_store.addresses(MAX_ADDRESSES)
+    }
+
+    /// Remove non-global addresses of the peer.
+    pub(super) fn retain_global_addresses(&mut self) {
+        self.address_store.addresses.retain(|address, _| is_global_multiaddr(address));
     }
 }
 

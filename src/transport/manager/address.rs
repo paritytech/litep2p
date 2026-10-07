@@ -127,7 +127,7 @@ impl AddressRecord {
 /// Check if a multiaddr represents a global/public address.
 ///
 /// DNS addresses are considered potentially public.
-fn is_global_multiaddr(address: &Multiaddr) -> bool {
+pub(crate) fn is_global_multiaddr(address: &Multiaddr) -> bool {
     for protocol in address.iter() {
         match protocol {
             Protocol::Ip4(ip) => return IpNetwork::from(ip).is_global(),
