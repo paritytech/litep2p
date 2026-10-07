@@ -102,7 +102,7 @@ pub struct Config {
     /// Default record TTL.
     pub(super) record_ttl: Duration,
 
-    /// Remote address mode.
+    /// Whether to accept non-global addresses from remote peers.
     pub(super) remote_address_mode: RemoteAddressMode,
 
     /// Provider record TTL.
@@ -211,7 +211,7 @@ pub struct ConfigBuilder {
     /// Default TTL for the records.
     pub(super) record_ttl: Duration,
 
-    /// Remote address mode.
+    /// Whether to accept non-global addresses from remote peers.
     pub(super) remote_address_mode: RemoteAddressMode,
 
     /// Memory store configuration.
@@ -304,7 +304,7 @@ impl ConfigBuilder {
         self
     }
 
-    /// Set which addresses received from remote peers are accepted.
+    /// Set whether non-global addresses received from remote peers are accepted.
     ///
     /// If unspecified, all addresses are accepted ([`RemoteAddressMode::All`]).
     pub fn with_remote_address_mode(mut self, mode: RemoteAddressMode) -> Self {
