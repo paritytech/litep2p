@@ -57,7 +57,7 @@ use std::{
 pub use config::{Config, ConfigBuilder, KademliaMode};
 pub use handle::{
     IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle, Quorum,
-    RoutingTableUpdateMode,
+    RemoteAddressMode, RoutingTableUpdateMode,
 };
 pub use query::QueryId;
 pub use record::{ContentProvider, Key as RecordKey, PeerRecord, Record};
@@ -178,8 +178,8 @@ pub(crate) struct Kademlia {
     /// Default record TTL.
     record_ttl: Duration,
 
-    /// Drop non-global addresses received from remote peers.
-    global_addresses_only: bool,
+    /// Remote address mode.
+    remote_address_mode: RemoteAddressMode,
 
     /// Query engine.
     engine: QueryEngine,
@@ -220,7 +220,7 @@ impl Kademlia {
             mode: config.mode,
             validation_mode: config.validation_mode,
             record_ttl: config.record_ttl,
-            global_addresses_only: config.global_addresses_only,
+            remote_address_mode: config.remote_address_mode,
             replication_factor: config.replication_factor,
             engine: QueryEngine::new(local_peer_id, config.replication_factor, PARALLELISM_FACTOR),
         }
@@ -491,7 +491,7 @@ impl Kademlia {
 
         let mut message = KademliaMessage::from_bytes(message, self.replication_factor)
             .ok_or(Error::InvalidData)?;
-        if self.global_addresses_only {
+        if self.remote_address_mode == RemoteAddressMode::GlobalOnly {
             message.retain_global_addresses();
         }
 
@@ -1474,16 +1474,12 @@ mod tests {
     }
 
     fn make_kademlia() -> (Kademlia, Context, TransportManager) {
-        make_kademlia_with_mode(KademliaMode::Server)
-    }
-
-    fn make_kademlia_with_mode(mode: KademliaMode) -> (Kademlia, Context, TransportManager) {
-        make_kademlia_with(mode, false)
+        make_kademlia_with(KademliaMode::Server, RemoteAddressMode::All)
     }
 
     fn make_kademlia_with(
         mode: KademliaMode,
-        global_addresses_only: bool,
+        remote_address_mode: RemoteAddressMode,
     ) -> (Kademlia, Context, TransportManager) {
         let manager = TransportManagerBuilder::new().build();
 
@@ -1510,7 +1506,7 @@ mod tests {
             mode,
             validation_mode: IncomingRecordValidationMode::Automatic,
             record_ttl: Duration::from_secs(36 * 60 * 60),
-            global_addresses_only,
+            remote_address_mode,
             memory_store_config: Default::default(),
             event_tx,
             cmd_rx,
@@ -1700,7 +1696,8 @@ mod tests {
 
     #[tokio::test]
     async fn client_mode_ignores_inbound_substreams() {
-        let (mut kademlia, _context, _manager) = make_kademlia_with_mode(KademliaMode::Client);
+        let (mut kademlia, _context, _manager) =
+            make_kademlia_with(KademliaMode::Client, RemoteAddressMode::All);
 
         let peer = PeerId::random();
         let mut substream = MockSubstream::new();
@@ -1886,7 +1883,8 @@ mod tests {
 
     #[tokio::test]
     async fn non_global_addresses_dropped_from_responses() {
-        let (mut kademlia, mut context, _manager) = make_kademlia_with(KademliaMode::Server, true);
+        let (mut kademlia, mut context, _manager) =
+            make_kademlia_with(KademliaMode::Server, RemoteAddressMode::GlobalOnly);
 
         let private_peer = PeerId::random();
         let private = KademliaPeer::new(
@@ -1928,7 +1926,8 @@ mod tests {
 
     #[tokio::test]
     async fn non_global_addresses_dropped_from_incoming_provider() {
-        let (mut kademlia, mut context, _manager) = make_kademlia_with(KademliaMode::Server, true);
+        let (mut kademlia, mut context, _manager) =
+            make_kademlia_with(KademliaMode::Server, RemoteAddressMode::GlobalOnly);
 
         let key = RecordKey::from(vec![1, 2, 3]);
         let provider = PeerId::random();

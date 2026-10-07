@@ -23,7 +23,7 @@ use crate::{
     protocol::libp2p::kademlia::{
         handle::{
             IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle,
-            RoutingTableUpdateMode,
+            RemoteAddressMode, RoutingTableUpdateMode,
         },
         store::MemoryStoreConfig,
     },
@@ -102,8 +102,8 @@ pub struct Config {
     /// Default record TTL.
     pub(super) record_ttl: Duration,
 
-    /// Drop non-global addresses received from remote peers.
-    pub(super) global_addresses_only: bool,
+    /// Remote address mode.
+    pub(super) remote_address_mode: RemoteAddressMode,
 
     /// Provider record TTL.
     pub(super) memory_store_config: MemoryStoreConfig,
@@ -137,7 +137,7 @@ impl Config {
         mode: KademliaMode,
         validation_mode: IncomingRecordValidationMode,
         record_ttl: Duration,
-        global_addresses_only: bool,
+        remote_address_mode: RemoteAddressMode,
         memory_store_config: MemoryStoreConfig,
         max_message_size: usize,
     ) -> (Self, KademliaHandle) {
@@ -157,7 +157,7 @@ impl Config {
                 mode,
                 validation_mode,
                 record_ttl,
-                global_addresses_only,
+                remote_address_mode,
                 memory_store_config,
                 codec: ProtocolCodec::UnsignedVarint(Some(max_message_size)),
                 replication_factor,
@@ -180,7 +180,7 @@ impl Config {
             KademliaMode::Server,
             IncomingRecordValidationMode::Automatic,
             DEFAULT_TTL,
-            false,
+            RemoteAddressMode::All,
             Default::default(),
             DEFAULT_MAX_MESSAGE_SIZE,
         )
@@ -211,8 +211,8 @@ pub struct ConfigBuilder {
     /// Default TTL for the records.
     pub(super) record_ttl: Duration,
 
-    /// Drop non-global addresses received from remote peers.
-    pub(super) global_addresses_only: bool,
+    /// Remote address mode.
+    pub(super) remote_address_mode: RemoteAddressMode,
 
     /// Memory store configuration.
     pub(super) memory_store_config: MemoryStoreConfig,
@@ -238,7 +238,7 @@ impl ConfigBuilder {
             mode: KademliaMode::Server,
             validation_mode: IncomingRecordValidationMode::Automatic,
             record_ttl: DEFAULT_TTL,
-            global_addresses_only: false,
+            remote_address_mode: RemoteAddressMode::All,
             memory_store_config: Default::default(),
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
         }
@@ -304,14 +304,11 @@ impl ConfigBuilder {
         self
     }
 
-    /// Drop non-global IP addresses of peers and providers received from remote peers, so
-    /// Kademlia neither dials nor stores them. Peers left without addresses are not used as
-    /// query candidates. DNS addresses are kept.
+    /// Set which addresses received from remote peers are accepted.
     ///
-    /// Locally supplied addresses (known peers, [`KademliaHandle::add_known_peer`]) are not
-    /// affected. Disabled by default.
-    pub fn with_global_addresses_only(mut self, global_addresses_only: bool) -> Self {
-        self.global_addresses_only = global_addresses_only;
+    /// If unspecified, all addresses are accepted ([`RemoteAddressMode::All`]).
+    pub fn with_remote_address_mode(mut self, mode: RemoteAddressMode) -> Self {
+        self.remote_address_mode = mode;
         self
     }
 
@@ -393,7 +390,7 @@ impl ConfigBuilder {
             self.mode,
             self.validation_mode,
             self.record_ttl,
-            self.global_addresses_only,
+            self.remote_address_mode,
             self.memory_store_config,
             self.max_message_size,
         )

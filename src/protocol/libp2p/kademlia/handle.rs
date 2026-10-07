@@ -76,6 +76,20 @@ pub enum IncomingRecordValidationMode {
     Automatic,
 }
 
+/// Which addresses received from remote peers are accepted.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum RemoteAddressMode {
+    /// Accept all addresses.
+    All,
+
+    /// Drop non-global IP addresses, so Kademlia neither dials nor stores them. Peers left
+    /// without addresses are not used as query candidates. DNS addresses are kept.
+    ///
+    /// Locally supplied addresses (known peers, [`KademliaHandle::add_known_peer()`]) are not
+    /// affected.
+    GlobalOnly,
+}
+
 /// Kademlia commands.
 #[derive(Debug)]
 #[cfg_attr(feature = "fuzz", derive(serde::Serialize, serde::Deserialize))]
