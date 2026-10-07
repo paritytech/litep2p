@@ -365,9 +365,6 @@ impl KademliaMessage {
     pub fn retain_global_addresses(&mut self) {
         fn retain_closer_peers(peers: &mut Vec<KademliaPeer>) {
             peers.retain_mut(|peer| {
-                if peer.address_store.is_empty() {
-                    return true;
-                }
                 peer.retain_global_addresses();
                 !peer.address_store.is_empty()
             });
@@ -504,7 +501,7 @@ mod tests {
         // Closer peers left without addresses are dropped.
         assert_eq!(
             peers.iter().map(|peer| peer.peer).collect::<Vec<_>>(),
-            vec![mixed.peer, dns.peer, no_addresses.peer],
+            vec![mixed.peer, dns.peer],
         );
         assert_eq!(
             peers[0].addresses(),

@@ -291,7 +291,7 @@ impl KademliaPeer {
 
     /// Remove non-global addresses of the peer.
     pub(super) fn retain_global_addresses(&mut self) {
-        self.address_store.addresses.retain(|address, _| is_global_multiaddr(address));
+        self.address_store.retain(is_global_multiaddr);
     }
 }
 

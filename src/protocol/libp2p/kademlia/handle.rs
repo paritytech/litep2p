@@ -82,11 +82,11 @@ pub enum RemoteAddressMode {
     /// Accept all addresses.
     All,
 
-    /// Drop non-global IP addresses, so Kademlia neither dials nor stores them. Peers left
-    /// without addresses are not used as query candidates. DNS addresses are kept.
+    /// Drop non-global IP addresses of peers and providers received from remote peers. Closer
+    /// peers left without addresses are not used as query candidates. DNS addresses are kept.
     ///
-    /// Locally supplied addresses (known peers, [`KademliaHandle::add_known_peer()`]) are not
-    /// affected.
+    /// Locally supplied addresses (known peers, [`KademliaHandle::add_known_peer()`], addresses
+    /// of connections we dialed) are not affected.
     GlobalOnly,
 }
 

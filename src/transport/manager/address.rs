@@ -289,6 +289,11 @@ impl AddressStore {
         self.addresses.insert(record.address.clone(), record);
     }
 
+    /// Retain only the addresses matching `predicate`.
+    pub fn retain(&mut self, mut predicate: impl FnMut(&Multiaddr) -> bool) {
+        self.addresses.retain(|address, _| predicate(address));
+    }
+
     /// Return the available addresses sorted by score.
     pub fn addresses(&self, limit: usize) -> Vec<Multiaddr> {
         let mut records = self.addresses.values().cloned().collect::<Vec<_>>();
