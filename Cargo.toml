@@ -90,7 +90,8 @@ rcgen = { version = "0.14.5", optional = true }
 # End of Quic related dependencies.
 
 # WebRTC related dependencies. WebRTC is an experimental feature flag. The dependencies must be updated.
-str0m = { version = "0.23.1", default-features = false, features = ["openssl", "vendored"], optional = true }
+# str0m = { version = "0.23.1", default-features = false, features = ["openssl", "vendored"], optional = true }
+str0m = { git = "https://github.com/gab8i/str0m.git", branch = "gab_sctp_patched", default-features = false, features = ["openssl", "vendored"], optional = true }
 quinn-udp = { version = "0.6.1", default-features = false, features = ["tracing"], optional = true }
 # End of WebRTC related dependencies.
 
