@@ -764,7 +764,11 @@ impl Sink<Bytes> for Substream {
             }
         }
 
-        poll_flush!(&mut self.substream, cx).map_err(From::from)
+        match poll_flush!(&mut self.substream, cx) {
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error.into())),
+            _ if self.pending_out_frame.is_some() => Poll::Pending,
+            flushed => flushed.map_err(From::from),
+        }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -1085,5 +1089,72 @@ mod tests {
         for _ in 0..10 {
             assert!(futures::poll!(set.next()).is_pending());
         }
+    }
+
+    #[tokio::test]
+    async fn sink_waits_for_remote_to_read() {
+        use futures::future::poll_fn;
+        use std::time::Duration;
+        use tokio_util::compat::FuturesAsyncReadCompatExt;
+
+        const FRAME_SIZE: usize = 64 * 1024;
+        const FRAMES: u8 = 32;
+
+        let (client_io, server_io) = futures_ringbuf::Endpoint::pair(1 << 20, 1 << 20);
+        let mut client = crate::yamux::Connection::new(
+            client_io,
+            crate::yamux::Config::default(),
+            crate::yamux::Mode::Client,
+        );
+        let mut server = crate::yamux::Connection::new(
+            server_io,
+            crate::yamux::Config::default(),
+            crate::yamux::Mode::Server,
+        );
+        let outbound = poll_fn(|cx| client.poll_new_outbound(cx)).await.unwrap();
+        tokio::spawn(
+            async move { while poll_fn(|cx| client.poll_next_inbound(cx)).await.is_some() {} },
+        );
+        let (inbound_tx, inbound_rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let _ = inbound_tx.send(poll_fn(|cx| server.poll_next_inbound(cx)).await);
+            while poll_fn(|cx| server.poll_next_inbound(cx)).await.is_some() {}
+        });
+
+        let substream = |stream| {
+            Substream::new_tcp(
+                PeerId::random(),
+                SubstreamId::new(),
+                tcp::Substream::new(
+                    FuturesAsyncReadCompatExt::compat(stream),
+                    crate::BandwidthSink::new(),
+                    None,
+                ),
+                ProtocolCodec::UnsignedVarint(Some(FRAME_SIZE)),
+            )
+        };
+
+        let mut sender = substream(outbound);
+        let sending = tokio::spawn(async move {
+            for frame in 0..FRAMES {
+                sender.send(Bytes::from(vec![frame; FRAME_SIZE])).await.unwrap();
+            }
+            sender
+        });
+
+        // The remote has read nothing yet, so the sender runs out of yamux send credit and waits
+        let mut receiver = substream(inbound_rx.await.unwrap().unwrap().unwrap());
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!sending.is_finished());
+
+        for frame in 0..FRAMES {
+            let received = tokio::time::timeout(Duration::from_secs(5), receiver.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert_eq!(received, vec![frame; FRAME_SIZE]);
+        }
+        tokio::time::timeout(Duration::from_secs(5), sending).await.unwrap().unwrap();
     }
 }
