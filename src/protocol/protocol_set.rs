@@ -397,13 +397,21 @@ impl ProtocolSet {
             "failed to open substream",
         );
 
-        self.protocols
-            .get_mut(&protocol)
-            .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?
+        let protocol_context = self
+            .protocols
+            .get(&protocol)
+            .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?;
+
+        if protocol_context
             .tx
             .send(InnerTransportEvent::SubstreamOpenFailure { substream, error })
             .await
-            .map_err(From::from)
+            .is_err()
+        {
+            self.on_protocol_closed(protocol);
+        }
+
+        Ok(())
     }
 
     /// Report to protocols that a connection was established.
@@ -822,5 +830,37 @@ mod tests {
             .unwrap();
 
         assert!(protocol_set.try_get_permit().is_none());
+    }
+
+    #[tokio::test]
+    async fn substream_open_failure_with_closed_protocol() {
+        let (tx, _rx) = channel(64);
+        let (tx1, rx1) = channel(64);
+        drop(rx1);
+
+        let mut protocol_set = ProtocolSet::new(
+            ConnectionId::from(0usize),
+            tx,
+            Default::default(),
+            HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolContext {
+                    tx: tx1,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
+                    keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
+                },
+            )]),
+        );
+
+        protocol_set
+            .report_substream_open_failure(
+                ProtocolName::from("/notif/1"),
+                SubstreamId::from(0usize),
+                SubstreamError::ConnectionClosed,
+            )
+            .await
+            .unwrap();
     }
 }
