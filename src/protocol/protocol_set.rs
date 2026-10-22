@@ -45,7 +45,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 #[cfg(any(feature = "quic", feature = "webrtc", feature = "websocket"))]
 use std::sync::atomic::Ordering;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Debug,
     pin::Pin,
     sync::{atomic::AtomicUsize, Arc},
@@ -237,6 +237,8 @@ pub struct ProtocolSet {
     fallback_names: HashMap<ProtocolName, ProtocolName>,
     /// Connection keep-alive settings for both main & fallback protocol names.
     keep_alives: HashMap<ProtocolName, SubstreamKeepAlive>,
+    /// Protocols whose receiver has been dropped.
+    closed_protocols: HashSet<ProtocolName>,
 }
 
 impl ProtocolSet {
@@ -287,6 +289,18 @@ impl ProtocolSet {
             fallback_names,
             keep_alives,
             connection: ConnectionHandle::new(connection_id, tx),
+            closed_protocols: HashSet::new(),
+        }
+    }
+
+    fn on_protocol_closed(&mut self, protocol: ProtocolName) {
+        if self.closed_protocols.insert(protocol.clone()) {
+            tracing::debug!(
+                target: LOG_TARGET,
+                %protocol,
+                connection_id = ?self.connection.connection_id(),
+                "protocol has exited, dropping its events",
+            );
         }
     }
 
@@ -399,10 +413,10 @@ impl ProtocolSet {
         endpoint: Endpoint,
     ) -> crate::Result<()> {
         let connection_handle = self.connection.downgrade();
-        let mut futures = self
+        let closed = self
             .protocols
-            .values()
-            .map(|sender| {
+            .iter()
+            .map(|(protocol, sender)| {
                 let endpoint = endpoint.clone();
                 let connection_handle = connection_handle.clone();
 
@@ -416,14 +430,17 @@ impl ProtocolSet {
                             sender: connection_handle,
                         })
                         .await
+                        .is_err()
+                        .then(|| protocol.clone())
                 }
             })
-            .collect::<FuturesUnordered<_>>();
+            .collect::<FuturesUnordered<_>>()
+            .filter_map(futures::future::ready)
+            .collect::<Vec<_>>()
+            .await;
 
-        while !futures.is_empty() {
-            if let Some(Err(error)) = futures.next().await {
-                return Err(error.into());
-            }
+        for protocol in closed {
+            self.on_protocol_closed(protocol);
         }
 
         Ok(())
@@ -708,5 +725,58 @@ mod tests {
             }
             _ => panic!("invalid event received"),
         }
+    }
+
+    #[tokio::test]
+    async fn connection_established_with_closed_protocol() {
+        let (tx, _rx) = channel(64);
+        let (tx1, rx1) = channel(64);
+        let (tx2, mut rx2) = channel(64);
+        drop(rx1);
+
+        let mut protocol_set = ProtocolSet::new(
+            ConnectionId::from(0usize),
+            tx,
+            Default::default(),
+            HashMap::from_iter([
+                (
+                    ProtocolName::from("/notif/1"),
+                    ProtocolContext {
+                        tx: tx1,
+                        codec: ProtocolCodec::Identity(32),
+                        fallback_names: Vec::new(),
+                        keep_alive: SubstreamKeepAlive::Yes,
+                        inbound: InboundProtocol::Accept,
+                    },
+                ),
+                (
+                    ProtocolName::from("/notif/2"),
+                    ProtocolContext {
+                        tx: tx2,
+                        codec: ProtocolCodec::Identity(32),
+                        fallback_names: Vec::new(),
+                        keep_alive: SubstreamKeepAlive::Yes,
+                        inbound: InboundProtocol::Accept,
+                    },
+                ),
+            ]),
+        );
+
+        protocol_set
+            .report_connection_established(
+                PeerId::random(),
+                Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
+            )
+            .await
+            .unwrap();
+
+        let handle = match rx2.recv().await.unwrap() {
+            InnerTransportEvent::ConnectionEstablished { sender, .. } => sender,
+            event => panic!("invalid event received: {event:?}"),
+        };
+        assert!(protocol_set.try_get_permit().is_some());
+
+        drop(handle);
+        assert!(protocol_set.try_get_permit().is_none());
     }
 }
