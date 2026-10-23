@@ -33,7 +33,7 @@ use socket2::{Domain, Socket, Type};
 use tokio::net::{TcpListener as TokioTcpListener, TcpStream};
 
 use std::{
-    io,
+    io::{self, ErrorKind},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::Arc,
@@ -157,7 +157,7 @@ impl DialAddresses {
 /// Socket listening to zero or more addresses.
 pub struct SocketListener {
     /// Listeners.
-    listeners: Vec<TokioTcpListener>,
+    listeners: Vec<Option<TokioTcpListener>>,
     /// The index in the listeners from which the polling is resumed.
     poll_index: usize,
 }
@@ -308,7 +308,7 @@ impl SocketListener {
                     vec![local_address]
                 };
 
-                Some((listener, listen_addresses))
+                Some((Some(listener), listen_addresses))
             })
             .unzip();
 
@@ -455,17 +455,43 @@ impl Stream for SocketListener {
         let len = self.listeners.len();
         for index in 0..len {
             let current = (self.poll_index + index) % len;
-            let listener = &mut self.listeners[current];
 
-            match listener.poll_accept(cx) {
-                Poll::Pending => {}
-                Poll::Ready(Err(error)) => {
-                    self.poll_index = (self.poll_index + 1) % len;
-                    return Poll::Ready(Some(Err(error)));
-                }
-                Poll::Ready(Ok((stream, address))) => {
-                    self.poll_index = (self.poll_index + 1) % len;
-                    return Poll::Ready(Some(Ok((stream, address))));
+            let Some(listener) = &mut self.listeners[current] else {
+                continue;
+            };
+
+            loop {
+                match listener.poll_accept(cx) {
+                    Poll::Pending => {
+                        break;
+                    }
+                    Poll::Ready(Ok((stream, address))) => {
+                        self.poll_index = (self.poll_index + 1) % len;
+                        return Poll::Ready(Some(Ok((stream, address))));
+                    }
+                    Poll::Ready(Err(error)) => match error.kind() {
+                        ErrorKind::ConnectionAborted | ErrorKind::ConnectionReset => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?error,
+                                "Recoverable error for listener, continuing",
+                            );
+                            // Poll again the listener on recoverable errors.
+                            continue;
+                        }
+                        _ => {
+                            self.poll_index = (self.poll_index + 1) % len;
+
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                ?error,
+                                "Fatal error for listener",
+                            );
+                            self.listeners[current] = None;
+
+                            return Poll::Ready(Some(Err(error)));
+                        }
+                    },
                 }
             }
         }
