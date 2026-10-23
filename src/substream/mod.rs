@@ -744,11 +744,20 @@ impl Sink<Bytes> for Substream {
                 },
             };
 
+            // Empty payloads have nothing to write
+            if pending_frame.is_empty() {
+                continue;
+            }
+
             match poll_write!(&mut self.substream, cx, &pending_frame) {
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error.into())),
                 Poll::Pending => {
                     self.pending_out_frame = Some(pending_frame);
-                    break;
+                    return Poll::Pending;
+                }
+                Poll::Ready(Ok(0)) => {
+                    self.pending_out_frame = Some(pending_frame);
+                    return Poll::Ready(Err(SubstreamError::IoError(ErrorKind::WriteZero)));
                 }
                 Poll::Ready(Ok(nwritten)) => {
                     pending_frame.advance(nwritten);
@@ -764,11 +773,7 @@ impl Sink<Bytes> for Substream {
             }
         }
 
-        match poll_flush!(&mut self.substream, cx) {
-            Poll::Ready(Err(error)) => Poll::Ready(Err(error.into())),
-            _ if self.pending_out_frame.is_some() => Poll::Pending,
-            flushed => flushed.map_err(From::from),
-        }
+        poll_flush!(&mut self.substream, cx).map_err(From::from)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
