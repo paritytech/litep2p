@@ -100,6 +100,11 @@ impl KBucket {
         KBucketEntry::NoSlot
     }
 
+    /// Number of entries in the bucket with at least one known address.
+    pub fn num_entries(&self) -> usize {
+        self.nodes.iter().filter(|peer| !peer.address_store.is_empty()).count()
+    }
+
     /// Get iterator over the k-bucket, sorting the k-bucket entries in increasing order
     /// by distance.
     pub fn closest_iter<K: Clone>(&self, target: &Key<K>) -> impl Iterator<Item = &KademliaPeer> {
