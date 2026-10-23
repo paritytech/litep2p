@@ -417,20 +417,10 @@ impl Transport for TcpTransport {
             protocol_set.report_connection_established(peer, endpoint).await?;
 
             // After protocols are notified, spawn the connection event loop
-            executor.run(Box::pin(async move {
-                if let Err(error) =
-                    TcpConnection::new(context, protocol_set, bandwidth_sink, next_substream_id)
-                        .start()
-                        .await
-                {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?connection_id,
-                        ?error,
-                        "connection exited with error",
-                    );
-                }
-            }));
+            executor.run(Box::pin(
+                TcpConnection::new(context, protocol_set, bandwidth_sink, next_substream_id)
+                    .start(),
+            ));
 
             Ok(())
         }))
@@ -731,7 +721,9 @@ mod tests {
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
         protocol::SubstreamKeepAlive,
-        transport::manager::{ProtocolContext, SupportedTransport, TransportManagerBuilder},
+        transport::manager::{
+            InboundProtocol, ProtocolContext, SupportedTransport, TransportManagerBuilder,
+        },
         types::protocol::ProtocolName,
         BandwidthSink, PeerId,
     };
@@ -765,6 +757,7 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         };
@@ -797,6 +790,7 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         };
@@ -861,6 +855,7 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         };
@@ -893,6 +888,7 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         };
@@ -952,6 +948,7 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         };
@@ -991,6 +988,7 @@ mod tests {
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                     keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
                 },
             )]),
         };

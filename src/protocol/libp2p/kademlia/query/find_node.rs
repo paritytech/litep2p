@@ -133,11 +133,18 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
     }
 
     /// Register `FIND_NODE` response from `peer`.
-    pub fn register_response(&mut self, peer: PeerId, peers: Vec<KademliaPeer>) {
+    ///
+    /// Returns the responding peer, proving it operates in server mode.
+    pub fn register_response(
+        &mut self,
+        peer: PeerId,
+        peers: Vec<KademliaPeer>,
+    ) -> Option<KademliaPeer> {
         let Some((peer, instant)) = self.pending.remove(&peer) else {
             tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "received response from peer but didn't expect it");
-            return;
+            return None;
         };
+        let proven_responder = peer.clone();
         self.pending_responses = self.pending_responses.saturating_sub(1);
 
         tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, elapsed = ?instant.elapsed(), "received response from peer");
@@ -192,6 +199,8 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             let distance = self.config.target.distance(&candidate.key);
             self.candidates.insert(distance, candidate);
         }
+
+        Some(proven_responder)
     }
 
     /// Register a failure of sending `FIN_NODE` request to `peer`.
@@ -357,6 +366,23 @@ mod tests {
         };
 
         (closest, furthest, config)
+    }
+
+    #[test]
+    fn register_response_returns_proven_responder() {
+        let config = default_config();
+        let peer = PeerId::random();
+        let mut context = FindNodeContext::new(config, VecDeque::from([peer_to_kad(peer)]));
+
+        // move the candidate to the pending set
+        let _ = context.next_action();
+        assert!(context.pending.contains_key(&peer));
+
+        let proven = context.register_response(peer, vec![]).expect("proven responder");
+        assert_eq!(proven.peer, peer);
+
+        // a peer that was never queried produces no proof
+        assert!(context.register_response(PeerId::random(), vec![]).is_none());
     }
 
     #[test]

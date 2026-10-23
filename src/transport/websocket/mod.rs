@@ -421,24 +421,15 @@ impl Transport for WebSocketTransport {
             protocol_set.report_connection_established(peer, endpoint).await?;
 
             // After protocols are notified, spawn the connection event loop
-            executor.run(Box::pin(async move {
-                if let Err(error) = WebSocketConnection::new(
+            executor.run(Box::pin(
+                WebSocketConnection::new(
                     context,
                     protocol_set,
                     bandwidth_sink,
                     substream_open_timeout,
                 )
-                .start()
-                .await
-                {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?connection_id,
-                        ?error,
-                        "connection exited with error",
-                    );
-                }
-            }));
+                .start(),
+            ));
 
             Ok(())
         }))

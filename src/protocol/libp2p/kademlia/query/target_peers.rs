@@ -18,11 +18,16 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 use crate::{
-    protocol::libp2p::kademlia::{handle::Quorum, query::QueryAction, QueryId, RecordKey},
+    protocol::libp2p::kademlia::{
+        handle::Quorum, query::QueryAction, types::KademliaPeer, QueryId, RecordKey,
+    },
     PeerId,
 };
 
-use std::{cmp, collections::HashSet};
+use std::{
+    cmp,
+    collections::{HashMap, HashSet},
+};
 
 /// Logging target for this file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::target_peers";
@@ -39,6 +44,9 @@ pub struct PutToTargetPeersContext {
     /// Quorum that needs to be reached for the query to succeed.
     peers_to_succeed: usize,
 
+    /// Peers the request was sent to and their addresses.
+    peers: HashMap<PeerId, KademliaPeer>,
+
     /// Peers we're waiting for responses from.
     pending_peers: HashSet<PeerId>,
 
@@ -48,7 +56,7 @@ pub struct PutToTargetPeersContext {
 
 impl PutToTargetPeersContext {
     /// Create new [`PutToTargetPeersContext`].
-    pub fn new(query: QueryId, key: RecordKey, peers: Vec<PeerId>, quorum: Quorum) -> Self {
+    pub fn new(query: QueryId, key: RecordKey, peers: Vec<KademliaPeer>, quorum: Quorum) -> Self {
         Self {
             query,
             key,
@@ -60,7 +68,8 @@ impl PutToTargetPeersContext {
                 Quorum::N(n) => cmp::min(n.get(), cmp::max(peers.len(), 1)),
                 Quorum::All => cmp::max(peers.len(), 1),
             },
-            pending_peers: peers.into_iter().collect(),
+            pending_peers: peers.iter().map(|peer| peer.peer).collect(),
+            peers: peers.into_iter().map(|peer| (peer.peer, peer)).collect(),
             n_succeeded: 0,
         }
     }
@@ -106,7 +115,9 @@ impl PutToTargetPeersContext {
     }
 
     /// Register successful response from peer.
-    pub fn register_response(&mut self, _peer: PeerId) {
+    ///
+    /// Returns the responding peer, as answering proves it operates in server mode.
+    pub fn register_response(&mut self, peer: PeerId) -> Option<KademliaPeer> {
         // Currently we only track if we successfully sent the message to the peer both for
         // `PUT_VALUE` and `ADD_PROVIDER`. While `PUT_VALUE` has a response message, due to litep2p
         // not sending it in the past, tracking it would frequently result in reporting query
@@ -114,6 +125,8 @@ impl PutToTargetPeersContext {
 
         // TODO: once most of the network is on a litep2p version that sends `PUT_VALUE` responses,
         // we should track them.
+
+        self.peers.get(&peer).cloned()
     }
 
     /// Register failed response from peer.

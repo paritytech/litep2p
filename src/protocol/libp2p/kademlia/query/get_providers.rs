@@ -153,12 +153,14 @@ impl GetProvidersContext {
     }
 
     /// Register `GET_PROVIDERS` response from `peer`.
+    ///
+    /// Returns the responding peer, proving it operates in server mode.
     pub fn register_response(
         &mut self,
         peer: PeerId,
         providers: impl IntoIterator<Item = KademliaPeer>,
         closer_peers: impl IntoIterator<Item = KademliaPeer>,
-    ) {
+    ) -> Option<KademliaPeer> {
         tracing::trace!(
             target: LOG_TARGET,
             query = ?self.config.query,
@@ -173,7 +175,7 @@ impl GetProvidersContext {
                 ?peer,
                 "`GetProvidersContext`: received response from peer but didn't expect it",
             );
-            return;
+            return None;
         };
 
         self.found_providers.extend(providers);
@@ -205,6 +207,8 @@ impl GetProvidersContext {
             let distance = self.config.target.distance(&candidate.key);
             self.candidates.insert(distance, candidate);
         }
+
+        Some(peer)
     }
 
     /// Register a failure of sending a `GET_PROVIDERS` request to `peer`.

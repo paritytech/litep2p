@@ -24,7 +24,7 @@ use crate::{
         ed25519::Keypair,
         noise::{self, NoiseSocket},
     },
-    error::{Error, NegotiationError, SubstreamError},
+    error::{NegotiationError, SubstreamError},
     multistream_select::{dialer_select_proto, listener_select_proto, Negotiated, Version},
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet, SubstreamKeepAlive},
     substream,
@@ -466,14 +466,23 @@ impl WebSocketConnection {
 
     /// Start the connection event loop without notifying protocols.
     /// This is used when protocols have already been notified during accept().
-    pub(crate) async fn start(mut self) -> crate::Result<()> {
+    ///
+    /// Runs until the connection is closed.
+    pub(crate) async fn start(mut self) {
         loop {
             tokio::select! {
                 substream = self.connection.next() => match substream {
                     Some(Ok(stream)) => {
                         let substream = self.protocol_set.next_substream_id();
                         let protocols = self.protocol_set.protocols_with_keep_alives();
-                        let permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
+                        let Some(permit) = self.protocol_set.try_get_permit() else {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                peer = ?self.peer,
+                                "protocols have disconnected, closing connection",
+                            );
+                            break;
+                        };
                         let substream_open_timeout = self.substream_open_timeout;
 
                         self.pending_substreams.push(Box::pin(async move {
@@ -503,15 +512,11 @@ impl WebSocketConnection {
                             ?error,
                             "connection closed with error"
                         );
-                        self.protocol_set.report_connection_closed(self.peer, self.connection_id).await?;
-
-                        return Ok(())
+                        break;
                     }
                     None => {
                         tracing::debug!(target: LOG_TARGET, peer = ?self.peer, "connection closed");
-                        self.protocol_set.report_connection_closed(self.peer, self.connection_id).await?;
-
-                        return Ok(())
+                        break;
                     }
                 },
                 substream = self.pending_substreams.select_next_some(), if !self.pending_substreams.is_empty() => {
@@ -533,9 +538,19 @@ impl WebSocketConnection {
                             };
 
                             if let (Some(protocol), Some(substream_id)) = (protocol, substream_id) {
-                                self.protocol_set
-                                    .report_substream_open_failure(protocol, substream_id, error)
-                                    .await?;
+                                if let Err(error) = self.protocol_set
+                                    .report_substream_open_failure(protocol.clone(), substream_id, error)
+                                    .await
+                                {
+                                    tracing::error!(
+                                        target: LOG_TARGET,
+                                        ?protocol,
+                                        peer = ?self.peer,
+                                        ?error,
+                                        "failed to register substream open failure to protocol",
+                                    );
+                                    break;
+                                }
                             }
                         }
                         Ok(substream) => {
@@ -555,13 +570,22 @@ impl WebSocketConnection {
                                 self.protocol_set.protocol_codec(&protocol)
                             );
 
-                            self.protocol_set.report_substream_open(
+                            if let Err(error) = self.protocol_set.report_substream_open(
                                 self.peer,
-                                protocol,
+                                protocol.clone(),
                                 direction,
                                 substream,
                                 opening_permit,
-                            ).await?;
+                            ).await {
+                                tracing::error!(
+                                    target: LOG_TARGET,
+                                    ?protocol,
+                                    peer = ?self.peer,
+                                    ?error,
+                                    "failed to register opened substream to protocol",
+                                );
+                                break;
+                            }
                         }
                     }
                 }
@@ -619,15 +643,26 @@ impl WebSocketConnection {
                             connection_id = ?self.connection_id,
                             "force closing connection",
                         );
-
-                        return self.protocol_set.report_connection_closed(self.peer, self.connection_id).await
+                        break;
                     }
                     None => {
                         tracing::debug!(target: LOG_TARGET, "protocols have exited, shutting down connection");
-                        return self.protocol_set.report_connection_closed(self.peer, self.connection_id).await
+                        break;
                     }
                 }
             }
+        }
+
+        if let Err(error) =
+            self.protocol_set.report_connection_closed(self.peer, self.connection_id).await
+        {
+            tracing::debug!(
+                target: LOG_TARGET,
+                peer = ?self.peer,
+                connection_id = ?self.connection_id,
+                ?error,
+                "failed to report connection closed",
+            );
         }
     }
 }
