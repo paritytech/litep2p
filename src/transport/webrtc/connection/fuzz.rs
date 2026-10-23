@@ -62,7 +62,10 @@ impl FuzzConnection {
     pub async fn new(protocols: Vec<ProtocolName>) -> crate::Result<Self> {
         use crate::{
             codec::ProtocolCodec,
-            transport::{manager::ProtocolContext, webrtc::certificate::DtlsCertificate},
+            transport::{
+                manager::{InboundProtocol, ProtocolContext},
+                webrtc::certificate::DtlsCertificate,
+            },
             types::ConnectionId,
         };
         use std::sync::atomic::AtomicUsize;
@@ -117,6 +120,7 @@ impl FuzzConnection {
                         tx: protocol_tx.clone(),
                         fallback_names: Vec::new(),
                         keep_alive: SubstreamKeepAlive::No,
+                        inbound: InboundProtocol::Accept,
                     },
                 )
             })
