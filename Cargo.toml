@@ -46,7 +46,7 @@ snow = { version = "0.9.3", features = [
     "ring-resolver",
 ], default-features = false }
 socket2 = { version = "0.5.9", features = ["all"] }
-thiserror = "2.0.12"
+thiserror = "2.0.21"
 tokio-stream = "0.1.17"
 tokio-util = { version = "0.7.15", features = ["compat", "io", "codec"] }
 tokio = { version = "1.45.0", features = [
