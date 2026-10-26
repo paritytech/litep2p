@@ -91,7 +91,7 @@ rcgen = { version = "0.14.10", optional = true }
 
 # WebRTC related dependencies. WebRTC is an experimental feature flag. The dependencies must be updated.
 str0m = { version = "0.23.1", default-features = false, features = ["openssl", "vendored"], optional = true }
-quinn-udp = { version = "0.6.1", default-features = false, features = ["tracing"], optional = true }
+quinn-udp = { version = "0.6.3", default-features = false, features = ["tracing"], optional = true }
 # End of WebRTC related dependencies.
 
 # Fuzzing related dependencies.
