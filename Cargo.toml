@@ -95,7 +95,7 @@ quinn-udp = { version = "0.6.3", default-features = false, features = ["tracing"
 # End of WebRTC related dependencies.
 
 # Fuzzing related dependencies.
-serde_millis = { version = "0.1", optional = true }
+serde_millis = { version = "0.1.1", optional = true }
 enum-display = "0.1.4"
 # End of fuzzing related dependencies.
 
