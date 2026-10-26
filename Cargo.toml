@@ -17,7 +17,7 @@ prost-build = "0.14.4"
 async-trait = "0.1.92"
 bs58 = "0.5.1"
 bytes = "1.12.1"
-cid = "0.11.2"
+cid = "0.11.3"
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
 futures = "0.3.27"
 futures-timer = "3.0.3"
