@@ -8,7 +8,7 @@ ziggy = { version = "1.7.3", default-features = false }
 litep2p = { path = "../..", features = ["webrtc", "fuzz"] }
 bincode = "1.0.0"
 serde = { version = "1.0.219", features = ["derive"] }
-futures = "0.3.31"
+futures = "0.3.34"
 # `test-util` gives the harness `tokio::time::pause()`, so the 10s FIN_ACK timeout is
 # reachable within a fuzz iteration without patching the production constant.
 tokio = { version = "1.54.1", features = ["full", "test-util"] }
