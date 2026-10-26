@@ -19,7 +19,7 @@ bs58 = "0.5.1"
 bytes = "1.12.1"
 cid = "0.11.3"
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
-futures = "0.3.27"
+futures = "0.3.34"
 futures-timer = "3.0.3"
 indexmap = { version = "2.9.0", features = ["std"] }
 ip_network = "0.4"
