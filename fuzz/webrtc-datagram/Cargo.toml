@@ -11,7 +11,7 @@ litep2p = { path = "../..", features = ["webrtc", "fuzz"] }
 bytes = "1.10.1"
 # `test-util` gives the harness `start_paused`, so the transport can be driven without
 # spending real wall-clock time per iteration.
-tokio = { version = "1.44.1", features = ["full", "test-util"] }
+tokio = { version = "1.54.1", features = ["full", "test-util"] }
 multiaddr = "0.18.2"
 # The end-to-end client (`src/client.rs`) drives a real str0m `Rtc` against the litep2p listener.
 # Version and features match the transitive dep pulled in by litep2p so the build unifies rather

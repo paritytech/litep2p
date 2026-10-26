@@ -11,7 +11,7 @@ serde = { version = "1.0.219", features = ["derive"] }
 futures = "0.3.31"
 # `test-util` gives the harness `tokio::time::pause()`, so the 10s FIN_ACK timeout is
 # reachable within a fuzz iteration without patching the production constant.
-tokio = { version = "1.44.1", features = ["full", "test-util"] }
+tokio = { version = "1.54.1", features = ["full", "test-util"] }
 
 # Only the tests need `bytes`, to hand a `BytesMut` to `extract_framed_message` when
 # checking that the committed negotiation seed really reaches the listener.
