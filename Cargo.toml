@@ -33,7 +33,7 @@ multihash-codetable = { version = "0.2.2", default-features = false, features = 
     "blake2b",
     "sha3",
 ] }
-network-interface = "2.0.1"
+network-interface = "2.0.5"
 parking_lot = "0.12.3"
 pin-project = "1.1.10"
 prost = "0.13.5"
