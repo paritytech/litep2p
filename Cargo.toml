@@ -27,7 +27,7 @@ libc = "0.2.191"
 mockall = "0.13.1"
 multiaddr = "0.18.2"
 multibase = "0.9.3"
-multihash = { version = "0.19.4", default-features = false, features = ["std"] }
+multihash = { version = "0.19.5", default-features = false, features = ["std"] }
 multihash-codetable = { version = "0.2.1", default-features = false, features = [
     "sha2",
     "blake2b",
