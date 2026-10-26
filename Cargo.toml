@@ -49,7 +49,7 @@ socket2 = { version = "0.5.9", features = ["all"] }
 thiserror = "2.0.21"
 tokio-stream = "0.1.19"
 tokio-util = { version = "0.7.20", features = ["compat", "io", "codec"] }
-tokio = { version = "1.45.0", features = [
+tokio = { version = "1.54.1", features = [
     "rt",
     "net",
     "io-util",
