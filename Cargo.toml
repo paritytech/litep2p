@@ -14,7 +14,7 @@ ignored = ["serde_millis"]
 prost-build = "0.14.4"
 
 [dependencies]
-async-trait = "0.1.88"
+async-trait = "0.1.92"
 bs58 = "0.5.1"
 bytes = "1.11.1"
 cid = "0.11.2"
