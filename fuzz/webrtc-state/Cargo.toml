@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ziggy = { version = "1.3.1", default-features = false }
+ziggy = { version = "1.7.3", default-features = false }
 litep2p = { path = "../..", features = ["webrtc", "fuzz"] }
 bincode = "1.0.0"
 serde = { version = "1.0.219", features = ["derive"] }
