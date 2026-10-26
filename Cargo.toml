@@ -96,7 +96,7 @@ quinn-udp = { version = "0.6.3", default-features = false, features = ["tracing"
 
 # Fuzzing related dependencies.
 serde_millis = { version = "0.1.1", optional = true }
-enum-display = "0.1.4"
+enum-display = "0.2.1"
 # End of fuzzing related dependencies.
 
 [dev-dependencies]
