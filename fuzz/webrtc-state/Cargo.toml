@@ -16,7 +16,7 @@ tokio = { version = "1.54.1", features = ["full", "test-util"] }
 # Only the tests need `bytes`, to hand a `BytesMut` to `extract_framed_message` when
 # checking that the committed negotiation seed really reaches the listener.
 [dev-dependencies]
-bytes = "1.10.1"
+bytes = "1.12.1"
 
 
 [[bin]]
