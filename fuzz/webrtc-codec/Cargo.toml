@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ziggy = { version = "1.3.1", default-features = false }
+ziggy = { version = "1.7.3", default-features = false }
 litep2p = { path = "../..", features = ["webrtc", "fuzz"] }
-bytes = "1.10.1"
+bytes = "1.12.1"
 unsigned-varint = "0.8.0"
 
 # Fuzzing a parser with `debug_assert!` compiled out hides exactly the bugs we are

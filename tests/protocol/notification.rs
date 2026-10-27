@@ -4217,12 +4217,18 @@ async fn clogged_channel_disconnects_peer(transport1: Transport, transport2: Tra
 
     // start sending notifications to `peer2` which never reads them,
     // causing `peer1` to consume all available credit
+    let mut sent = 0usize;
     loop {
         match handle1.send_sync_notification(peer2, vec![0u8; 99 * 1024]) {
-            Ok(()) => {}
+            Ok(()) => sent += 1,
             Err(NotificationError::ChannelClogged) => break,
             error => panic!("invalid error: {error:?}"),
         }
+
+        // The connection task runs between sends, so only backpressure from `peer2` can clog
+        // the channel: `peer2` holds up to 4096 notifications and the channel 2048
+        tokio::task::yield_now().await;
+        assert!(sent < 3 * 4096);
     }
 
     // stream closed from `peer1`'s PoV
