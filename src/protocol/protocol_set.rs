@@ -45,7 +45,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 #[cfg(any(feature = "quic", feature = "webrtc", feature = "websocket"))]
 use std::sync::atomic::Ordering;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fmt::Debug,
     pin::Pin,
     sync::{atomic::AtomicUsize, Arc},
@@ -237,8 +237,6 @@ pub struct ProtocolSet {
     fallback_names: HashMap<ProtocolName, ProtocolName>,
     /// Connection keep-alive settings for both main & fallback protocol names.
     keep_alives: HashMap<ProtocolName, SubstreamKeepAlive>,
-    /// Protocols whose receiver has been dropped.
-    closed_protocols: HashSet<ProtocolName>,
 }
 
 impl ProtocolSet {
@@ -246,9 +244,10 @@ impl ProtocolSet {
         connection_id: ConnectionId,
         mgr_tx: Sender<TransportManagerEvent>,
         next_substream_id: Arc<AtomicUsize>,
-        protocols: HashMap<ProtocolName, ProtocolContext>,
+        mut protocols: HashMap<ProtocolName, ProtocolContext>,
     ) -> Self {
         let (tx, rx) = channel(256);
+        protocols.retain(|_, context| !context.tx.is_closed());
 
         let fallback_names = protocols
             .iter()
@@ -289,19 +288,21 @@ impl ProtocolSet {
             fallback_names,
             keep_alives,
             connection: ConnectionHandle::new(connection_id, tx),
-            closed_protocols: HashSet::new(),
         }
     }
 
+    /// Stop advertising a protocol that has exited.
     fn on_protocol_closed(&mut self, protocol: ProtocolName) {
-        if self.closed_protocols.insert(protocol.clone()) {
-            tracing::debug!(
-                target: LOG_TARGET,
-                %protocol,
-                connection_id = ?self.connection.connection_id(),
-                "protocol has exited, dropping its events",
-            );
-        }
+        tracing::debug!(
+            target: LOG_TARGET,
+            %protocol,
+            connection_id = ?self.connection.connection_id(),
+            "protocol has exited, dropping its events",
+        );
+
+        let fallback_names = &self.fallback_names;
+        self.keep_alives
+            .retain(|name, _| name != &protocol && fallback_names.get(name) != Some(&protocol));
     }
 
     /// Try to acquire permit to keep the connection open.
@@ -704,7 +705,6 @@ mod tests {
         let (tx, _rx) = channel(64);
         let (tx1, rx1) = channel(64);
         let (tx2, mut rx2) = channel(64);
-        drop(rx1);
 
         let mut protocol_set = ProtocolSet::new(
             ConnectionId::from(0usize),
@@ -733,6 +733,7 @@ mod tests {
                 ),
             ]),
         );
+        drop(rx1);
 
         protocol_set
             .report_connection_established(
@@ -756,7 +757,6 @@ mod tests {
     async fn substream_open_with_closed_protocol() {
         let (tx, _rx) = channel(64);
         let (tx1, rx1) = channel(64);
-        drop(rx1);
 
         let mut protocol_set = ProtocolSet::new(
             ConnectionId::from(0usize),
@@ -767,12 +767,13 @@ mod tests {
                 ProtocolContext {
                     tx: tx1,
                     codec: ProtocolCodec::Identity(32),
-                    fallback_names: Vec::new(),
+                    fallback_names: vec![ProtocolName::from("/notif/1/fallback")],
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
             )]),
         );
+        drop(rx1);
 
         let handle = protocol_set.connection.downgrade();
         let permit = protocol_set.try_get_permit().unwrap();
@@ -794,13 +795,13 @@ mod tests {
             .unwrap();
 
         assert!(protocol_set.try_get_permit().is_none());
+        assert!(protocol_set.protocols_with_keep_alives().is_empty());
     }
 
     #[tokio::test]
     async fn substream_open_failure_with_closed_protocol() {
         let (tx, _rx) = channel(64);
         let (tx1, rx1) = channel(64);
-        drop(rx1);
 
         let mut protocol_set = ProtocolSet::new(
             ConnectionId::from(0usize),
@@ -817,6 +818,7 @@ mod tests {
                 },
             )]),
         );
+        drop(rx1);
 
         protocol_set
             .report_substream_open_failure(
@@ -832,7 +834,6 @@ mod tests {
     async fn connection_closed_with_closed_protocol() {
         let (tx, mut rx) = channel(64);
         let (tx1, rx1) = channel(64);
-        drop(rx1);
 
         let mut protocol_set = ProtocolSet::new(
             ConnectionId::from(0usize),
@@ -849,6 +850,7 @@ mod tests {
                 },
             )]),
         );
+        drop(rx1);
 
         protocol_set
             .report_connection_closed(PeerId::random(), ConnectionId::from(0usize))
@@ -859,5 +861,30 @@ mod tests {
             rx.try_recv(),
             Ok(TransportManagerEvent::ConnectionClosed { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn closed_protocol_is_not_advertised() {
+        let (tx, _rx) = channel(64);
+        let (tx1, rx1) = channel(64);
+        drop(rx1);
+
+        let protocol_set = ProtocolSet::new(
+            ConnectionId::from(0usize),
+            tx,
+            Default::default(),
+            HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolContext {
+                    tx: tx1,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: vec![ProtocolName::from("/notif/1/fallback")],
+                    keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
+                },
+            )]),
+        );
+
+        assert!(protocol_set.protocols_with_keep_alives().is_empty());
     }
 }
