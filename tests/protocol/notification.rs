@@ -4250,34 +4250,47 @@ async fn clogged_channel_disconnects_peer(transport1: Transport, transport2: Tra
 
 #[tokio::test]
 async fn dropped_protocol_does_not_close_connection_tcp() {
-    dropped_protocol_does_not_close_connection(
-        Transport::Tcp(Default::default()),
-        Transport::Tcp(Default::default()),
-    )
-    .await
+    for drop_before_connect in [true, false] {
+        dropped_protocol_does_not_close_connection(
+            Transport::Tcp(Default::default()),
+            Transport::Tcp(Default::default()),
+            drop_before_connect,
+        )
+        .await;
+    }
 }
 
 #[cfg(feature = "quic")]
 #[tokio::test]
 async fn dropped_protocol_does_not_close_connection_quic() {
-    dropped_protocol_does_not_close_connection(
-        Transport::Quic(Default::default()),
-        Transport::Quic(Default::default()),
-    )
-    .await;
+    for drop_before_connect in [true, false] {
+        dropped_protocol_does_not_close_connection(
+            Transport::Quic(Default::default()),
+            Transport::Quic(Default::default()),
+            drop_before_connect,
+        )
+        .await;
+    }
 }
 
 #[cfg(feature = "websocket")]
 #[tokio::test]
 async fn dropped_protocol_does_not_close_connection_websocket() {
-    dropped_protocol_does_not_close_connection(
-        Transport::WebSocket(Default::default()),
-        Transport::WebSocket(Default::default()),
-    )
-    .await;
+    for drop_before_connect in [true, false] {
+        dropped_protocol_does_not_close_connection(
+            Transport::WebSocket(Default::default()),
+            Transport::WebSocket(Default::default()),
+            drop_before_connect,
+        )
+        .await;
+    }
 }
 
-async fn dropped_protocol_does_not_close_connection(transport1: Transport, transport2: Transport) {
+async fn dropped_protocol_does_not_close_connection(
+    transport1: Transport,
+    transport2: Transport,
+    drop_before_connect: bool,
+) {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -4308,7 +4321,10 @@ async fn dropped_protocol_does_not_close_connection(transport1: Transport, trans
 
     let mut litep2p1 = Litep2p::new(config1).unwrap();
     let mut litep2p2 = Litep2p::new(config2).unwrap();
-    drop(dropped_handle);
+    let mut dropped_handle = Some(dropped_handle);
+    if drop_before_connect {
+        dropped_handle = None;
+    }
 
     let peer1 = *litep2p1.local_peer_id();
     let listen_address = litep2p1.listen_addresses().next().unwrap().clone();
@@ -4338,6 +4354,10 @@ async fn dropped_protocol_does_not_close_connection(transport1: Transport, trans
             handle2.next().await.unwrap(),
             NotificationEvent::NotificationStreamOpened { peer, .. } if peer == peer1
         ));
+
+        // Let the protocol task exit.
+        drop(dropped_handle);
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
         handle2_notif1.open_substream(peer1).await.unwrap();
         assert!(std::matches!(
