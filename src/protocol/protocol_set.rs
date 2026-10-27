@@ -414,33 +414,14 @@ impl ProtocolSet {
         Ok(())
     }
 
-    /// Report to protocols that a connection was established.
-    pub(crate) async fn report_connection_established(
-        &mut self,
-        peer: PeerId,
-        endpoint: Endpoint,
-    ) -> crate::Result<()> {
-        let connection_handle = self.connection.downgrade();
+    /// Report `event` to all protocols, skipping the ones that have exited.
+    async fn report_to_protocols(&mut self, event: impl Fn() -> InnerTransportEvent) {
         let closed = self
             .protocols
             .iter()
-            .map(|(protocol, sender)| {
-                let endpoint = endpoint.clone();
-                let connection_handle = connection_handle.clone();
-
-                async move {
-                    sender
-                        .tx
-                        .send(InnerTransportEvent::ConnectionEstablished {
-                            peer,
-                            connection: endpoint.connection_id(),
-                            endpoint,
-                            sender: connection_handle,
-                        })
-                        .await
-                        .is_err()
-                        .then(|| protocol.clone())
-                }
+            .map(|(protocol, context)| {
+                let event = event();
+                async move { context.tx.send(event).await.is_err().then(|| protocol.clone()) }
             })
             .collect::<FuturesUnordered<_>>()
             .filter_map(futures::future::ready)
@@ -450,6 +431,22 @@ impl ProtocolSet {
         for protocol in closed {
             self.on_protocol_closed(protocol);
         }
+    }
+
+    /// Report to protocols that a connection was established.
+    pub(crate) async fn report_connection_established(
+        &mut self,
+        peer: PeerId,
+        endpoint: Endpoint,
+    ) -> crate::Result<()> {
+        let connection_handle = self.connection.downgrade();
+        self.report_to_protocols(|| InnerTransportEvent::ConnectionEstablished {
+            peer,
+            connection: endpoint.connection_id(),
+            endpoint: endpoint.clone(),
+            sender: connection_handle.clone(),
+        })
+        .await;
 
         Ok(())
     }
@@ -460,39 +457,11 @@ impl ProtocolSet {
         peer: PeerId,
         connection_id: ConnectionId,
     ) -> crate::Result<()> {
-        let mut futures = self
-            .protocols
-            .iter()
-            .map(|(protocol, sender)| async move {
-                sender
-                    .tx
-                    .send(InnerTransportEvent::ConnectionClosed {
-                        peer,
-                        connection: connection_id,
-                    })
-                    .await
-                    .inspect_err(|err| {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            %protocol,
-                            ?peer,
-                            ?connection_id,
-                            ?err,
-                            "failed to report connection closed to protocol",
-                        );
-                    })
-            })
-            .collect::<FuturesUnordered<_>>();
-
-        // Capture the first error that occurs while reporting to protocols.
-        let mut protocol_error = None;
-        while !futures.is_empty() {
-            if let Some(Err(err)) = futures.next().await {
-                if protocol_error.is_none() {
-                    protocol_error = Some(err.into());
-                }
-            }
-        }
+        self.report_to_protocols(|| InnerTransportEvent::ConnectionClosed {
+            peer,
+            connection: connection_id,
+        })
+        .await;
 
         // Ensure the manager receives the connection closed event. Otherwise, the
         // manager will think the connection is still open, while the underlying
@@ -502,13 +471,8 @@ impl ProtocolSet {
                 peer,
                 connection: connection_id,
             })
-            .await?;
-
-        // If any protocol report failed, return that error now
-        match protocol_error {
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
+            .await
+            .map_err(From::from)
     }
 }
 
@@ -862,5 +826,38 @@ mod tests {
             )
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_closed_with_closed_protocol() {
+        let (tx, mut rx) = channel(64);
+        let (tx1, rx1) = channel(64);
+        drop(rx1);
+
+        let mut protocol_set = ProtocolSet::new(
+            ConnectionId::from(0usize),
+            tx,
+            Default::default(),
+            HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolContext {
+                    tx: tx1,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
+                    keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
+                },
+            )]),
+        );
+
+        protocol_set
+            .report_connection_closed(PeerId::random(), ConnectionId::from(0usize))
+            .await
+            .unwrap();
+
+        assert!(std::matches!(
+            rx.try_recv(),
+            Ok(TransportManagerEvent::ConnectionClosed { .. })
+        ));
     }
 }
