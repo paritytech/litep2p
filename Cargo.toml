@@ -11,45 +11,45 @@ edition = "2021"
 ignored = ["serde_millis"]
 
 [build-dependencies]
-prost-build = "0.14"
+prost-build = "0.14.4"
 
 [dependencies]
-async-trait = "0.1.88"
+async-trait = "0.1.92"
 bs58 = "0.5.1"
-bytes = "1.11.1"
-cid = "0.11.2"
+bytes = "1.12.1"
+cid = "0.11.3"
 ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
-futures = "0.3.27"
+futures = "0.3.34"
 futures-timer = "3.0.3"
-indexmap = { version = "2.9.0", features = ["std"] }
-ip_network = "0.4"
-libc = "0.2.158"
-mockall = "0.13.1"
+indexmap = { version = "2.14.2", features = ["std"] }
+ip_network = "0.4.1"
+libc = "0.2.191"
+mockall = "0.15.0"
 multiaddr = "0.18.2"
-multibase = "0.9.2"
-multihash = { version = "0.19.4", default-features = false, features = ["std"] }
-multihash-codetable = { version = "0.2.1", default-features = false, features = [
+multibase = "0.9.3"
+multihash = { version = "0.19.5", default-features = false, features = ["std"] }
+multihash-codetable = { version = "0.2.2", default-features = false, features = [
     "sha2",
     "blake2b",
     "sha3",
 ] }
-network-interface = "2.0.1"
-parking_lot = "0.12.3"
-pin-project = "1.1.10"
-prost = "0.13.5"
+network-interface = "2.0.5"
+parking_lot = "0.12.5"
+pin-project = "1.1.13"
+prost = "0.14.4"
 rand = { version = "0.8.0", features = ["getrandom"] }
-serde = "1.0.158"
-sha2 = "0.11"
-simple-dns = "0.11.0"
-smallvec = "1.15.0"
+serde = "1.0.229"
+sha2 = "0.11.1"
+simple-dns = "0.12.0"
+smallvec = "1.16.4"
 snow = { version = "0.9.3", features = [
     "ring-resolver",
 ], default-features = false }
 socket2 = { version = "0.5.9", features = ["all"] }
-thiserror = "2.0.12"
-tokio-stream = "0.1.17"
-tokio-util = { version = "0.7.15", features = ["compat", "io", "codec"] }
-tokio = { version = "1.45.0", features = [
+thiserror = "2.0.21"
+tokio-stream = "0.1.19"
+tokio-util = { version = "0.7.20", features = ["compat", "io", "codec"] }
+tokio = { version = "1.54.1", features = [
     "rt",
     "net",
     "io-util",
@@ -58,19 +58,19 @@ tokio = { version = "1.45.0", features = [
     "sync",
     "parking_lot",
 ] }
-tracing = { version = "0.1.40", features = ["log"] }
-hickory-resolver = "0.26.1"
+tracing = { version = "0.1.44", features = ["log"] }
+hickory-resolver = "0.26.3"
 uint = "0.10.2"
 unsigned-varint = { version = "0.8.0", features = ["codec"] }
-url = "2.5.4"
-x25519-dalek = "2.0.1"
-x509-parser = "0.17.0"
-yasna = "0.5.0"
-zeroize = "1.8.1"
-yamux = "0.13.10"
+url = "2.5.8"
+x25519-dalek = "3.0.0"
+x509-parser = "0.18.1"
+yasna = "0.6.0"
+zeroize = "1.9.1"
+yamux = "0.14.1"
 
 # Websocket related dependencies.
-tokio-tungstenite = { version = "0.27.0", features = [
+tokio-tungstenite = { version = "0.30.0", features = [
     "rustls-tls-native-roots",
     "url",
 ], optional = true }
@@ -86,17 +86,17 @@ rustls = { version = "0.20.7", default-features = false, features = [
 ], optional = true }
 ring = { version = "0.17.14", optional = true }
 webpki = { version = "0.22.4", optional = true }
-rcgen = { version = "0.14.5", optional = true }
+rcgen = { version = "0.14.10", optional = true }
 # End of Quic related dependencies.
 
 # WebRTC related dependencies. WebRTC is an experimental feature flag. The dependencies must be updated.
-str0m = { version = "0.23.1", default-features = false, features = ["openssl", "vendored"], optional = true }
-quinn-udp = { version = "0.6.1", default-features = false, features = ["tracing"], optional = true }
+str0m = { version = "0.24.1", default-features = false, features = ["openssl", "vendored"], optional = true }
+quinn-udp = { version = "0.6.3", default-features = false, features = ["tracing"], optional = true }
 # End of WebRTC related dependencies.
 
 # Fuzzing related dependencies.
-serde_millis = { version = "0.1", optional = true }
-enum-display = "0.1.4"
+serde_millis = { version = "0.1.1", optional = true }
+enum-display = "0.2.1"
 # End of fuzzing related dependencies.
 
 [dev-dependencies]
@@ -113,11 +113,11 @@ libp2p = { version = "0.56.0", features = [
     "yamux",
     "quic",
 ]}
-quickcheck = "1.0.3"
-serde_json = "1.0.140"
-tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+quickcheck = "1.1.0"
+serde_json = "1.0.154"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 futures_ringbuf = "0.4.0"
-hex-literal = "1.0.0"
+hex-literal = "1.1.0"
 
 [features]
 # Stable feature flags.
