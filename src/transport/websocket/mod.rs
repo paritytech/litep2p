@@ -418,7 +418,7 @@ impl Transport for WebSocketTransport {
 
         Ok(Box::pin(async move {
             // First, notify all protocols about the connection establishment
-            protocol_set.report_connection_established(peer, endpoint).await?;
+            protocol_set.report_connection_established(peer, endpoint).await;
 
             // After protocols are notified, spawn the connection event loop
             executor.run(Box::pin(

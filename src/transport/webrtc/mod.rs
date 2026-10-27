@@ -608,7 +608,7 @@ impl Transport for WebRtcTransport {
 
         Ok(Box::pin(async move {
             // First, notify all protocols about the connection establishment
-            protocol_set.report_connection_established(peer, endpoint_clone).await?;
+            protocol_set.report_connection_established(peer, endpoint_clone).await;
 
             // After protocols are notified, create connection and spawn event loop
             let connection =

@@ -414,7 +414,7 @@ impl Transport for TcpTransport {
         Ok(Box::pin(async move {
             // First, notify all protocols about the connection establishment
             // This ensures that when the accept() future completes, protocols are ready
-            protocol_set.report_connection_established(peer, endpoint).await?;
+            protocol_set.report_connection_established(peer, endpoint).await;
 
             // After protocols are notified, spawn the connection event loop
             executor.run(Box::pin(

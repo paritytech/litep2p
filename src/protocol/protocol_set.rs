@@ -435,11 +435,7 @@ impl ProtocolSet {
     }
 
     /// Report to protocols that a connection was established.
-    pub(crate) async fn report_connection_established(
-        &mut self,
-        peer: PeerId,
-        endpoint: Endpoint,
-    ) -> crate::Result<()> {
+    pub(crate) async fn report_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) {
         let connection_handle = self.connection.downgrade();
         self.report_to_protocols(|| InnerTransportEvent::ConnectionEstablished {
             peer,
@@ -448,8 +444,6 @@ impl ProtocolSet {
             sender: connection_handle.clone(),
         })
         .await;
-
-        Ok(())
     }
 
     /// Report to protocols that a connection was closed.
@@ -740,8 +734,7 @@ mod tests {
                 PeerId::random(),
                 Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
             )
-            .await
-            .unwrap();
+            .await;
 
         let handle = match rx2.recv().await.unwrap() {
             InnerTransportEvent::ConnectionEstablished { sender, .. } => sender,
