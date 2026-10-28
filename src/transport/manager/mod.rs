@@ -194,21 +194,29 @@ impl Stream for TransportContext {
             return Poll::Ready(None);
         }
 
-        let len = self.transports.len();
-        for _ in 0..len {
-            let current = self.index;
+        for _ in 0..self.transports.len() {
+            let len = self.transports.len();
+            let current = self.index % len;
             self.index = (current + 1) % len;
             let (key, stream) = self.transports.get_index_mut(current).expect("transport to exist");
             match stream.poll_next_unpin(cx) {
                 Poll::Pending => {}
                 Poll::Ready(None) => {
-                    return Poll::Ready(None);
+                    tracing::error!(target: LOG_TARGET, transport = ?key, "transport terminated");
+
+                    // The next transport shifts into the current index.
+                    self.transports.shift_remove_index(current);
+                    self.index = current;
                 }
                 Poll::Ready(Some(event)) => {
                     let event = Some((*key, event));
                     return Poll::Ready(event);
                 }
             }
+        }
+
+        if self.transports.is_empty() {
+            return Poll::Ready(None);
         }
 
         Poll::Pending
