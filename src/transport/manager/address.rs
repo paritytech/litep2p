@@ -251,6 +251,7 @@ impl AddressStore {
             }
             return;
         }
+        let score = record.score;
 
         // Reward public addresses with a bonus.
         let is_public = is_global_multiaddr(&record.address);
@@ -270,6 +271,8 @@ impl AddressStore {
         //  - if the store is at capacity, the worst address will be evicted.
         //  - an address that is not dialed yet (with score zero) will be preferred over an address
         //  that already failed (with negative score).
+        //  - an address only evicts strictly worse ones, judged without the public bonus. Untested
+        //  addresses can therefore only replace failed ones.
         if self.addresses.len() >= self.max_capacity {
             let min_record = self
                 .addresses
@@ -278,8 +281,7 @@ impl AddressStore {
                 .cloned()
                 .expect("There is at least one element checked above; qed");
 
-            // The lowest score is better than the new record.
-            if record.score < min_record.score {
+            if score <= min_record.score {
                 return;
             }
             self.addresses.remove(min_record.address());
@@ -663,5 +665,40 @@ mod tests {
         assert_eq!(store.addresses.len(), 2);
         assert!(store.addresses.contains_key(first_record.address()));
         assert!(store.addresses.contains_key(fourth_record.address()));
+    }
+
+    #[test]
+    fn untested_addresses_only_evict_failed_ones() {
+        let mut store = AddressStore {
+            addresses: HashMap::new(),
+            max_capacity: 2,
+        };
+        let peer = PeerId::random();
+
+        let private = AddressRecord::new(&peer, "/ip4/10.0.0.1/tcp/30333".parse().unwrap(), 0);
+        let public = AddressRecord::new(&peer, "/ip4/8.8.8.8/tcp/30333".parse().unwrap(), 0);
+        store.insert(private.clone());
+        store.insert(public.clone());
+
+        // Neither a tie nor the public bonus is enough to evict an untested address.
+        for octet in 1..=10 {
+            let address = format!("/ip4/1.1.1.{octet}/tcp/30333").parse().unwrap();
+            store.insert(AddressRecord::new(&peer, address, 0));
+        }
+        assert_eq!(store.addresses.len(), 2);
+        assert!(store.addresses.contains_key(private.address()));
+        assert!(store.addresses.contains_key(public.address()));
+
+        // A failed address is replaced.
+        store.insert(AddressRecord::new(
+            &peer,
+            private.address().clone(),
+            scores::CONNECTION_FAILURE,
+        ));
+        let new_public = AddressRecord::new(&peer, "/ip4/1.1.1.1/tcp/30333".parse().unwrap(), 0);
+        store.insert(new_public.clone());
+        assert_eq!(store.addresses.len(), 2);
+        assert!(store.addresses.contains_key(public.address()));
+        assert!(store.addresses.contains_key(new_public.address()));
     }
 }
