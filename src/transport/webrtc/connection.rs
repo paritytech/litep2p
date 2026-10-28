@@ -898,8 +898,42 @@ impl WebRtcConnection {
                 return Ok(());
             };
 
-            let Some(body) = extract_framed_message(buffer)? else {
-                return Ok(());
+            let body = match extract_framed_message(buffer) {
+                Ok(Some(body)) => body,
+                Ok(None) => return Ok(()),
+                Err(error) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        peer = ?self.peer,
+                        ?channel_id,
+                        ?error,
+                        "invalid frame received, closing channel",
+                    );
+
+                    self.recv_buffers.remove(&channel_id);
+                    self.handles.remove(&channel_id);
+
+                    match self.channels.insert(channel_id, ChannelState::Closing) {
+                        Some(ChannelState::Closing) => {}
+                        Some(ChannelState::OutboundOpening { context, .. }) => {
+                            self.rtc.direct_api().close_data_channel(channel_id);
+
+                            let _ = self
+                                .protocol_set
+                                .report_substream_open_failure(
+                                    context.protocol,
+                                    context.substream_id,
+                                    SubstreamError::NegotiationError(
+                                        crate::error::ParseError::InvalidData.into(),
+                                    ),
+                                )
+                                .await;
+                        }
+                        _ => self.rtc.direct_api().close_data_channel(channel_id),
+                    }
+
+                    return Err(error.into());
+                }
             };
 
             self.dispatch_framed_message(channel_id, body).await?;
