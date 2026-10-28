@@ -1720,6 +1720,33 @@ mod tests {
             TransportEvent::PendingInboundConnection { .. }
         ));
         assert_eq!(transports.index, 0);
+
+        // A terminated transport is dropped while the others keep running.
+        drop(tx_ws);
+        futures::future::poll_fn(|cx| match transports.poll_next_unpin(cx) {
+            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
+            std::task::Poll::Pending => std::task::Poll::Ready(()),
+        })
+        .await;
+        assert_eq!(transports.transports.len(), 2);
+        assert!(!transports.transports.contains_key(&SupportedTransport::WebSocket));
+
+        tx_quic
+            .send(TransportEvent::PendingInboundConnection {
+                connection_id: ConnectionId::from(7),
+            })
+            .await
+            .expect("channel to be open");
+
+        let event = futures::future::poll_fn(|cx| transports.poll_next_unpin(cx))
+            .await
+            .expect("expected event");
+        assert_eq!(event.0, SupportedTransport::Quic);
+
+        // The context terminates once no transports are left.
+        drop(tx_tcp);
+        drop(tx_quic);
+        assert!(futures::future::poll_fn(|cx| transports.poll_next_unpin(cx)).await.is_none());
     }
 
     #[test]
