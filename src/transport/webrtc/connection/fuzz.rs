@@ -385,6 +385,31 @@ mod tests {
         );
     }
 
+    /// A framing error must drop the reassembly buffer and close the channel, otherwise every
+    /// later message is appended behind the bad prefix and the buffer grows without bound.
+    #[tokio::test]
+    async fn invalid_frame_closes_channel_and_drops_buffer() {
+        let mut connection = FuzzConnection::new(protocols()).await.expect("scaffold to build");
+        let index = connection
+            .open_negotiated_channel(ProtocolName::from("/ipfs/ping/1.0.0"))
+            .expect("negotiated channel to install");
+        let channel_id = connection.channels[index].0;
+
+        // Declares a 32 KiB frame, above `MAX_FRAME_SIZE`.
+        assert!(connection.inbound(index, vec![0x80, 0x80, 0x02]).await.is_err());
+        assert_eq!(connection.buffer_count(), 0);
+        assert!(matches!(
+            connection.connection.channels.get(&channel_id),
+            Some(ChannelState::Closing)
+        ));
+        assert!(connection.connection.handles.get_mut(&channel_id).is_none());
+
+        for _ in 0..32 {
+            let _ = connection.inbound(index, vec![0u8; 1024]).await;
+        }
+        assert!(connection.max_buffered_bytes() < crate::transport::webrtc::util::MAX_FRAME_SIZE);
+    }
+
     /// Polling the handle set must survive the `swap_remove` reordering a close triggers, without
     /// tripping the `insert` assert or the `poll_next` index walk.
     #[tokio::test]
