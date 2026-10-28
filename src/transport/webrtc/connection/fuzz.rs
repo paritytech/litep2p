@@ -405,9 +405,26 @@ mod tests {
         assert!(connection.connection.handles.get_mut(&channel_id).is_none());
 
         for _ in 0..32 {
-            let _ = connection.inbound(index, vec![0u8; 1024]).await;
+            assert!(connection.inbound(index, vec![0u8; 1024]).await.is_ok());
         }
-        assert!(connection.max_buffered_bytes() < crate::transport::webrtc::util::MAX_FRAME_SIZE);
+        assert_eq!(connection.buffer_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn closing_during_dispatch_drops_buffer() {
+        let mut connection = FuzzConnection::new(protocols()).await.expect("scaffold to build");
+        let index = connection.open_channel().await.expect("channel to open");
+        let channel_id = connection.channels[index].0;
+
+        let mut data = WebRtcMessage::encode(b"garbage".to_vec(), None);
+        data.extend_from_slice(&[0xac, 0x02, 0xaa]);
+
+        connection.inbound(index, data).await.expect("data to be handled");
+        assert!(matches!(
+            connection.connection.channels.get(&channel_id),
+            Some(ChannelState::Closing)
+        ));
+        assert_eq!(connection.buffer_count(), 0);
     }
 
     /// Polling the handle set must survive the `swap_remove` reordering a close triggers, without
