@@ -251,6 +251,7 @@ impl AddressStore {
             }
             return;
         }
+        let score = record.score;
 
         // Reward public addresses with a bonus.
         let is_public = is_global_multiaddr(&record.address);
@@ -270,6 +271,8 @@ impl AddressStore {
         //  - if the store is at capacity, the worst address will be evicted.
         //  - an address that is not dialed yet (with score zero) will be preferred over an address
         //  that already failed (with negative score).
+        //  - an address only evicts strictly worse ones, judged without the public bonus. Untested
+        //  addresses can therefore only replace failed ones.
         if self.addresses.len() >= self.max_capacity {
             let min_record = self
                 .addresses
@@ -278,8 +281,7 @@ impl AddressStore {
                 .cloned()
                 .expect("There is at least one element checked above; qed");
 
-            // The lowest score is better than the new record.
-            if record.score < min_record.score {
+            if score <= min_record.score {
                 return;
             }
             self.addresses.remove(min_record.address());
