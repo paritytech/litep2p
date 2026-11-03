@@ -654,20 +654,13 @@ impl TransportService {
     pub fn local_peer_id(&self) -> PeerId {
         self.local_peer_id
     }
-
-    /// Dynamically unregister a protocol.
-    ///
-    /// The protocol is also unregistered when [`TransportService`] is dropped.
-    pub fn unregister_protocol(&self) {
-        if let Some(tx) = self.tx.upgrade() {
-            self.transport_handle.unregister_protocol(&self.protocol, &tx);
-        }
-    }
 }
 
 impl Drop for TransportService {
     fn drop(&mut self) {
-        self.unregister_protocol();
+        if let Some(tx) = self.tx.upgrade() {
+            self.transport_handle.unregister_protocol(&self.protocol, &tx);
+        }
     }
 }
 

@@ -1721,15 +1721,14 @@ mod tests {
         };
 
         let old = register(&mut manager);
-        // a connection may still hold the sender of `old`
-        let _old_tx = manager.protocols.get(&protocol).unwrap().1.tx;
+        let old_tx = manager.protocols.get(&protocol).unwrap().1.tx;
 
-        old.unregister_protocol();
+        manager.transport_manager_handle().unregister_protocol(&protocol, &old_tx);
         assert!(!manager.protocols.contains(&protocol));
         assert!(!manager.protocols.contains(&fallback));
 
         let _new = register(&mut manager);
-        old.unregister_protocol();
+        drop(old);
         assert!(manager.protocols.contains(&protocol));
         assert!(manager.protocols.contains(&fallback));
     }
