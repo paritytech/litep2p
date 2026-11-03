@@ -715,7 +715,16 @@ impl Stream for TransportService {
                     opening_permit,
                 }) => {
                     if let Direction::Outbound(substream_id) = direction {
-                        self.pending_outbound.remove(&substream_id);
+                        if self.pending_outbound.remove(&substream_id).is_none() {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                protocol = %self.protocol,
+                                ?substream_id,
+                                "outbound substream not opened by this service, dropping",
+                            );
+                            continue;
+                        }
                     }
 
                     if protocol == self.protocol
@@ -740,7 +749,9 @@ impl Stream for TransportService {
                     }));
                 }
                 Some(InnerTransportEvent::SubstreamOpenFailure { substream, error }) => {
-                    self.pending_outbound.remove(&substream);
+                    if self.pending_outbound.remove(&substream).is_none() {
+                        continue;
+                    }
 
                     return Poll::Ready(Some(TransportEvent::SubstreamOpenFailure {
                         substream,
@@ -1256,6 +1267,49 @@ mod tests {
         let context = service.connections.get(&peer).unwrap();
         assert_eq!(context.primary.connection_id(), &ConnectionId::from(1usize));
         assert!(context.secondary.is_none());
+    }
+
+    #[tokio::test]
+    async fn outbound_events_of_substreams_not_opened_by_service_are_dropped() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+        let (cmd_tx, _cmd_rx) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(0usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx.clone()),
+            })
+            .await
+            .unwrap();
+        assert!(std::matches!(
+            service.next().await,
+            Some(TransportEvent::ConnectionEstablished { .. })
+        ));
+
+        let substream = SubstreamId::from(1337usize);
+        sender
+            .send(InnerTransportEvent::SubstreamOpened {
+                peer,
+                protocol: ProtocolName::from("/notif/1"),
+                fallback: None,
+                direction: Direction::Outbound(substream),
+                connection_id: ConnectionId::from(0usize),
+                substream: Substream::new_mock(peer, substream, Box::new(MockSubstream::new())),
+                opening_permit: Permit::new(cmd_tx),
+            })
+            .await
+            .unwrap();
+        sender
+            .send(InnerTransportEvent::SubstreamOpenFailure {
+                substream,
+                error: SubstreamError::ConnectionClosed,
+            })
+            .await
+            .unwrap();
+
+        poll_service(&mut service).await;
     }
 
     #[tokio::test]
