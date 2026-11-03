@@ -20,10 +20,7 @@
 
 use crate::{
     codec::ProtocolCodec,
-    error::{Error, NegotiationError, SubstreamError},
-    multistream_select::{
-        NegotiationError as MultiStreamNegotiationError, ProtocolError as MultiStreamProtocolError,
-    },
+    error::SubstreamError,
     protocol::{
         connection::{ConnectionHandle, Permit},
         transport_service::SubstreamKeepAlive,
@@ -348,12 +345,8 @@ impl ProtocolSet {
         };
 
         let Some(protocol_context) = self.protocols.get(&protocol) else {
-            return Err(NegotiationError::MultistreamSelectError(
-                MultiStreamNegotiationError::ProtocolError(
-                    MultiStreamProtocolError::ProtocolNotSupported,
-                ),
-            )
-            .into());
+            tracing::debug!(target: LOG_TARGET, %protocol, ?peer, "protocol unregistered, dropping substream");
+            return Ok(());
         };
 
         let event = InnerTransportEvent::SubstreamOpened {
@@ -374,13 +367,13 @@ impl ProtocolSet {
     }
 
     /// Get codec used by the protocol.
+    ///
+    /// Substreams of unregistered protocols are dropped by [`ProtocolSet::report_substream_open`],
+    /// so their codec doesn't matter.
     pub fn protocol_codec(&self, protocol: &ProtocolName) -> ProtocolCodec {
-        // NOTE: `protocol` must exist in `self.protocol` as it was negotiated
-        // using the protocols from this set
         self.protocols
-            .get(self.fallback_names.get(protocol).map_or(protocol, |protocol| protocol))
-            .expect("protocol to exist")
-            .codec
+            .get(self.fallback_names.get(protocol).unwrap_or(protocol))
+            .map_or(ProtocolCodec::Unspecified, |context| context.codec)
     }
 
     /// Report to `protocol` that connection failed to open substream for `peer`.
@@ -398,10 +391,9 @@ impl ProtocolSet {
             "failed to open substream",
         );
 
-        let protocol_context = self
-            .protocols
-            .get(&protocol)
-            .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?;
+        let Some(protocol_context) = self.protocols.get(&protocol) else {
+            return Ok(());
+        };
 
         if protocol_context
             .tx
