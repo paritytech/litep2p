@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-11-04
+
+- webrtc/fix: Close the channel on an invalid frame instead of buffering forever  ([#678](https://github.com/paritytech/litep2p/pull/678))
+- deps: bump str0m  ([#680](https://github.com/paritytech/litep2p/pull/680))
+- websocket/stream: Improve connection stability by accepting control frames  ([#681](https://github.com/paritytech/litep2p/pull/681))
+- kad: Add `global_addresses_only` option  ([#668](https://github.com/paritytech/litep2p/pull/668))
+- protocol_set: Don't fail connections when a protocol is gone  ([#672](https://github.com/paritytech/litep2p/pull/672))
+- address/fix: Only evict strictly worse addresses  ([#679](https://github.com/paritytech/litep2p/pull/679))
+- build(deps): bump Swatinem/rust-cache from 2.9.2 to 2.9.3  ([#676](https://github.com/paritytech/litep2p/pull/676))
+- deps: Bump dependencies to latest versions  ([#677](https://github.com/paritytech/litep2p/pull/677))
+- substream: Apply backpressure when the remote stops reading  ([#673](https://github.com/paritytech/litep2p/pull/673))
+- fuzz: add webrtc harnesses  ([#659](https://github.com/paritytech/litep2p/pull/659))
+
 ## [0.16.0] - 2026-10-01
 
 This release adds client-server mode to Kademlia. Light clients and DHT crawlers can now run without responding to queries and without being added to remote routing tables, so they no longer pollute the DHT.
