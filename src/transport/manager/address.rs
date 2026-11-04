@@ -127,7 +127,7 @@ impl AddressRecord {
 /// Check if a multiaddr represents a global/public address.
 ///
 /// DNS addresses are considered potentially public.
-fn is_global_multiaddr(address: &Multiaddr) -> bool {
+pub(crate) fn is_global_multiaddr(address: &Multiaddr) -> bool {
     for protocol in address.iter() {
         match protocol {
             Protocol::Ip4(ip) => return IpNetwork::from(ip).is_global(),
@@ -289,6 +289,11 @@ impl AddressStore {
 
         // Insert the record.
         self.addresses.insert(record.address.clone(), record);
+    }
+
+    /// Retain only the addresses matching `predicate`.
+    pub fn retain(&mut self, mut predicate: impl FnMut(&Multiaddr) -> bool) {
+        self.addresses.retain(|address, _| predicate(address));
     }
 
     /// Return the available addresses sorted by score.
