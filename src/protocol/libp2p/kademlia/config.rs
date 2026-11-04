@@ -23,7 +23,7 @@ use crate::{
     protocol::libp2p::kademlia::{
         handle::{
             IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle,
-            RoutingTableUpdateMode,
+            RemoteAddressMode, RoutingTableUpdateMode,
         },
         store::MemoryStoreConfig,
     },
@@ -102,6 +102,9 @@ pub struct Config {
     /// Default record TTL.
     pub(super) record_ttl: Duration,
 
+    /// Whether to accept non-global addresses from remote peers.
+    pub(super) remote_address_mode: RemoteAddressMode,
+
     /// Provider record TTL.
     pub(super) memory_store_config: MemoryStoreConfig,
 
@@ -134,6 +137,7 @@ impl Config {
         mode: KademliaMode,
         validation_mode: IncomingRecordValidationMode,
         record_ttl: Duration,
+        remote_address_mode: RemoteAddressMode,
         memory_store_config: MemoryStoreConfig,
         max_message_size: usize,
     ) -> (Self, KademliaHandle) {
@@ -153,6 +157,7 @@ impl Config {
                 mode,
                 validation_mode,
                 record_ttl,
+                remote_address_mode,
                 memory_store_config,
                 codec: ProtocolCodec::UnsignedVarint(Some(max_message_size)),
                 replication_factor,
@@ -175,6 +180,7 @@ impl Config {
             KademliaMode::Server,
             IncomingRecordValidationMode::Automatic,
             DEFAULT_TTL,
+            RemoteAddressMode::All,
             Default::default(),
             DEFAULT_MAX_MESSAGE_SIZE,
         )
@@ -205,6 +211,9 @@ pub struct ConfigBuilder {
     /// Default TTL for the records.
     pub(super) record_ttl: Duration,
 
+    /// Whether to accept non-global addresses from remote peers.
+    pub(super) remote_address_mode: RemoteAddressMode,
+
     /// Memory store configuration.
     pub(super) memory_store_config: MemoryStoreConfig,
 
@@ -229,6 +238,7 @@ impl ConfigBuilder {
             mode: KademliaMode::Server,
             validation_mode: IncomingRecordValidationMode::Automatic,
             record_ttl: DEFAULT_TTL,
+            remote_address_mode: RemoteAddressMode::All,
             memory_store_config: Default::default(),
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
         }
@@ -291,6 +301,14 @@ impl ConfigBuilder {
     /// If unspecified, the default TTL is 36 hours.
     pub fn with_record_ttl(mut self, record_ttl: Duration) -> Self {
         self.record_ttl = record_ttl;
+        self
+    }
+
+    /// Set whether non-global addresses received from remote peers are accepted.
+    ///
+    /// If unspecified, all addresses are accepted ([`RemoteAddressMode::All`]).
+    pub fn with_remote_address_mode(mut self, mode: RemoteAddressMode) -> Self {
+        self.remote_address_mode = mode;
         self
     }
 
@@ -372,6 +390,7 @@ impl ConfigBuilder {
             self.mode,
             self.validation_mode,
             self.record_ttl,
+            self.remote_address_mode,
             self.memory_store_config,
             self.max_message_size,
         )

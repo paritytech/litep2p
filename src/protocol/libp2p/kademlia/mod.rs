@@ -57,7 +57,7 @@ use std::{
 pub use config::{Config, ConfigBuilder, KademliaMode};
 pub use handle::{
     IncomingRecordValidationMode, KademliaCommand, KademliaEvent, KademliaHandle, Quorum,
-    RoutingTableUpdateMode,
+    RemoteAddressMode, RoutingTableUpdateMode,
 };
 pub use query::QueryId;
 pub use record::{ContentProvider, Key as RecordKey, PeerRecord, Record};
@@ -178,6 +178,9 @@ pub(crate) struct Kademlia {
     /// Default record TTL.
     record_ttl: Duration,
 
+    /// Remote address mode.
+    remote_address_mode: RemoteAddressMode,
+
     /// Query engine.
     engine: QueryEngine,
 
@@ -217,6 +220,7 @@ impl Kademlia {
             mode: config.mode,
             validation_mode: config.validation_mode,
             record_ttl: config.record_ttl,
+            remote_address_mode: config.remote_address_mode,
             replication_factor: config.replication_factor,
             engine: QueryEngine::new(local_peer_id, config.replication_factor, PARALLELISM_FACTOR),
         }
@@ -485,9 +489,13 @@ impl Kademlia {
     ) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, query = ?query_id, "handle message from peer");
 
-        match KademliaMessage::from_bytes(message, self.replication_factor)
-            .ok_or(Error::InvalidData)?
-        {
+        let mut message = KademliaMessage::from_bytes(message, self.replication_factor)
+            .ok_or(Error::InvalidData)?;
+        if self.remote_address_mode == RemoteAddressMode::GlobalOnly {
+            message.retain_global_addresses();
+        }
+
+        match message {
             KademliaMessage::FindNode { target, peers } => {
                 match query_id {
                     Some(query_id) => {
@@ -1466,10 +1474,13 @@ mod tests {
     }
 
     fn make_kademlia() -> (Kademlia, Context, TransportManager) {
-        make_kademlia_with_mode(KademliaMode::Server)
+        make_kademlia_with(KademliaMode::Server, RemoteAddressMode::All)
     }
 
-    fn make_kademlia_with_mode(mode: KademliaMode) -> (Kademlia, Context, TransportManager) {
+    fn make_kademlia_with(
+        mode: KademliaMode,
+        remote_address_mode: RemoteAddressMode,
+    ) -> (Kademlia, Context, TransportManager) {
         let manager = TransportManagerBuilder::new().build();
 
         let peer = PeerId::random();
@@ -1495,6 +1506,7 @@ mod tests {
             mode,
             validation_mode: IncomingRecordValidationMode::Automatic,
             record_ttl: Duration::from_secs(36 * 60 * 60),
+            remote_address_mode,
             memory_store_config: Default::default(),
             event_tx,
             cmd_rx,
@@ -1684,7 +1696,8 @@ mod tests {
 
     #[tokio::test]
     async fn client_mode_ignores_inbound_substreams() {
-        let (mut kademlia, _context, _manager) = make_kademlia_with_mode(KademliaMode::Client);
+        let (mut kademlia, _context, _manager) =
+            make_kademlia_with(KademliaMode::Client, RemoteAddressMode::All);
 
         let peer = PeerId::random();
         let mut substream = MockSubstream::new();
@@ -1866,5 +1879,92 @@ mod tests {
                 },
             )
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn non_global_addresses_dropped_from_responses() {
+        let (mut kademlia, mut context, _manager) =
+            make_kademlia_with(KademliaMode::Server, RemoteAddressMode::GlobalOnly);
+
+        let private_peer = PeerId::random();
+        let private = KademliaPeer::new(
+            private_peer,
+            vec![Multiaddr::from_str("/ip4/10.0.0.1/tcp/30333").unwrap()],
+            ConnectionType::NotConnected,
+        );
+        let public_peer = PeerId::random();
+        let public = KademliaPeer::new(
+            public_peer,
+            vec![
+                Multiaddr::from_str("/ip4/10.0.0.2/tcp/30333").unwrap(),
+                Multiaddr::from_str("/ip4/8.8.8.8/tcp/30333").unwrap(),
+            ],
+            ConnectionType::NotConnected,
+        );
+
+        let responder = PeerId::random();
+        let mut substream = MockSubstream::new();
+        substream.expect_poll_close().times(1).return_once(|_| Poll::Ready(Ok(())));
+        let message =
+            KademliaMessage::find_node_response(PeerId::random().to_bytes(), vec![private, public]);
+        kademlia
+            .on_message_received(
+                responder,
+                Some(QueryId(0)),
+                BytesMut::from(&message[..]),
+                Substream::new_mock(responder, SubstreamId::from(0usize), Box::new(substream)),
+            )
+            .await
+            .unwrap();
+
+        // The peer left without addresses is not discovered.
+        match context.event_rx.try_recv() {
+            Ok(KademliaEvent::PeersDiscovered { peers }) => assert_eq!(peers, vec![public_peer]),
+            event => panic!("unexpected event: {event:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn non_global_addresses_dropped_from_incoming_provider() {
+        let (mut kademlia, mut context, _manager) =
+            make_kademlia_with(KademliaMode::Server, RemoteAddressMode::GlobalOnly);
+
+        let key = RecordKey::from(vec![1, 2, 3]);
+        let provider = PeerId::random();
+        let message = KademliaMessage::add_provider(
+            key.clone(),
+            ContentProvider {
+                peer: provider,
+                addresses: vec![
+                    Multiaddr::from_str("/ip4/10.0.0.1/tcp/30333").unwrap(),
+                    Multiaddr::from_str("/ip4/8.8.8.8/tcp/30333").unwrap(),
+                ],
+            },
+        );
+        kademlia
+            .on_message_received(
+                provider,
+                None,
+                BytesMut::from(&message[..]),
+                Substream::new_mock(
+                    provider,
+                    SubstreamId::from(0usize),
+                    Box::new(MockSubstream::new()),
+                ),
+            )
+            .await
+            .unwrap();
+
+        let global = vec![Multiaddr::from_str("/ip4/8.8.8.8/tcp/30333").unwrap()];
+        let providers = kademlia.store.get_providers(&key);
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].addresses, global);
+        match context.event_rx.try_recv() {
+            Ok(KademliaEvent::IncomingProvider { provider: p, .. }) => {
+                assert_eq!(p.peer, provider);
+                assert_eq!(p.addresses, global);
+            }
+            event => panic!("unexpected event: {event:?}"),
+        }
     }
 }
