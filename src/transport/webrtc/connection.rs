@@ -879,7 +879,7 @@ impl WebRtcConnection {
             "received channel data",
         );
 
-        // Data for an unknown or closing channel must not create a `recv_buffers` entry.
+        // Data for an unknown or closing channel must not create a `recv_buffers` entry
         match self.channels.get(&channel_id) {
             None => {
                 tracing::warn!(
