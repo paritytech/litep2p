@@ -105,6 +105,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> futures::AsyncRead for BufferedStream<S>
                 let next_chunk = match self.stream.poll_next_unpin(cx) {
                     Poll::Ready(Some(Ok(chunk))) => match chunk {
                         Message::Binary(chunk) => chunk,
+                        // Pings are answered by `tungstenite`.
+                        Message::Ping(_) | Message::Pong(_) => continue,
+                        Message::Close(_) => return Poll::Ready(Ok(0)),
                         _event => return Poll::Ready(Err(std::io::ErrorKind::Unsupported.into())),
                     },
                     Poll::Ready(Some(Err(_error))) =>
@@ -222,5 +225,22 @@ mod tests {
         let bytes_read = stream.read(&mut buffer).await.unwrap();
         assert_eq!(bytes_read, 11);
         assert_eq!(&buffer[..bytes_read], b"hello world");
+    }
+
+    #[tokio::test]
+    async fn control_frames_are_skipped() {
+        let (mut stream, mut server) = create_test_stream().await;
+
+        server.stream.send(Message::Ping(Bytes::from_static(b"ping"))).await.unwrap();
+        server.stream.send(Message::Pong(Bytes::from_static(b"pong"))).await.unwrap();
+        server.write_all(b"hello").await.unwrap();
+        server.flush().await.unwrap();
+
+        let mut message = [0u8; 5];
+        stream.read_exact(&mut message).await.unwrap();
+        assert_eq!(&message, b"hello");
+
+        server.stream.close(None).await.unwrap();
+        assert_eq!(stream.read(&mut message).await.unwrap(), 0);
     }
 }
