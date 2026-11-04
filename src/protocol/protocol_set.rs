@@ -244,9 +244,10 @@ impl ProtocolSet {
         connection_id: ConnectionId,
         mgr_tx: Sender<TransportManagerEvent>,
         next_substream_id: Arc<AtomicUsize>,
-        protocols: HashMap<ProtocolName, ProtocolContext>,
+        mut protocols: HashMap<ProtocolName, ProtocolContext>,
     ) -> Self {
         let (tx, rx) = channel(256);
+        protocols.retain(|_, context| !context.tx.is_closed());
 
         let fallback_names = protocols
             .iter()
@@ -288,6 +289,20 @@ impl ProtocolSet {
             keep_alives,
             connection: ConnectionHandle::new(connection_id, tx),
         }
+    }
+
+    /// Stop advertising a protocol that has exited.
+    fn on_protocol_closed(&mut self, protocol: ProtocolName) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            %protocol,
+            connection_id = ?self.connection.connection_id(),
+            "protocol has exited, dropping its events",
+        );
+
+        let fallback_names = &self.fallback_names;
+        self.keep_alives
+            .retain(|name, _| name != &protocol && fallback_names.get(name) != Some(&protocol));
     }
 
     /// Try to acquire permit to keep the connection open.
@@ -351,11 +366,11 @@ impl ProtocolSet {
             opening_permit,
         };
 
-        protocol_context
-            .tx
-            .send(event)
-            .await
-            .map_err(|_| SubstreamError::ConnectionClosed)
+        if protocol_context.tx.send(event).await.is_err() {
+            self.on_protocol_closed(protocol);
+        }
+
+        Ok(())
     }
 
     /// Get codec used by the protocol.
@@ -383,50 +398,52 @@ impl ProtocolSet {
             "failed to open substream",
         );
 
-        self.protocols
-            .get_mut(&protocol)
-            .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?
+        let protocol_context = self
+            .protocols
+            .get(&protocol)
+            .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?;
+
+        if protocol_context
             .tx
             .send(InnerTransportEvent::SubstreamOpenFailure { substream, error })
             .await
-            .map_err(From::from)
-    }
-
-    /// Report to protocols that a connection was established.
-    pub(crate) async fn report_connection_established(
-        &mut self,
-        peer: PeerId,
-        endpoint: Endpoint,
-    ) -> crate::Result<()> {
-        let connection_handle = self.connection.downgrade();
-        let mut futures = self
-            .protocols
-            .values()
-            .map(|sender| {
-                let endpoint = endpoint.clone();
-                let connection_handle = connection_handle.clone();
-
-                async move {
-                    sender
-                        .tx
-                        .send(InnerTransportEvent::ConnectionEstablished {
-                            peer,
-                            connection: endpoint.connection_id(),
-                            endpoint,
-                            sender: connection_handle,
-                        })
-                        .await
-                }
-            })
-            .collect::<FuturesUnordered<_>>();
-
-        while !futures.is_empty() {
-            if let Some(Err(error)) = futures.next().await {
-                return Err(error.into());
-            }
+            .is_err()
+        {
+            self.on_protocol_closed(protocol);
         }
 
         Ok(())
+    }
+
+    /// Report `event` to all protocols, skipping the ones that have exited.
+    async fn report_to_protocols(&mut self, event: impl Fn() -> InnerTransportEvent) {
+        let closed = self
+            .protocols
+            .iter()
+            .map(|(protocol, context)| {
+                let event = event();
+                async move { context.tx.send(event).await.is_err().then(|| protocol.clone()) }
+            })
+            .collect::<FuturesUnordered<_>>()
+            .filter_map(futures::future::ready)
+            .collect::<Vec<_>>()
+            .await;
+
+        for protocol in closed {
+            self.on_protocol_closed(protocol);
+        }
+    }
+
+    /// Report to protocols that a connection was established.
+    pub(crate) async fn report_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) {
+        let connection_handle = self.connection.downgrade();
+        self.report_to_protocols(|| InnerTransportEvent::ConnectionEstablished {
+            peer,
+            connection: endpoint.connection_id(),
+            endpoint: endpoint.clone(),
+            sender: connection_handle.clone(),
+        })
+        .await;
     }
 
     /// Report to protocols that a connection was closed.
@@ -435,39 +452,11 @@ impl ProtocolSet {
         peer: PeerId,
         connection_id: ConnectionId,
     ) -> crate::Result<()> {
-        let mut futures = self
-            .protocols
-            .iter()
-            .map(|(protocol, sender)| async move {
-                sender
-                    .tx
-                    .send(InnerTransportEvent::ConnectionClosed {
-                        peer,
-                        connection: connection_id,
-                    })
-                    .await
-                    .inspect_err(|err| {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            %protocol,
-                            ?peer,
-                            ?connection_id,
-                            ?err,
-                            "failed to report connection closed to protocol",
-                        );
-                    })
-            })
-            .collect::<FuturesUnordered<_>>();
-
-        // Capture the first error that occurs while reporting to protocols.
-        let mut protocol_error = None;
-        while !futures.is_empty() {
-            if let Some(Err(err)) = futures.next().await {
-                if protocol_error.is_none() {
-                    protocol_error = Some(err.into());
-                }
-            }
-        }
+        self.report_to_protocols(|| InnerTransportEvent::ConnectionClosed {
+            peer,
+            connection: connection_id,
+        })
+        .await;
 
         // Ensure the manager receives the connection closed event. Otherwise, the
         // manager will think the connection is still open, while the underlying
@@ -477,13 +466,8 @@ impl ProtocolSet {
                 peer,
                 connection: connection_id,
             })
-            .await?;
-
-        // If any protocol report failed, return that error now
-        match protocol_error {
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
+            .await
+            .map_err(From::from)
     }
 }
 
@@ -708,5 +692,192 @@ mod tests {
             }
             _ => panic!("invalid event received"),
         }
+    }
+
+    #[tokio::test]
+    async fn connection_established_with_closed_protocol() {
+        let (tx, _rx) = channel(64);
+        let (tx1, rx1) = channel(64);
+        let (tx2, mut rx2) = channel(64);
+
+        let mut protocol_set = ProtocolSet::new(
+            ConnectionId::from(0usize),
+            tx,
+            Default::default(),
+            HashMap::from_iter([
+                (
+                    ProtocolName::from("/notif/1"),
+                    ProtocolContext {
+                        tx: tx1,
+                        codec: ProtocolCodec::Identity(32),
+                        fallback_names: Vec::new(),
+                        keep_alive: SubstreamKeepAlive::Yes,
+                        inbound: InboundProtocol::Accept,
+                    },
+                ),
+                (
+                    ProtocolName::from("/notif/2"),
+                    ProtocolContext {
+                        tx: tx2,
+                        codec: ProtocolCodec::Identity(32),
+                        fallback_names: Vec::new(),
+                        keep_alive: SubstreamKeepAlive::Yes,
+                        inbound: InboundProtocol::Accept,
+                    },
+                ),
+            ]),
+        );
+        drop(rx1);
+
+        protocol_set
+            .report_connection_established(
+                PeerId::random(),
+                Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
+            )
+            .await;
+
+        let handle = match rx2.recv().await.unwrap() {
+            InnerTransportEvent::ConnectionEstablished { sender, .. } => sender,
+            event => panic!("invalid event received: {event:?}"),
+        };
+        assert!(protocol_set.try_get_permit().is_some());
+
+        drop(handle);
+        assert!(protocol_set.try_get_permit().is_none());
+    }
+
+    #[tokio::test]
+    async fn substream_open_with_closed_protocol() {
+        let (tx, _rx) = channel(64);
+        let (tx1, rx1) = channel(64);
+
+        let mut protocol_set = ProtocolSet::new(
+            ConnectionId::from(0usize),
+            tx,
+            Default::default(),
+            HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolContext {
+                    tx: tx1,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: vec![ProtocolName::from("/notif/1/fallback")],
+                    keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
+                },
+            )]),
+        );
+        drop(rx1);
+
+        let handle = protocol_set.connection.downgrade();
+        let permit = protocol_set.try_get_permit().unwrap();
+        drop(handle);
+
+        protocol_set
+            .report_substream_open(
+                PeerId::random(),
+                ProtocolName::from("/notif/1"),
+                Direction::Inbound,
+                Substream::new_mock(
+                    PeerId::random(),
+                    SubstreamId::from(0usize),
+                    Box::new(MockSubstream::new()),
+                ),
+                permit,
+            )
+            .await
+            .unwrap();
+
+        assert!(protocol_set.try_get_permit().is_none());
+        assert!(protocol_set.protocols_with_keep_alives().is_empty());
+    }
+
+    #[tokio::test]
+    async fn substream_open_failure_with_closed_protocol() {
+        let (tx, _rx) = channel(64);
+        let (tx1, rx1) = channel(64);
+
+        let mut protocol_set = ProtocolSet::new(
+            ConnectionId::from(0usize),
+            tx,
+            Default::default(),
+            HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolContext {
+                    tx: tx1,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
+                    keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
+                },
+            )]),
+        );
+        drop(rx1);
+
+        protocol_set
+            .report_substream_open_failure(
+                ProtocolName::from("/notif/1"),
+                SubstreamId::from(0usize),
+                SubstreamError::ConnectionClosed,
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_closed_with_closed_protocol() {
+        let (tx, mut rx) = channel(64);
+        let (tx1, rx1) = channel(64);
+
+        let mut protocol_set = ProtocolSet::new(
+            ConnectionId::from(0usize),
+            tx,
+            Default::default(),
+            HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolContext {
+                    tx: tx1,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
+                    keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
+                },
+            )]),
+        );
+        drop(rx1);
+
+        protocol_set
+            .report_connection_closed(PeerId::random(), ConnectionId::from(0usize))
+            .await
+            .unwrap();
+
+        assert!(std::matches!(
+            rx.try_recv(),
+            Ok(TransportManagerEvent::ConnectionClosed { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn closed_protocol_is_not_advertised() {
+        let (tx, _rx) = channel(64);
+        let (tx1, rx1) = channel(64);
+        drop(rx1);
+
+        let protocol_set = ProtocolSet::new(
+            ConnectionId::from(0usize),
+            tx,
+            Default::default(),
+            HashMap::from_iter([(
+                ProtocolName::from("/notif/1"),
+                ProtocolContext {
+                    tx: tx1,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: vec![ProtocolName::from("/notif/1/fallback")],
+                    keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
+                },
+            )]),
+        );
+
+        assert!(protocol_set.protocols_with_keep_alives().is_empty());
     }
 }

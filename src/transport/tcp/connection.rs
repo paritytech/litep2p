@@ -879,10 +879,7 @@ mod tests {
                 },
             )]),
         );
-        protocol_set
-            .report_connection_established(peer, local.endpoint.clone())
-            .await
-            .unwrap();
+        protocol_set.report_connection_established(peer, local.endpoint.clone()).await;
         let handle = match protocol_rx.recv().await.unwrap() {
             InnerTransportEvent::ConnectionEstablished { sender, .. } => sender,
             event => panic!("unexpected event: {event:?}"),

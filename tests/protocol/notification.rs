@@ -4253,3 +4253,133 @@ async fn clogged_channel_disconnects_peer(transport1: Transport, transport2: Tra
         panic!("timeout")
     }
 }
+
+#[tokio::test]
+async fn dropped_protocol_does_not_close_connection_tcp() {
+    for drop_before_connect in [true, false] {
+        dropped_protocol_does_not_close_connection(
+            Transport::Tcp(Default::default()),
+            Transport::Tcp(Default::default()),
+            drop_before_connect,
+        )
+        .await;
+    }
+}
+
+#[cfg(feature = "quic")]
+#[tokio::test]
+async fn dropped_protocol_does_not_close_connection_quic() {
+    for drop_before_connect in [true, false] {
+        dropped_protocol_does_not_close_connection(
+            Transport::Quic(Default::default()),
+            Transport::Quic(Default::default()),
+            drop_before_connect,
+        )
+        .await;
+    }
+}
+
+#[cfg(feature = "websocket")]
+#[tokio::test]
+async fn dropped_protocol_does_not_close_connection_websocket() {
+    for drop_before_connect in [true, false] {
+        dropped_protocol_does_not_close_connection(
+            Transport::WebSocket(Default::default()),
+            Transport::WebSocket(Default::default()),
+            drop_before_connect,
+        )
+        .await;
+    }
+}
+
+async fn dropped_protocol_does_not_close_connection(
+    transport1: Transport,
+    transport2: Transport,
+    drop_before_connect: bool,
+) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let notif_config = |name: &'static str| {
+        ConfigBuilder::new(ProtocolName::from(name))
+            .with_max_size(1024usize)
+            .with_handshake(vec![1, 2, 3, 4])
+            .with_auto_accept_inbound(true)
+            .build()
+    };
+
+    let (notif_config1, dropped_handle) = notif_config("/notif/1");
+    let (notif_config2, mut handle1) = notif_config("/notif/2");
+    let config1 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config1)
+        .with_notification_protocol(notif_config2);
+    let config1 = add_transport(config1, transport1).build();
+
+    let (notif_config1, mut handle2_notif1) = notif_config("/notif/1");
+    let (notif_config2, mut handle2) = notif_config("/notif/2");
+    let config2 = Litep2pConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_notification_protocol(notif_config1)
+        .with_notification_protocol(notif_config2);
+    let config2 = add_transport(config2, transport2).build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+    let mut dropped_handle = Some(dropped_handle);
+    if drop_before_connect {
+        dropped_handle = None;
+    }
+
+    let peer1 = *litep2p1.local_peer_id();
+    let listen_address = litep2p1.listen_addresses().next().unwrap().clone();
+    litep2p2.add_known_address(peer1, vec![listen_address].into_iter());
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {},
+                _ = litep2p2.next_event() => {},
+            }
+        }
+    });
+
+    tokio::time::timeout(Duration::from_secs(10), async move {
+        handle2.open_substream(peer1).await.unwrap();
+        let peer2 = match handle1.next().await.unwrap() {
+            NotificationEvent::ValidateSubstream { peer, .. } => peer,
+            event => panic!("invalid event: {event:?}"),
+        };
+        handle1.send_validation_result(peer2, ValidationResult::Accept);
+        assert!(std::matches!(
+            handle1.next().await.unwrap(),
+            NotificationEvent::NotificationStreamOpened { peer, .. } if peer == peer2
+        ));
+        assert!(std::matches!(
+            handle2.next().await.unwrap(),
+            NotificationEvent::NotificationStreamOpened { peer, .. } if peer == peer1
+        ));
+
+        // Let the protocol task exit.
+        drop(dropped_handle);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        handle2_notif1.open_substream(peer1).await.unwrap();
+        assert!(std::matches!(
+            handle2_notif1.next().await.unwrap(),
+            NotificationEvent::NotificationStreamOpenFailure { peer, .. } if peer == peer1
+        ));
+
+        handle2.send_sync_notification(peer1, vec![1, 3, 3, 7]).unwrap();
+        assert_eq!(
+            handle1.next().await.unwrap(),
+            NotificationEvent::NotificationReceived {
+                peer: peer2,
+                notification: BytesMut::from(&[1, 3, 3, 7][..]),
+            }
+        );
+    })
+    .await
+    .expect("timeout");
+}
