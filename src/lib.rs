@@ -89,7 +89,14 @@ pub mod types;
 pub mod yamux;
 
 mod bandwidth;
+
+// Exposed under `fuzz` so the harnesses can reach `webrtc_listener_negotiate` and
+// `WebRtcDialerState`, which parse protocol negotiation off the wire.
+#[cfg(not(feature = "fuzz"))]
 mod multistream_select;
+#[cfg(feature = "fuzz")]
+pub mod multistream_select;
+
 pub mod utils;
 
 #[cfg(test)]
@@ -249,7 +256,7 @@ impl Litep2p {
             tracing::debug!(target: LOG_TARGET, protocol = ?protocol_name, "enable user protocol");
 
             let service = transport_manager.register_protocol(
-                protocol_name,
+                protocol_name.clone(),
                 Vec::new(),
                 protocol.codec(),
                 litep2p_config.keep_alive_timeout,
@@ -258,7 +265,14 @@ impl Litep2p {
                 InboundProtocol::Accept,
             );
             litep2p_config.executor.run(Box::pin(async move {
-                let _ = protocol.run(service).await;
+                if let Err(error) = protocol.run(service).await {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        protocol = %protocol_name,
+                        ?error,
+                        "user protocol exited with an error",
+                    );
+                }
             }));
         }
 

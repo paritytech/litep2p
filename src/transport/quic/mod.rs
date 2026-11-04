@@ -353,7 +353,7 @@ impl Transport for QuicTransport {
 
         Ok(Box::pin(async move {
             // First, notify all protocols about the connection establishment
-            protocol_set.report_connection_established(peer, endpoint_clone).await?;
+            protocol_set.report_connection_established(peer, endpoint_clone).await;
 
             // After protocols are notified, spawn the connection event loop
             executor.run(Box::pin(
