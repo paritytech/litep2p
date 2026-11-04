@@ -879,16 +879,30 @@ impl WebRtcConnection {
             "received channel data",
         );
 
-        // Data for an unknown channel must not create a `recv_buffers` entry.
-        if !self.channels.contains_key(&channel_id) {
-            tracing::warn!(
-                target: LOG_TARGET,
-                peer = ?self.peer,
-                ?channel_id,
-                data_len = data.len(),
-                "data received over a channel that doesn't exist",
-            );
-            return Err(Error::InvalidState);
+        // Data for an unknown or closing channel must not create a `recv_buffers` entry
+        match self.channels.get(&channel_id) {
+            None => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    peer = ?self.peer,
+                    ?channel_id,
+                    data_len = data.len(),
+                    "data received over a channel that doesn't exist",
+                );
+                return Err(Error::InvalidState);
+            }
+            Some(ChannelState::Closing) => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    peer = ?self.peer,
+                    ?channel_id,
+                    data_len = data.len(),
+                    "channel closing, discarding received data",
+                );
+                self.recv_buffers.remove(&channel_id);
+                return Ok(());
+            }
+            Some(_) => {}
         }
 
         self.recv_buffers.entry(channel_id).or_default().extend_from_slice(&data);
@@ -898,13 +912,51 @@ impl WebRtcConnection {
                 return Ok(());
             };
 
-            let Some(body) = extract_framed_message(buffer)? else {
-                return Ok(());
+            let body = match extract_framed_message(buffer) {
+                Ok(Some(body)) => body,
+                Ok(None) => return Ok(()),
+                Err(error) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        peer = ?self.peer,
+                        ?channel_id,
+                        ?error,
+                        "invalid frame received, closing channel",
+                    );
+
+                    self.recv_buffers.remove(&channel_id);
+                    self.handles.remove(&channel_id);
+
+                    match self.channels.insert(channel_id, ChannelState::Closing) {
+                        Some(ChannelState::Closing) => {}
+                        Some(ChannelState::OutboundOpening { context, .. }) => {
+                            self.rtc.direct_api().close_data_channel(channel_id);
+
+                            let _ = self
+                                .protocol_set
+                                .report_substream_open_failure(
+                                    context.protocol,
+                                    context.substream_id,
+                                    SubstreamError::NegotiationError(
+                                        crate::error::ParseError::InvalidData.into(),
+                                    ),
+                                )
+                                .await;
+                        }
+                        _ => self.rtc.direct_api().close_data_channel(channel_id),
+                    }
+
+                    return Err(error.into());
+                }
             };
 
             self.dispatch_framed_message(channel_id, body).await?;
-            // If the channel was closed/removed during dispatch, stop draining its buffer.
-            if !self.channels.contains_key(&channel_id) {
+
+            if matches!(
+                self.channels.get(&channel_id),
+                None | Some(ChannelState::Closing)
+            ) {
+                self.recv_buffers.remove(&channel_id);
                 return Ok(());
             }
         }
