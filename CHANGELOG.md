@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.17.0] - 2026-11-04
 
-This release improves WebRTC transport stability and lays the groundwork for dynamically joining Kademlia DHTs. It also introduces the necessary address filtering to exclude non-global addresses from the DHT, which makes it a semver-breaking release.
+This release improves WebRTC and WebSocket transport stability and lays the groundwork for dynamically joining Kademlia DHTs. It also introduces the necessary address filtering to exclude non-global addresses from the DHT, which makes this a semver-breaking release.
 
 ### Added
 
