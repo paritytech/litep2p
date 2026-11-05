@@ -610,11 +610,13 @@ impl RequestResponseProtocol {
             .active_inbound
             .insert(request_id, fallback);
 
+        let timeout = self.timeout;
         self.pending_inbound_requests.push(Box::pin(async move {
-            let request = match substream.next().await {
-                Some(Ok(request)) => Ok(request),
-                Some(Err(error)) => Err(error),
-                None => Err(SubstreamError::ConnectionClosed),
+            let request = match tokio::time::timeout(timeout, substream.next()).await {
+                Ok(Some(Ok(request))) => Ok(request),
+                Ok(Some(Err(error))) => Err(error),
+                Ok(None) => Err(SubstreamError::ConnectionClosed),
+                Err(_) => Err(SubstreamError::IoError(ErrorKind::TimedOut)),
             };
 
             (peer, request_id, request, substream)

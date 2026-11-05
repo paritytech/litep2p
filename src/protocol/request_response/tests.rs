@@ -41,7 +41,7 @@ use futures::StreamExt;
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Sender};
 
-use std::task::Poll;
+use std::{io::ErrorKind, task::Poll, time::Duration};
 
 // create new protocol for testing
 fn protocol() -> (
@@ -205,6 +205,30 @@ async fn inbound_substream_error() {
         Err(Error::InvalidData) => {}
         _ => panic!("invalid return value"),
     }
+}
+
+#[tokio::test]
+async fn inbound_request_read_times_out() {
+    let (mut protocol, _handle, _manager, _tx) = protocol();
+    protocol.timeout = Duration::from_millis(100);
+
+    let peer = PeerId::random();
+    protocol.on_connection_established(peer).await.unwrap();
+    protocol
+        .on_inbound_substream(
+            peer,
+            None,
+            Substream::new_mock(
+                peer,
+                SubstreamId::from(0usize),
+                Box::new(DummySubstream::new()),
+            ),
+        )
+        .await
+        .unwrap();
+
+    let (_, _, request, _) = protocol.pending_inbound_requests.next().await.unwrap();
+    assert_eq!(request, Err(SubstreamError::IoError(ErrorKind::TimedOut)));
 }
 
 // when a peer who had an active inbound substream disconnects, verify that the substream is removed
