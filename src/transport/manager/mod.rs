@@ -607,6 +607,7 @@ impl TransportManager {
             return;
         };
         *self.shared_protocols.write() = self.protocols.clone();
+        self.protocol_names.remove(&protocol);
 
         for fallback in &context.fallback_names {
             if !self.protocol_names.remove(fallback) {

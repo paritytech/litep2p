@@ -1354,3 +1354,32 @@ async fn kademlia_registered_at_runtime_needs_unused_protocol_names() {
         Err(litep2p::Error::ProtocolAlreadyExists(name)) if name == protocol,
     ));
 }
+
+#[tokio::test]
+async fn kademlia_protocol_names_are_released_when_the_handle_is_dropped() {
+    let protocol = ProtocolName::from("/runtime/kad");
+    let (_node1, mut node2) = runtime_kademlia_nodes(&ProtocolName::from("/other/kad"));
+
+    let (kad_config, kad_handle) =
+        KademliaConfigBuilder::new().with_protocol_names(vec![protocol.clone()]).build();
+    node2.register_kademlia(kad_config).unwrap();
+    drop(kad_handle);
+
+    // the instance exits and unregisters while the node runs
+    let started = std::time::Instant::now();
+    loop {
+        let (kad_config, kad_handle) =
+            KademliaConfigBuilder::new().with_protocol_names(vec![protocol.clone()]).build();
+        match node2.register_kademlia(kad_config) {
+            Ok(()) => break,
+            Err(litep2p::Error::ProtocolAlreadyExists(_)) => drop(kad_handle),
+            Err(error) => panic!("unexpected error: {error:?}"),
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "names never released"
+        );
+        let _ =
+            tokio::time::timeout(tokio::time::Duration::from_millis(50), node2.next_event()).await;
+    }
+}
