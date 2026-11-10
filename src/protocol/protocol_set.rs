@@ -823,4 +823,39 @@ mod tests {
             .unwrap();
         assert!(rx1.try_recv().is_err());
     }
+
+    #[tokio::test]
+    async fn open_failure_of_unregistered_protocol_is_dropped() {
+        let (tx, _rx) = channel(64);
+        let (tx1, mut rx1) = channel(64);
+        let protocol = ProtocolName::from("/notif/1");
+        let registry = ProtocolRegistry::from(HashMap::from_iter([(
+            protocol.clone(),
+            ProtocolContext {
+                tx: tx1.clone(),
+                codec: ProtocolCodec::Identity(32),
+                fallback_names: Vec::new(),
+                keep_alive: SubstreamKeepAlive::Yes,
+                inbound: InboundProtocol::Accept,
+            },
+        )]));
+
+        let mut protocol_set = ProtocolSet::new(
+            ConnectionId::from(0usize),
+            tx,
+            Default::default(),
+            registry.clone(),
+        );
+        assert!(registry.remove(&protocol, &tx1));
+
+        protocol_set
+            .report_substream_open_failure(
+                protocol,
+                SubstreamId::from(0usize),
+                SubstreamError::ConnectionClosed,
+            )
+            .await
+            .unwrap();
+        assert!(rx1.try_recv().is_err());
+    }
 }
