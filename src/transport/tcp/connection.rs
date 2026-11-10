@@ -360,7 +360,7 @@ impl TcpConnection {
         stream: crate::yamux::Stream,
         permit: Permit,
         substream_id: SubstreamId,
-        protocols: HashMap<ProtocolName, SubstreamKeepAlive>,
+        protocols: Arc<HashMap<ProtocolName, SubstreamKeepAlive>>,
         open_timeout: Duration,
     ) -> Result<NegotiatedSubstream, NegotiationError> {
         tracing::trace!(
@@ -877,7 +877,8 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )])
+            .into(),
         );
         protocol_set.report_connection_established(peer, local.endpoint.clone()).await;
         let handle = match protocol_rx.recv().await.unwrap() {

@@ -28,7 +28,7 @@ use crate::{
         address::AddressRecord,
         peer_state::StateDialResult,
         types::{PeerContext, SupportedTransport},
-        ProtocolContext, TransportManagerEvent, LOG_TARGET,
+        ProtocolRegistry, TransportManagerEvent, LOG_TARGET,
     },
     types::{protocol::ProtocolName, ConnectionId},
     BandwidthSink, PeerId,
@@ -369,7 +369,7 @@ impl TransportManagerHandle {
 pub struct TransportHandle {
     pub keypair: Keypair,
     pub tx: Sender<TransportManagerEvent>,
-    pub protocols: HashMap<ProtocolName, ProtocolContext>,
+    pub protocols: ProtocolRegistry,
     pub next_connection_id: Arc<AtomicUsize>,
     pub next_substream_id: Arc<AtomicUsize>,
     pub bandwidth_sink: BandwidthSink,

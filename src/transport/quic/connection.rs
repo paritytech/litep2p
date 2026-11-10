@@ -20,7 +20,7 @@
 
 //! QUIC connection.
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use crate::{
     config::Role,
@@ -203,7 +203,7 @@ impl QuicConnection {
     /// Accept bidirectional substream from rmeote peer.
     async fn accept_substream(
         stream: NegotiatingSubstream,
-        protocols: HashMap<ProtocolName, SubstreamKeepAlive>,
+        protocols: Arc<HashMap<ProtocolName, SubstreamKeepAlive>>,
         substream_id: SubstreamId,
         permit: Permit,
     ) -> Result<NegotiatedSubstream, NegotiationError> {

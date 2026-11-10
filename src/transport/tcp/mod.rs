@@ -759,7 +759,8 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )])
+            .into(),
         };
         let transport_config1 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -792,7 +793,8 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )])
+            .into(),
         };
         let transport_config2 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -857,7 +859,8 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )])
+            .into(),
         };
         let transport_config1 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -890,7 +893,8 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )])
+            .into(),
         };
         let transport_config2 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -950,7 +954,8 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )])
+            .into(),
         };
         let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
         let (mut transport1, _) =
@@ -990,7 +995,8 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )])
+            .into(),
         };
 
         let (mut transport2, _) = TcpTransport::new(handle2, Default::default(), resolver).unwrap();

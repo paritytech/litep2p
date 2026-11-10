@@ -58,11 +58,13 @@ use std::{
 
 pub use crate::protocol::SubstreamKeepAlive;
 pub use handle::{TransportHandle, TransportManagerHandle};
+pub use protocols::ProtocolRegistry;
 pub use types::SupportedTransport;
 
 pub(crate) mod address;
 pub mod limits;
 mod peer_state;
+mod protocols;
 mod types;
 
 pub(crate) mod handle;
@@ -227,10 +229,7 @@ pub struct TransportManager {
     bandwidth_sink: BandwidthSink,
 
     /// Installed protocols.
-    protocols: HashMap<ProtocolName, ProtocolContext>,
-
-    /// All names (main and fallback(s)) of the installed protocols.
-    protocol_names: HashSet<ProtocolName>,
+    protocols: ProtocolRegistry,
 
     /// Listen addresses.
     listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
@@ -360,8 +359,7 @@ impl TransportManagerBuilder {
             local_peer_id,
             keypair,
             bandwidth_sink: self.bandwidth_sink.unwrap_or_else(BandwidthSink::new),
-            protocols: HashMap::new(),
-            protocol_names: HashSet::new(),
+            protocols: ProtocolRegistry::default(),
             listen_addresses,
             public_addresses,
             next_connection_id: Arc::new(AtomicUsize::new(0usize)),
@@ -381,12 +379,9 @@ impl TransportManagerBuilder {
 }
 
 impl TransportManager {
-    /// Get iterator to installed protocols that are advertised to remote peers.
-    pub fn advertised_protocols(&self) -> impl Iterator<Item = &ProtocolName> {
-        self.protocols
-            .iter()
-            .filter(|(_, context)| context.inbound == InboundProtocol::Accept)
-            .map(|(protocol, _)| protocol)
+    /// Get installed protocols that are advertised to remote peers.
+    pub fn advertised_protocols(&self) -> Vec<ProtocolName> {
+        self.protocols.advertised()
     }
 
     /// Get iterator to installed transports
@@ -422,10 +417,10 @@ impl TransportManager {
         substream_keep_alive: SubstreamKeepAlive,
         inbound: InboundProtocol,
     ) -> TransportService {
-        assert!(!self.protocol_names.contains(&protocol));
+        assert!(!self.protocols.contains(&protocol));
 
         for fallback in &fallback_names {
-            if self.protocol_names.contains(fallback) {
+            if self.protocols.contains(fallback) {
                 panic!("duplicate fallback protocol given: {fallback:?}");
             }
         }
@@ -441,32 +436,18 @@ impl TransportManager {
         );
 
         self.protocols.insert(
-            protocol.clone(),
-            ProtocolContext::new(
-                codec,
-                sender,
-                fallback_names.clone(),
-                substream_keep_alive,
-                inbound,
-            ),
+            protocol,
+            ProtocolContext::new(codec, sender, fallback_names, substream_keep_alive, inbound),
         );
-        self.protocol_names.insert(protocol);
-        self.protocol_names.extend(fallback_names);
 
         service
     }
 
     /// Unregister a protocol in response of the user dropping the protocol handle.
     fn unregister_protocol(&mut self, protocol: ProtocolName) {
-        let Some(context) = self.protocols.remove(&protocol) else {
+        if self.protocols.remove(&protocol).is_none() {
             tracing::error!(target: LOG_TARGET, ?protocol, "Cannot unregister protocol, not registered");
             return;
-        };
-
-        for fallback in &context.fallback_names {
-            if !self.protocol_names.remove(fallback) {
-                tracing::error!(target: LOG_TARGET, ?fallback, ?protocol, "Cannot unregister fallback protocol, not registered");
-            }
         }
 
         tracing::info!(
@@ -1220,16 +1201,17 @@ impl TransportManager {
                                 match address.iter().last() {
                                     Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
                                         Ok(peer) => {
+                                            let protocols = self.protocols.senders();
                                             tracing::trace!(
                                                 target: LOG_TARGET,
                                                 ?connection_id,
                                                 ?error,
                                                 ?address,
-                                                num_protocols = self.protocols.len(),
+                                                num_protocols = protocols.len(),
                                                 "dial failure, notify protocols",
                                             );
 
-                                            for (protocol, context) in &self.protocols {
+                                            for (protocol, tx) in &protocols {
                                                 tracing::trace!(
                                                     target: LOG_TARGET,
                                                     ?connection_id,
@@ -1238,7 +1220,7 @@ impl TransportManager {
                                                     ?protocol,
                                                     "dial failure, notify protocol",
                                                 );
-                                                match context.tx.try_send(InnerTransportEvent::DialFailure {
+                                                match tx.try_send(InnerTransportEvent::DialFailure {
                                                     peer,
                                                     addresses: vec![address.clone()],
                                                 }) {
@@ -1252,8 +1234,7 @@ impl TransportManager {
                                                             ?protocol,
                                                             "dial failure, channel to protocol clogged, use await",
                                                         );
-                                                        let _ = context
-                                                            .tx
+                                                        let _ = tx
                                                             .send(InnerTransportEvent::DialFailure {
                                                                 peer,
                                                                 addresses: vec![address.clone()],
@@ -1398,11 +1379,12 @@ impl TransportManager {
                                     "failed to handle opened connection",
                                 ),
                                 Ok(Some(peer)) => {
+                                    let protocols = self.protocols.senders();
                                     tracing::trace!(
                                         target: LOG_TARGET,
                                         ?peer,
                                         ?connection_id,
-                                        num_protocols = self.protocols.len(),
+                                        num_protocols = protocols.len(),
                                         "inform protocols about open failure",
                                     );
 
@@ -1411,9 +1393,8 @@ impl TransportManager {
                                         .map(|(address, _)| address.clone())
                                         .collect::<Vec<_>>();
 
-                                    for (protocol, context) in &self.protocols {
-                                        let _ = match context
-                                            .tx
+                                    for (protocol, tx) in &protocols {
+                                        let _ = match tx
                                             .try_send(InnerTransportEvent::DialFailure {
                                                 peer,
                                                 addresses: addresses.clone(),
@@ -1428,8 +1409,7 @@ impl TransportManager {
                                                     "call to protocol would block try sending in a blocking way",
                                                 );
 
-                                                context
-                                                    .tx
+                                                tx
                                                     .send(InnerTransportEvent::DialFailure {
                                                         peer,
                                                         addresses: addresses.clone(),
@@ -1736,7 +1716,7 @@ mod tests {
         );
 
         assert_eq!(
-            manager.advertised_protocols().cloned().collect::<HashSet<_>>(),
+            manager.advertised_protocols().into_iter().collect::<HashSet<_>>(),
             HashSet::from_iter([ProtocolName::from("/advertised/1")]),
         );
     }
