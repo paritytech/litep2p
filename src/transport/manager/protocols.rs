@@ -27,11 +27,24 @@ use crate::{
 use parking_lot::RwLock;
 use tokio::sync::mpsc::Sender;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Weak},
+};
 
 /// Installed protocols shared between the transport manager and the open connections.
 #[derive(Debug, Clone, Default)]
 pub struct ProtocolRegistry(Arc<RwLock<Protocols>>);
+
+/// [`ProtocolRegistry`] that doesn't keep the senders of the installed protocols alive.
+#[derive(Debug, Clone, Default)]
+pub struct WeakProtocolRegistry(Weak<RwLock<Protocols>>);
+
+impl WeakProtocolRegistry {
+    pub fn upgrade(&self) -> Option<ProtocolRegistry> {
+        self.0.upgrade().map(ProtocolRegistry)
+    }
+}
 
 #[derive(Debug, Default)]
 struct Protocols {
@@ -84,6 +97,10 @@ impl From<HashMap<ProtocolName, ProtocolContext>> for ProtocolRegistry {
 }
 
 impl ProtocolRegistry {
+    pub fn downgrade(&self) -> WeakProtocolRegistry {
+        WeakProtocolRegistry(Arc::downgrade(&self.0))
+    }
+
     fn update<R>(&self, f: impl FnOnce(&mut HashMap<ProtocolName, ProtocolContext>) -> R) -> R {
         let mut protocols = self.0.write();
         let mut contexts = std::mem::take(&mut protocols.contexts);
@@ -96,8 +113,12 @@ impl ProtocolRegistry {
         self.update(|contexts| contexts.insert(protocol, context));
     }
 
-    pub fn remove(&self, protocol: &ProtocolName) -> Option<ProtocolContext> {
-        self.update(|contexts| contexts.remove(protocol))
+    /// Remove `protocol` if it's still installed with `tx`.
+    pub fn remove(&self, protocol: &ProtocolName, tx: &Sender<InnerTransportEvent>) -> bool {
+        self.update(|contexts| {
+            contexts.get(protocol).is_some_and(|context| context.tx.same_channel(tx))
+                && contexts.remove(protocol).is_some()
+        })
     }
 
     /// Check if `name` is the main or a fallback name of an installed protocol.

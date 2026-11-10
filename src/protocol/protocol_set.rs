@@ -811,7 +811,7 @@ mod tests {
         let registry = ProtocolRegistry::from(HashMap::from_iter([(
             protocol.clone(),
             ProtocolContext {
-                tx: tx1,
+                tx: tx1.clone(),
                 codec: ProtocolCodec::Identity(32),
                 fallback_names: Vec::new(),
                 keep_alive: SubstreamKeepAlive::Yes,
@@ -825,7 +825,7 @@ mod tests {
             Default::default(),
             registry.clone(),
         );
-        registry.remove(&protocol);
+        assert!(registry.remove(&protocol, &tx1));
 
         assert!(protocol_set.protocols_with_keep_alives().is_empty());
         assert!(std::matches!(

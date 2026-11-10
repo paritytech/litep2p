@@ -23,10 +23,11 @@ use crate::{
     crypto::ed25519::Keypair,
     error::ImmediateDialError,
     executor::Executor,
-    protocol::ProtocolSet,
+    protocol::{InnerTransportEvent, ProtocolSet},
     transport::manager::{
         address::AddressRecord,
         peer_state::StateDialResult,
+        protocols::WeakProtocolRegistry,
         types::{PeerContext, SupportedTransport},
         ProtocolRegistry, TransportManagerEvent, LOG_TARGET,
     },
@@ -61,11 +62,6 @@ pub enum InnerTransportManagerCommand {
         /// Remote address.
         address: Multiaddr,
     },
-
-    UnregisterProtocol {
-        /// Protocol name.
-        protocol: ProtocolName,
-    },
 }
 
 /// Handle for communicating with [`crate::transport::manager::TransportManager`].
@@ -88,6 +84,9 @@ pub struct TransportManagerHandle {
 
     /// Public addresses.
     public_addresses: PublicAddresses,
+
+    /// Installed protocols.
+    protocols: WeakProtocolRegistry,
 }
 
 impl TransportManagerHandle {
@@ -99,6 +98,7 @@ impl TransportManagerHandle {
         supported_transport: HashSet<SupportedTransport>,
         listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
         public_addresses: PublicAddresses,
+        protocols: ProtocolRegistry,
     ) -> Self {
         Self {
             peers,
@@ -107,6 +107,7 @@ impl TransportManagerHandle {
             supported_transport,
             listen_addresses,
             public_addresses,
+            protocols: protocols.downgrade(),
         }
     }
 
@@ -342,26 +343,10 @@ impl TransportManagerHandle {
             })
     }
 
-    /// Dynamically unregister a protocol.
-    ///
-    /// This must be called when a protocol is no longer needed (e.g. user dropped the protocol
-    /// handle).
-    pub fn unregister_protocol(&self, protocol: ProtocolName) {
-        tracing::info!(
-            target: LOG_TARGET,
-            ?protocol,
-            "Unregistering user protocol on handle drop"
-        );
-
-        if let Err(err) = self
-            .cmd_tx
-            .try_send(InnerTransportManagerCommand::UnregisterProtocol { protocol })
-        {
-            tracing::error!(
-                target: LOG_TARGET,
-                ?err,
-                "Failed to unregister protocol"
-            );
+    /// Unregister `protocol` if it's still installed with `tx`.
+    pub fn unregister_protocol(&self, protocol: &ProtocolName, tx: &Sender<InnerTransportEvent>) {
+        if self.protocols.upgrade().is_some_and(|protocols| protocols.remove(protocol, tx)) {
+            tracing::debug!(target: LOG_TARGET, ?protocol, "protocol unregistered");
         }
     }
 }
@@ -420,6 +405,7 @@ mod tests {
                 supported_transport: HashSet::new(),
                 listen_addresses: Default::default(),
                 public_addresses: PublicAddresses::new(local_peer_id),
+                protocols: Default::default(),
             },
             cmd_rx,
         )
@@ -812,6 +798,7 @@ mod tests {
             supported_transport: HashSet::new(),
             listen_addresses,
             public_addresses: PublicAddresses::new(local_peer_id),
+            protocols: Default::default(),
         };
 
         // Exact matches

@@ -29,7 +29,7 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{channel, Receiver, Sender, WeakSender};
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -298,6 +298,9 @@ pub struct TransportService {
     /// RX channel for receiving events from tranports and connections.
     rx: Receiver<InnerTransportEvent>,
 
+    /// Sender of `rx`, identifies this service among the installed protocols.
+    tx: WeakSender<InnerTransportEvent>,
+
     /// Next substream ID.
     next_substream_id: Arc<AtomicUsize>,
 
@@ -333,6 +336,7 @@ impl TransportService {
         (
             Self {
                 rx,
+                tx: tx.downgrade(),
                 protocol,
                 local_peer_id,
                 fallback_names,
@@ -651,7 +655,9 @@ impl TransportService {
     /// This must be called when a protocol is no longer needed (e.g. user dropped the protocol
     /// handle).
     pub fn unregister_protocol(&self) {
-        self.transport_handle.unregister_protocol(self.protocol.clone());
+        if let Some(tx) = self.tx.upgrade() {
+            self.transport_handle.unregister_protocol(&self.protocol, &tx);
+        }
     }
 }
 
@@ -795,6 +801,7 @@ mod tests {
             HashSet::new(),
             Default::default(),
             PublicAddresses::new(peer),
+            Default::default(),
         );
 
         let (service, sender) = TransportService::new(

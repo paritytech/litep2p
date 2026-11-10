@@ -345,6 +345,7 @@ impl TransportManagerBuilder {
         let (event_tx, event_rx) = channel(256);
         let listen_addresses = Arc::new(RwLock::new(HashSet::new()));
         let public_addresses = PublicAddresses::new(local_peer_id);
+        let protocols = ProtocolRegistry::default();
 
         let handle = TransportManagerHandle::new(
             local_peer_id,
@@ -353,13 +354,14 @@ impl TransportManagerBuilder {
             self.supported_transports,
             listen_addresses.clone(),
             public_addresses.clone(),
+            protocols.clone(),
         );
 
         TransportManager {
             local_peer_id,
             keypair,
             bandwidth_sink: self.bandwidth_sink.unwrap_or_else(BandwidthSink::new),
-            protocols: ProtocolRegistry::default(),
+            protocols,
             listen_addresses,
             public_addresses,
             next_connection_id: Arc::new(AtomicUsize::new(0usize)),
@@ -441,20 +443,6 @@ impl TransportManager {
         );
 
         service
-    }
-
-    /// Unregister a protocol in response of the user dropping the protocol handle.
-    fn unregister_protocol(&mut self, protocol: ProtocolName) {
-        if self.protocols.remove(&protocol).is_none() {
-            tracing::error!(target: LOG_TARGET, ?protocol, "Cannot unregister protocol, not registered");
-            return;
-        }
-
-        tracing::info!(
-            target: LOG_TARGET,
-            ?protocol,
-            "Protocol fully unregistered"
-        );
     }
 
     /// Acquire `TransportHandle`.
@@ -1165,9 +1153,6 @@ impl TransportManager {
                                 tracing::debug!(target: LOG_TARGET, ?error, "failed to dial peer")
                             }
                         }
-                        InnerTransportManagerCommand::UnregisterProtocol { protocol } => {
-                            self.unregister_protocol(protocol);
-                        }
                     }
                 },
 
@@ -1719,6 +1704,55 @@ mod tests {
             manager.advertised_protocols().into_iter().collect::<HashSet<_>>(),
             HashSet::from_iter([ProtocolName::from("/advertised/1")]),
         );
+    }
+
+    #[test]
+    fn unregistered_protocol_can_be_registered_again() {
+        let mut manager = TransportManagerBuilder::new().build();
+        let protocol = ProtocolName::from("/notif/1");
+        let fallback = ProtocolName::from("/notif/1/fallback");
+        let register = |manager: &mut TransportManager| {
+            manager.register_protocol(
+                protocol.clone(),
+                vec![fallback.clone()],
+                ProtocolCodec::UnsignedVarint(None),
+                KEEP_ALIVE_TIMEOUT,
+                SubstreamKeepAlive::Yes,
+                InboundProtocol::Accept,
+            )
+        };
+
+        let old = register(&mut manager);
+        // a connection may still hold the sender of `old`
+        let _old_tx = manager.protocols.get(&protocol).unwrap().1.tx;
+
+        old.unregister_protocol();
+        assert!(!manager.protocols.contains(&protocol));
+        assert!(!manager.protocols.contains(&fallback));
+
+        let _new = register(&mut manager);
+        old.unregister_protocol();
+        assert!(manager.protocols.contains(&protocol));
+        assert!(manager.protocols.contains(&fallback));
+    }
+
+    #[tokio::test]
+    async fn service_closes_when_manager_is_dropped() {
+        let mut manager = TransportManagerBuilder::new().build();
+        let mut service = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            Vec::new(),
+            ProtocolCodec::UnsignedVarint(None),
+            KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
+            InboundProtocol::Accept,
+        );
+
+        drop(manager);
+        assert!(std::matches!(
+            tokio::time::timeout(Duration::from_secs(5), service.next()).await,
+            Ok(None)
+        ));
     }
 
     #[test]
