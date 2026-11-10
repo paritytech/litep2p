@@ -37,7 +37,7 @@ use crate::{
     Error, PeerId, ProtocolName,
 };
 
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Sender};
 
@@ -239,6 +239,82 @@ async fn inbound_request_read_times_out() {
     assert!(protocol.peers.get(&peer).unwrap().active_inbound.is_empty());
     assert!(protocol.pending_inbound_requests.is_empty());
     assert!(protocol.pending_outbound_responses.is_empty());
+}
+
+#[tokio::test]
+async fn rejected_inbound_substream_does_not_wait_for_close() {
+    let (mut protocol, _handle, _manager, _tx) = protocol();
+    protocol.max_concurrent_inbound_requests = Some(0);
+
+    let peer = PeerId::random();
+    protocol.on_connection_established(peer).await.unwrap();
+
+    let mut substream = MockSubstream::new();
+    substream.expect_poll_close().returning(|_| Poll::Pending);
+
+    let result = protocol
+        .on_inbound_substream(
+            peer,
+            None,
+            Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
+        )
+        .now_or_never();
+
+    assert!(matches!(result, Some(Ok(()))));
+    assert_eq!(protocol.pending_rejected_closes.len(), 1);
+    assert!(protocol.pending_inbound_requests.is_empty());
+}
+
+#[tokio::test]
+async fn closing_rejected_substreams_does_not_occupy_request_slots() {
+    let (mut protocol, _handle, _manager, _tx) = protocol();
+    protocol.max_concurrent_inbound_requests = Some(1);
+
+    let peer = PeerId::random();
+    protocol.on_connection_established(peer).await.unwrap();
+
+    let mut active = MockSubstream::new();
+    active.expect_poll_next().returning(|_| Poll::Ready(None));
+    protocol
+        .on_inbound_substream(
+            peer,
+            None,
+            Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(active)),
+        )
+        .await
+        .unwrap();
+
+    // A close that never completes, like a QUIC finish waiting for the peer's ACK.
+    let mut rejected = MockSubstream::new();
+    rejected.expect_poll_close().returning(|_| Poll::Pending);
+    protocol
+        .on_inbound_substream(
+            peer,
+            None,
+            Substream::new_mock(peer, SubstreamId::from(1usize), Box::new(rejected)),
+        )
+        .await
+        .unwrap();
+    assert!(protocol.pending_rejected_closes.next().now_or_never().is_none());
+
+    let (peer, request_id, request, substream) =
+        protocol.pending_inbound_requests.next().await.unwrap();
+    let _ = protocol.on_inbound_request(peer, request_id, request, substream).await;
+    assert!(protocol.pending_inbound_requests.is_empty());
+
+    protocol
+        .on_inbound_substream(
+            peer,
+            None,
+            Substream::new_mock(
+                peer,
+                SubstreamId::from(2usize),
+                Box::new(DummySubstream::new()),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(protocol.pending_inbound_requests.len(), 1);
 }
 
 // when a peer who had an active inbound substream disconnects, verify that the substream is removed
