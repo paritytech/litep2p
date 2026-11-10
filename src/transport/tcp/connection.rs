@@ -917,7 +917,14 @@ mod tests {
             .await
             .expect("connection event loop must exit");
 
+        // The connection reported itself to the manager once established.
+        assert!(std::matches!(
+            mgr_rx.recv().await,
+            Some(TransportManagerEvent::ConnectionOpened { .. })
+        ));
         match mgr_rx.recv().await {
+            Some(TransportManagerEvent::ConnectionOpened { .. }) =>
+                panic!("the connection reported itself twice"),
             Some(TransportManagerEvent::ConnectionClosed {
                 peer: closed_peer,
                 connection: closed_connection,
