@@ -707,7 +707,6 @@ mod tests {
             .unwrap();
 
         assert!(protocol_set.try_get_permit().is_none());
-        assert!(protocol_set.protocols_with_keep_alives().is_empty());
     }
 
     #[tokio::test]
@@ -775,32 +774,6 @@ mod tests {
             rx.try_recv(),
             Ok(TransportManagerEvent::ConnectionClosed { .. })
         ));
-    }
-
-    #[tokio::test]
-    async fn closed_protocol_is_not_advertised() {
-        let (tx, _rx) = channel(64);
-        let (tx1, rx1) = channel(64);
-        drop(rx1);
-
-        let protocol_set = ProtocolSet::new(
-            ConnectionId::from(0usize),
-            tx,
-            Default::default(),
-            HashMap::from_iter([(
-                ProtocolName::from("/notif/1"),
-                ProtocolContext {
-                    tx: tx1,
-                    codec: ProtocolCodec::Identity(32),
-                    fallback_names: vec![ProtocolName::from("/notif/1/fallback")],
-                    keep_alive: SubstreamKeepAlive::Yes,
-                    inbound: InboundProtocol::Accept,
-                },
-            )])
-            .into(),
-        );
-
-        assert!(protocol_set.protocols_with_keep_alives().is_empty());
     }
 
     #[tokio::test]

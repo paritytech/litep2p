@@ -66,27 +66,21 @@ impl Protocols {
             })
             .collect();
 
-        Self {
-            keep_alives: Arc::new(Self::build_keep_alives(&contexts)),
-            contexts,
-            fallback_names,
-        }
-    }
-
-    fn build_keep_alives(
-        contexts: &HashMap<ProtocolName, ProtocolContext>,
-    ) -> HashMap<ProtocolName, SubstreamKeepAlive> {
-        contexts
+        let keep_alives = contexts
             .iter()
-            .filter(|(_, context)| {
-                context.inbound == InboundProtocol::Accept && !context.tx.is_closed()
-            })
+            .filter(|(_, context)| context.inbound == InboundProtocol::Accept)
             .flat_map(|(protocol, context)| {
                 std::iter::once(protocol)
                     .chain(&context.fallback_names)
                     .map(|name| (name.clone(), context.keep_alive))
             })
-            .collect()
+            .collect();
+
+        Self {
+            contexts,
+            fallback_names,
+            keep_alives: Arc::new(keep_alives),
+        }
     }
 }
 
@@ -142,22 +136,14 @@ impl ProtocolRegistry {
             .read()
             .contexts
             .iter()
-            .filter(|(_, context)| {
-                context.inbound == InboundProtocol::Accept && !context.tx.is_closed()
-            })
+            .filter(|(_, context)| context.inbound == InboundProtocol::Accept)
             .map(|(protocol, _)| protocol.clone())
             .collect()
     }
 
     /// Keep-alive settings of the main and fallback names that remote peers can negotiate.
     pub fn keep_alives(&self) -> Arc<HashMap<ProtocolName, SubstreamKeepAlive>> {
-        let protocols = self.0.read();
-
-        if protocols.contexts.values().any(|context| context.tx.is_closed()) {
-            return Arc::new(Protocols::build_keep_alives(&protocols.contexts));
-        }
-
-        protocols.keep_alives.clone()
+        self.0.read().keep_alives.clone()
     }
 
     pub fn senders(&self) -> Vec<(ProtocolName, Sender<InnerTransportEvent>)> {

@@ -1804,8 +1804,6 @@ impl NotificationProtocol {
                         "user protocol has exited, exiting"
                     );
 
-                    self.service.unregister_protocol();
-
                     return true;
                 }
                 Some(command) => match command {

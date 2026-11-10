@@ -657,12 +657,17 @@ impl TransportService {
 
     /// Dynamically unregister a protocol.
     ///
-    /// This must be called when a protocol is no longer needed (e.g. user dropped the protocol
-    /// handle).
+    /// The protocol is also unregistered when [`TransportService`] is dropped.
     pub fn unregister_protocol(&self) {
         if let Some(tx) = self.tx.upgrade() {
             self.transport_handle.unregister_protocol(&self.protocol, &tx);
         }
+    }
+}
+
+impl Drop for TransportService {
+    fn drop(&mut self) {
+        self.unregister_protocol();
     }
 }
 

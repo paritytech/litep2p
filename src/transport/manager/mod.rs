@@ -405,6 +405,9 @@ impl TransportManager {
     ///
     /// `inbound` controls whether remote peers can negotiate the protocol on inbound substreams
     /// and whether the protocol name is exposed to them via the identify protocol.
+    ///
+    /// The protocol is unregistered when the returned [`TransportService`] is dropped.
+    #[must_use]
     pub fn register_protocol(
         &mut self,
         protocol: ProtocolName,
@@ -1731,6 +1734,27 @@ mod tests {
         assert!(manager.protocols.contains(&fallback));
     }
 
+    #[test]
+    fn dropped_service_unregisters_protocol() {
+        let mut manager = TransportManagerBuilder::new().build();
+        let protocol = ProtocolName::from("/notif/1");
+
+        let service = manager.register_protocol(
+            protocol.clone(),
+            Vec::new(),
+            ProtocolCodec::UnsignedVarint(None),
+            KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
+            InboundProtocol::Accept,
+        );
+        assert!(manager.protocols.contains(&protocol));
+
+        drop(service);
+        assert!(!manager.protocols.contains(&protocol));
+        assert!(manager.protocols.advertised().is_empty());
+        assert!(manager.protocols.keep_alives().is_empty());
+    }
+
     #[tokio::test]
     async fn service_closes_when_manager_is_dropped() {
         let mut manager = TransportManagerBuilder::new().build();
@@ -1756,7 +1780,7 @@ mod tests {
     fn duplicate_protocol() {
         let mut manager = TransportManagerBuilder::new().build();
 
-        manager.register_protocol(
+        let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
@@ -1764,7 +1788,7 @@ mod tests {
             SubstreamKeepAlive::Yes,
             InboundProtocol::Accept,
         );
-        manager.register_protocol(
+        let _ = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
@@ -1780,7 +1804,7 @@ mod tests {
     fn fallback_protocol_as_duplicate_main_protocol() {
         let mut manager = TransportManagerBuilder::new().build();
 
-        manager.register_protocol(
+        let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
@@ -1788,7 +1812,7 @@ mod tests {
             SubstreamKeepAlive::Yes,
             InboundProtocol::Accept,
         );
-        manager.register_protocol(
+        let _ = manager.register_protocol(
             ProtocolName::from("/notif/2"),
             vec![
                 ProtocolName::from("/notif/2/new"),
@@ -1807,7 +1831,7 @@ mod tests {
     fn duplicate_fallback_protocol() {
         let mut manager = TransportManagerBuilder::new().build();
 
-        manager.register_protocol(
+        let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             vec![
                 ProtocolName::from("/notif/1/new"),
@@ -1818,7 +1842,7 @@ mod tests {
             SubstreamKeepAlive::Yes,
             InboundProtocol::Accept,
         );
-        manager.register_protocol(
+        let _ = manager.register_protocol(
             ProtocolName::from("/notif/2"),
             vec![
                 ProtocolName::from("/notif/2/new"),
