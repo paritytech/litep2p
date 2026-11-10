@@ -362,6 +362,11 @@ impl TransportService {
         self.transport_handle.listen_addresses()
     }
 
+    /// Get the protocols currently advertised to remote peers.
+    pub(crate) fn advertised_protocols(&self) -> Vec<ProtocolName> {
+        self.transport_handle.advertised_protocols()
+    }
+
     /// Handle connection established event.
     fn on_connection_established(
         &mut self,

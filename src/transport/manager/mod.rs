@@ -381,11 +381,6 @@ impl TransportManagerBuilder {
 }
 
 impl TransportManager {
-    /// Get installed protocols that are advertised to remote peers.
-    pub fn advertised_protocols(&self) -> Vec<ProtocolName> {
-        self.protocols.advertised()
-    }
-
     /// Get iterator to installed transports
     pub fn installed_transports(&self) -> impl Iterator<Item = &SupportedTransport> {
         self.transports.keys()
@@ -1683,7 +1678,7 @@ mod tests {
     fn only_advertised_protocols_are_reported() {
         let mut manager = TransportManagerBuilder::new().build();
 
-        manager.register_protocol(
+        let _service1 = manager.register_protocol(
             ProtocolName::from("/advertised/1"),
             vec![ProtocolName::from("/advertised/1/fallback")],
             ProtocolCodec::UnsignedVarint(None),
@@ -1691,7 +1686,7 @@ mod tests {
             SubstreamKeepAlive::Yes,
             InboundProtocol::Accept,
         );
-        manager.register_protocol(
+        let _service2 = manager.register_protocol(
             ProtocolName::from("/local/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
@@ -1701,7 +1696,7 @@ mod tests {
         );
 
         assert_eq!(
-            manager.advertised_protocols().into_iter().collect::<HashSet<_>>(),
+            manager.protocols.advertised().into_iter().collect::<HashSet<_>>(),
             HashSet::from_iter([ProtocolName::from("/advertised/1")]),
         );
     }

@@ -126,6 +126,13 @@ impl TransportManagerHandle {
         self.listen_addresses.read().clone()
     }
 
+    pub(crate) fn advertised_protocols(&self) -> Vec<ProtocolName> {
+        self.protocols
+            .upgrade()
+            .map(|protocols| protocols.advertised())
+            .unwrap_or_default()
+    }
+
     /// Check if `address` is supported by one of the enabled transports.
     pub fn supported_transport(&self, address: &Multiaddr) -> bool {
         let mut iter = address.iter();

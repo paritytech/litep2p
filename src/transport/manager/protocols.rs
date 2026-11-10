@@ -142,7 +142,9 @@ impl ProtocolRegistry {
             .read()
             .contexts
             .iter()
-            .filter(|(_, context)| context.inbound == InboundProtocol::Accept)
+            .filter(|(_, context)| {
+                context.inbound == InboundProtocol::Accept && !context.tx.is_closed()
+            })
             .map(|(protocol, _)| protocol.clone())
             .collect()
     }

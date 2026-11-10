@@ -77,9 +77,6 @@ pub struct Config {
     // Public key of the local node, filled by `Litep2p`.
     pub(crate) public: Option<PublicKey>,
 
-    /// Protocols supported by the local node, filled by `Litep2p`.
-    pub(crate) protocols: Vec<ProtocolName>,
-
     /// Protocol version.
     pub(crate) protocol_version: String,
 
@@ -105,7 +102,6 @@ impl Config {
                 protocol_version,
                 user_agent,
                 codec: ProtocolCodec::UnsignedVarint(Some(IDENTIFY_PAYLOAD_SIZE)),
-                protocols: Vec::new(),
                 protocol: ProtocolName::from(PROTOCOL_NAME),
             },
             Box::new(ReceiverStream::new(rx_event)),
@@ -181,9 +177,6 @@ pub(crate) struct Identify {
     /// User agent.
     user_agent: String,
 
-    /// Protocols supported by the local node, filled by `Litep2p`.
-    protocols: Vec<String>,
-
     /// Pending outbound substreams.
     pending_outbound: FuturesStream<BoxFuture<'static, crate::Result<IdentifyResponse>>>,
 
@@ -210,7 +203,6 @@ impl Identify {
             user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
             pending_inbound: FuturesStream::new(),
             pending_outbound: FuturesStream::new(),
-            protocols: config.protocols.iter().map(|protocol| protocol.to_string()).collect(),
         }
     }
 
@@ -269,7 +261,12 @@ impl Identify {
             public_key: Some(self.public.to_protobuf_encoding()),
             listen_addrs: listen_addr.into_iter().collect(),
             observed_addr,
-            protocols: self.protocols.clone(),
+            protocols: self
+                .service
+                .advertised_protocols()
+                .into_iter()
+                .map(|protocol| protocol.to_string())
+                .collect(),
         };
 
         tracing::trace!(
