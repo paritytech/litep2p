@@ -184,7 +184,7 @@ pub(crate) struct RequestResponseProtocol {
     /// Next request ID.
     next_request_id: Arc<AtomicUsize>,
 
-    /// Timeout for outbound requests.
+    /// Timeout for outbound and inbound requests.
     timeout: Duration,
 
     /// Maximum concurrent inbound requests, if specified.
