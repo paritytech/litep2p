@@ -227,8 +227,18 @@ async fn inbound_request_read_times_out() {
         .await
         .unwrap();
 
-    let (_, _, request, _) = protocol.pending_inbound_requests.next().await.unwrap();
+    let (peer, request_id, request, substream) =
+        protocol.pending_inbound_requests.next().await.unwrap();
     assert_eq!(request, Err(SubstreamError::IoError(ErrorKind::TimedOut)));
+    assert!(protocol.peers.get(&peer).unwrap().active_inbound.contains_key(&request_id));
+
+    assert!(matches!(
+        protocol.on_inbound_request(peer, request_id, request, substream).await,
+        Err(Error::InvalidData)
+    ));
+    assert!(protocol.peers.get(&peer).unwrap().active_inbound.is_empty());
+    assert!(protocol.pending_inbound_requests.is_empty());
+    assert!(protocol.pending_outbound_responses.is_empty());
 }
 
 // when a peer who had an active inbound substream disconnects, verify that the substream is removed
