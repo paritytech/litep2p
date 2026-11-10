@@ -1774,6 +1774,39 @@ mod tests {
     }
 
     #[test]
+    fn connections_stop_negotiating_unregistered_protocol() {
+        let mut manager = TransportManagerBuilder::new().build();
+        let protocol = ProtocolName::from("/notif/1");
+        let fallback = ProtocolName::from("/notif/1/fallback");
+
+        let service = manager.register_protocol(
+            protocol.clone(),
+            vec![fallback.clone()],
+            ProtocolCodec::UnsignedVarint(None),
+            KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
+            InboundProtocol::Accept,
+        );
+        let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
+        assert_eq!(
+            protocol_set
+                .protocols_with_keep_alives()
+                .keys()
+                .cloned()
+                .collect::<HashSet<_>>(),
+            HashSet::from([protocol.clone(), fallback.clone()]),
+        );
+
+        drop(service);
+        assert!(protocol_set.protocols_with_keep_alives().is_empty());
+        assert!(handle
+            .protocol_set(ConnectionId::from(1usize))
+            .protocols_with_keep_alives()
+            .is_empty());
+    }
+
+    #[test]
     #[should_panic]
     #[cfg(debug_assertions)]
     fn duplicate_protocol() {
