@@ -34,7 +34,7 @@ use crate::{
 };
 
 use bytes::BytesMut;
-use futures::{channel, future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use futures::{channel, future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use tokio::{
     sync::{
         mpsc::{Receiver, Sender},
@@ -416,7 +416,7 @@ impl RequestResponseProtocol {
                                 "request canceled",
                             );
 
-                            let _ = substream.close().await;
+                            let _ = substream.close().now_or_never();
                             (
                                 peer,
                                 request_id,
@@ -432,7 +432,7 @@ impl RequestResponseProtocol {
                                 "request timed out",
                             );
 
-                            let _ = substream.close().await;
+                            let _ = substream.close().now_or_never();
                             (peer, request_id, fallback_protocol, Err(RequestResponseError::Timeout))
                         }
                         event = substream.next() => match event {
@@ -526,7 +526,7 @@ impl RequestResponseProtocol {
                         ?request_id,
                         "request rejected",
                     );
-                    let _ = substream.close().await;
+                    let _ = substream.close().now_or_never();
                 }
                 Ok((response, mut feedback)) => {
                     tracing::trace!(

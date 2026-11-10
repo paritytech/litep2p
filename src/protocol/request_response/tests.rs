@@ -23,8 +23,8 @@ use crate::{
     protocol::{
         connection::ConnectionHandle,
         request_response::{
-            ConfigBuilder, DialOptions, RejectReason, RequestResponseError, RequestResponseEvent,
-            RequestResponseHandle, RequestResponseProtocol,
+            ConfigBuilder, DialOptions, RejectReason, RequestContext, RequestResponseError,
+            RequestResponseEvent, RequestResponseHandle, RequestResponseProtocol,
         },
         InnerTransportEvent, ProtocolCommand, SubstreamError, SubstreamKeepAlive, TransportService,
     },
@@ -37,6 +37,7 @@ use crate::{
     Error, PeerId, ProtocolName,
 };
 
+use bytes::BytesMut;
 use futures::{FutureExt, StreamExt};
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Sender};
@@ -315,6 +316,80 @@ async fn closing_rejected_substreams_does_not_occupy_request_slots() {
         .await
         .unwrap();
     assert_eq!(protocol.pending_inbound_requests.len(), 1);
+}
+
+#[tokio::test]
+async fn outbound_request_timeout_does_not_wait_for_close() {
+    let (mut protocol, _handle, _manager, _tx) = protocol();
+    protocol.timeout = Duration::from_millis(100);
+
+    let peer = PeerId::random();
+    let substream_id = SubstreamId::from(0usize);
+    let request_id = RequestId::from(0usize);
+    protocol.pending_outbound.insert(
+        substream_id,
+        RequestContext::new(peer, request_id, vec![1, 2, 3], None),
+    );
+
+    let mut substream = MockSubstream::new();
+    substream.expect_poll_ready().returning(|_| Poll::Ready(Ok(())));
+    substream.expect_start_send().returning(|_| Ok(()));
+    substream.expect_poll_flush().returning(|_| Poll::Ready(Ok(())));
+    substream.expect_poll_next().returning(|_| Poll::Pending);
+    substream.expect_poll_close().returning(|_| Poll::Pending);
+
+    protocol
+        .on_outbound_substream(
+            peer,
+            substream_id,
+            Substream::new_mock(peer, substream_id, Box::new(substream)),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let (_, _, _, result) =
+        tokio::time::timeout(Duration::from_secs(5), protocol.pending_inbound.next())
+            .await
+            .expect("timeout must not wait for the substream to close")
+            .unwrap();
+    assert!(matches!(result, Err(RequestResponseError::Timeout)));
+}
+
+#[tokio::test]
+async fn rejected_inbound_request_does_not_wait_for_close() {
+    let (mut protocol, mut handle, _manager, _tx) = protocol();
+
+    let peer = PeerId::random();
+    protocol.on_connection_established(peer).await.unwrap();
+    let request_id = protocol.next_request_id();
+    protocol.peers.get_mut(&peer).unwrap().active_inbound.insert(request_id, None);
+
+    let mut substream = MockSubstream::new();
+    substream.expect_poll_close().returning(|_| Poll::Pending);
+
+    protocol
+        .on_inbound_request(
+            peer,
+            request_id,
+            Ok(BytesMut::from(&b"hello"[..])),
+            Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        handle.next().await,
+        Some(RequestResponseEvent::RequestReceived { .. })
+    ));
+    handle.reject_request(request_id);
+
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        protocol.pending_outbound_responses.next(),
+    )
+    .await
+    .expect("rejection must not wait for the substream to close");
+    assert!(protocol.pending_outbound_responses.is_empty());
 }
 
 // when a peer who had an active inbound substream disconnects, verify that the substream is removed
