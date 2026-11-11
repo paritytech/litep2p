@@ -326,6 +326,37 @@ impl TransportManagerHandle {
             })
     }
 
+    /// Check if `peer` is connected, i.e., [`TransportManagerHandle::dial`] would return
+    /// [`ImmediateDialError::AlreadyConnected`].
+    pub(crate) fn is_connected(&self, peer: &PeerId) -> bool {
+        self.peers.read().get(peer).is_some_and(|context| {
+            std::matches!(context.state.can_dial(), StateDialResult::AlreadyConnected)
+        })
+    }
+
+    /// Mark `peer` connected, as the transport manager does once the connection is established.
+    #[cfg(test)]
+    pub(crate) fn mark_connected(&self, peer: PeerId, connection_id: ConnectionId) {
+        use crate::transport::manager::{
+            address::AddressStore,
+            peer_state::{ConnectionRecord, PeerState},
+        };
+
+        self.peers.write().insert(
+            peer,
+            PeerContext {
+                state: PeerState::Connected {
+                    record: ConnectionRecord {
+                        address: Multiaddr::empty(),
+                        connection_id,
+                    },
+                    secondary: None,
+                },
+                addresses: AddressStore::new(),
+            },
+        );
+    }
+
     /// Dial peer using `Multiaddr`.
     ///
     /// Returns an error if address it not valid.

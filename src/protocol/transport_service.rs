@@ -312,6 +312,9 @@ pub struct TransportService {
     pending_outbound: HashMap<SubstreamId, ConnectionId>,
 
     /// Events queued for the protocol, since closing a connection may emit multiple events.
+    ///
+    /// `open_substream` may also move events from `rx` into this queue, see
+    /// [`TransportService::apply_pending_inner_events_for`].
     pending_events: VecDeque<TransportEvent>,
 }
 
@@ -520,6 +523,98 @@ impl TransportService {
         }
     }
 
+    /// Apply an [`InnerTransportEvent`] to local connection state.
+    ///
+    /// The resulting [`TransportEvent`]s are queued in `pending_events`, in the order the
+    /// transport reported them, to be yielded from [`Stream::poll_next`].
+    fn handle_inner_event(&mut self, event: InnerTransportEvent) {
+        let event = match event {
+            InnerTransportEvent::ConnectionEstablished {
+                peer,
+                endpoint,
+                sender,
+                connection,
+            } => self.on_connection_established(peer, endpoint, connection, sender),
+            InnerTransportEvent::ConnectionClosed { peer, connection } => {
+                self.on_connection_closed(peer, connection);
+                None
+            }
+            InnerTransportEvent::SubstreamOpened {
+                peer,
+                protocol,
+                fallback,
+                direction,
+                substream,
+                connection_id,
+                opening_permit,
+            } => {
+                if let Direction::Outbound(substream_id) = direction {
+                    self.pending_outbound.remove(&substream_id);
+                }
+
+                if protocol == self.protocol && self.substream_keep_alive == SubstreamKeepAlive::Yes
+                {
+                    self.keep_alive_tracker.substream_activity(peer, connection_id);
+                    if let Some(context) = self.connections.get_mut(&peer) {
+                        context.try_upgrade(&connection_id);
+                    }
+                }
+
+                // Connection is upgraded, we must now drop the permit.
+                // This is for the reader, not for compiler.
+                drop(opening_permit);
+
+                Some(TransportEvent::SubstreamOpened {
+                    peer,
+                    protocol,
+                    fallback,
+                    direction,
+                    substream,
+                })
+            }
+            InnerTransportEvent::SubstreamOpenFailure { substream, error } => {
+                self.pending_outbound.remove(&substream);
+
+                Some(TransportEvent::SubstreamOpenFailure { substream, error })
+            }
+            event => Some(event.into()),
+        };
+
+        self.pending_events.extend(event);
+    }
+
+    /// Apply events already queued in `rx` until `peer` shows up in `connections` or `rx` is
+    /// empty.
+    ///
+    /// The transport manager marks a peer `Connected` (so `dial` returns `AlreadyConnected`)
+    /// as soon as the handshake completes, then notifies protocols via `rx`. Until this service
+    /// is polled, `open_substream` would fail with `PeerDoesNotExist` for that peer (#504).
+    ///
+    /// Only called for such a peer. Draining stops at its `ConnectionEstablished`, later events
+    /// stay in `rx`. If that event hasn't reached `rx` yet (the manager is told about a
+    /// connection before protocols and about a close after them), everything queued is applied
+    /// and the call still fails, so `pending_events` is capped at [`DEFAULT_CHANNEL_SIZE`] to
+    /// keep this from growing without bound.
+    fn apply_pending_inner_events_for(&mut self, peer: &PeerId) {
+        while !self.connections.contains_key(peer)
+            && self.pending_events.len() < DEFAULT_CHANNEL_SIZE
+        {
+            let Ok(event) = self.rx.try_recv() else {
+                break;
+            };
+
+            self.handle_inner_event(event);
+        }
+    }
+
+    /// Whether a `ConnectionClosed` for `peer` is queued but not yet yielded to the protocol.
+    fn is_connection_closed_pending(&self, peer: &PeerId) -> bool {
+        self.pending_events.iter().any(|event| match event {
+            TransportEvent::ConnectionClosed { peer: closed } => closed == peer,
+            _ => false,
+        })
+    }
+
     /// Dial `peer` using `PeerId`.
     ///
     /// Call fails if `Litep2p` doesn't have a known address for the peer.
@@ -574,7 +669,24 @@ impl TransportService {
     ///
     /// Call fails if there is no connection open to `peer` or the channel towards
     /// the connection is clogged.
+    ///
+    /// If the transport manager already considers `peer` connected but this protocol hasn't
+    /// polled the `ConnectionEstablished` yet, the queued event is applied first, so the call
+    /// succeeds without waiting for the protocol to poll the service.
+    ///
+    /// Fails with `PeerDoesNotExist` while a `ConnectionClosed` for `peer` is queued but not yet
+    /// yielded to the protocol.
     pub fn open_substream(&mut self, peer: PeerId) -> Result<SubstreamId, SubstreamError> {
+        // A `ConnectionClosed` for `peer` is still queued, so the protocol considers the closed
+        // connection open. Don't apply or use a newer connection it hasn't been told about.
+        if self.is_connection_closed_pending(&peer) {
+            return Err(SubstreamError::PeerDoesNotExist(peer));
+        }
+
+        if !self.connections.contains_key(&peer) && self.transport_handle.is_connected(&peer) {
+            self.apply_pending_inner_events_for(&peer);
+        }
+
         // always prefer the primary connection
         let connection = &mut self
             .connections
@@ -623,6 +735,11 @@ impl TransportService {
 
     /// Forcibly close the connection, even if other protocols have substreams open over it.
     pub fn force_close(&mut self, peer: PeerId) -> crate::Result<()> {
+        // Same as `open_substream`: don't close a newer connection the protocol hasn't seen.
+        if self.is_connection_closed_pending(&peer) {
+            return Err(Error::PeerDoesntExist(peer));
+        }
+
         let connection =
             &mut self.connections.get_mut(&peer).ok_or(Error::PeerDoesntExist(peer))?;
 
@@ -659,6 +776,11 @@ impl Stream for TransportService {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // `Pending` is only returned with this queue empty, after `rx` and the keep-alive tracker
+        // registered the waker. Events `open_substream` moves here were sent after that point (so
+        // the send woke the task), or were left in `rx` by a budget-limited `Pending` that already
+        // scheduled a wake. Queued events are older than anything left in `rx`, so popping them
+        // first keeps the transport's order.
         if let Some(event) = self.pending_events.pop_front() {
             return Poll::Ready(Some(event));
         }
@@ -676,69 +798,14 @@ impl Stream for TransportService {
                     );
                     return Poll::Ready(None);
                 }
-                Some(InnerTransportEvent::ConnectionEstablished {
-                    peer,
-                    endpoint,
-                    sender,
-                    connection,
-                }) => {
-                    if let Some(event) =
-                        self.on_connection_established(peer, endpoint, connection, sender)
-                    {
-                        return Poll::Ready(Some(event));
-                    }
-                }
-                Some(InnerTransportEvent::ConnectionClosed { peer, connection }) => {
-                    self.on_connection_closed(peer, connection);
+                Some(event) => {
+                    self.handle_inner_event(event);
 
                     // Returning `Ready` guarantees another poll which drains the rest.
                     if let Some(event) = self.pending_events.pop_front() {
                         return Poll::Ready(Some(event));
                     }
                 }
-                Some(InnerTransportEvent::SubstreamOpened {
-                    peer,
-                    protocol,
-                    fallback,
-                    direction,
-                    substream,
-                    connection_id,
-                    opening_permit,
-                }) => {
-                    if let Direction::Outbound(substream_id) = direction {
-                        self.pending_outbound.remove(&substream_id);
-                    }
-
-                    if protocol == self.protocol
-                        && self.substream_keep_alive == SubstreamKeepAlive::Yes
-                    {
-                        self.keep_alive_tracker.substream_activity(peer, connection_id);
-                        if let Some(context) = self.connections.get_mut(&peer) {
-                            context.try_upgrade(&connection_id);
-                        }
-                    }
-
-                    // Connection is upgraded, we must now drop the permit.
-                    // This is for the reader, not for compiler.
-                    drop(opening_permit);
-
-                    return Poll::Ready(Some(TransportEvent::SubstreamOpened {
-                        peer,
-                        protocol,
-                        fallback,
-                        direction,
-                        substream,
-                    }));
-                }
-                Some(InnerTransportEvent::SubstreamOpenFailure { substream, error }) => {
-                    self.pending_outbound.remove(&substream);
-
-                    return Poll::Ready(Some(TransportEvent::SubstreamOpenFailure {
-                        substream,
-                        error,
-                    }));
-                }
-                Some(event) => return Poll::Ready(Some(event.into())),
             }
         }
 
@@ -942,6 +1009,482 @@ mod tests {
             &ConnectionId::from(1usize)
         );
         assert!(cmd_rx3.try_recv().is_err());
+    }
+
+    // ConnectionEstablished is sitting in `rx` (transport already notified the protocol) but
+    // the protocol has not polled `TransportService` yet. `open_substream` used to fail with
+    // `PeerDoesNotExist` while `dial` already returned `AlreadyConnected`, see issue #504.
+    #[tokio::test]
+    async fn open_substream_before_connection_established_is_polled() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+        let (cmd_tx, mut cmd_rx) = channel(64);
+
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(0usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx),
+            })
+            .await
+            .unwrap();
+        service.transport_handle.mark_connected(peer, ConnectionId::from(0usize));
+
+        let substream_id = service
+            .open_substream(peer)
+            .expect("open_substream must succeed once the transport has notified the protocol");
+
+        match cmd_rx.recv().await.unwrap() {
+            ProtocolCommand::OpenSubstream {
+                protocol,
+                substream_id: opened,
+                ..
+            } => {
+                assert_eq!(protocol, ProtocolName::from("/notif/1"));
+                assert_eq!(substream_id, opened);
+            }
+            other => panic!("expected OpenSubstream, got {other:?}"),
+        }
+
+        match service.next().await {
+            Some(TransportEvent::ConnectionEstablished {
+                peer: connected_peer,
+                ..
+            }) => assert_eq!(connected_peer, peer),
+            other => panic!("ConnectionEstablished must still be yielded, got {other:?}"),
+        }
+    }
+
+    // Only the events up to the peer's `ConnectionEstablished` are applied. The close queued
+    // after it is handled once the protocol polls, failing the substream (#664).
+    #[tokio::test]
+    async fn open_substream_drains_up_to_connection_established() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+        let (cmd_tx, mut cmd_rx) = channel(64);
+
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(0usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx),
+            })
+            .await
+            .unwrap();
+        sender
+            .send(InnerTransportEvent::ConnectionClosed {
+                peer,
+                connection: ConnectionId::from(0usize),
+            })
+            .await
+            .unwrap();
+        service.transport_handle.mark_connected(peer, ConnectionId::from(0usize));
+
+        let substream_id = service.open_substream(peer).unwrap();
+        assert_eq!(service.rx.len(), 1);
+        match cmd_rx.try_recv() {
+            Ok(ProtocolCommand::OpenSubstream {
+                substream_id: opened,
+                ..
+            }) => assert_eq!(opened, substream_id),
+            command => panic!("unexpected command: {command:?}"),
+        }
+
+        assert!(std::matches!(
+            service.next().await,
+            Some(TransportEvent::ConnectionEstablished { .. })
+        ));
+        match service.next().await {
+            Some(TransportEvent::SubstreamOpenFailure { substream, error }) => {
+                assert_eq!(substream, substream_id);
+                assert!(std::matches!(error, SubstreamError::ConnectionClosed));
+            }
+            event => panic!("unexpected event: {event:?}"),
+        }
+        assert!(std::matches!(
+            service.next().await,
+            Some(TransportEvent::ConnectionClosed { .. })
+        ));
+    }
+
+    // The protocol already knows `peer`, so the queued reconnect must not be applied ahead of
+    // it: the substream is requested over the connection the protocol has seen.
+    #[tokio::test]
+    async fn open_substream_does_not_drain_for_known_peer() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+        let (cmd_tx0, mut cmd_rx0) = channel(64);
+        let (cmd_tx1, mut cmd_rx1) = channel(64);
+
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(0usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx0),
+            })
+            .await
+            .unwrap();
+
+        assert!(std::matches!(
+            service.next().await,
+            Some(TransportEvent::ConnectionEstablished { .. })
+        ));
+
+        sender
+            .send(InnerTransportEvent::ConnectionClosed {
+                peer,
+                connection: ConnectionId::from(0usize),
+            })
+            .await
+            .unwrap();
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(1usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+        service.transport_handle.mark_connected(peer, ConnectionId::from(1usize));
+
+        let substream_id = service.open_substream(peer).unwrap();
+        match cmd_rx0.try_recv() {
+            Ok(ProtocolCommand::OpenSubstream {
+                substream_id: opened,
+                ..
+            }) => assert_eq!(opened, substream_id),
+            command => panic!("unexpected command: {command:?}"),
+        }
+        assert!(cmd_rx1.try_recv().is_err());
+        assert_eq!(service.rx.len(), 2);
+        assert!(service.pending_events.is_empty());
+    }
+
+    // The transport manager doesn't consider `peer` connected, so there is nothing to catch up on
+    // and `rx` is left alone.
+    #[tokio::test]
+    async fn open_substream_does_not_drain_for_unconnected_peer() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+        let other = PeerId::random();
+        let (other_tx, _other_rx) = channel(64);
+
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer: other,
+                connection: ConnectionId::from(0usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(0usize), other_tx),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            service.open_substream(peer),
+            Err(SubstreamError::PeerDoesNotExist(peer))
+        );
+        assert_eq!(service.rx.len(), 1);
+        assert!(service.pending_events.is_empty());
+    }
+
+    // The transport manager considers `peer` connected but its `ConnectionEstablished` hasn't
+    // reached `rx` yet. Repeated opens must not move more than a channel's worth of events into
+    // `pending_events`.
+    #[tokio::test]
+    async fn open_substream_drain_is_bounded() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+        service.transport_handle.mark_connected(peer, ConnectionId::from(0usize));
+
+        for _ in 0..2 {
+            for substream in 0..DEFAULT_CHANNEL_SIZE {
+                sender
+                    .try_send(InnerTransportEvent::SubstreamOpenFailure {
+                        substream: SubstreamId::from(substream),
+                        error: SubstreamError::ConnectionClosed,
+                    })
+                    .unwrap();
+            }
+
+            assert_eq!(
+                service.open_substream(peer),
+                Err(SubstreamError::PeerDoesNotExist(peer))
+            );
+            assert_eq!(service.pending_events.len(), DEFAULT_CHANNEL_SIZE);
+        }
+
+        assert_eq!(service.rx.len(), DEFAULT_CHANNEL_SIZE);
+    }
+
+    // Events queued after the peer's `ConnectionEstablished` stay in `rx`.
+    #[tokio::test]
+    async fn open_substream_drain_stops_at_peer() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+        let other = PeerId::random();
+        let (cmd_tx, _cmd_rx) = channel(64);
+        let (other_tx, _other_rx) = channel(64);
+
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(0usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx),
+            })
+            .await
+            .unwrap();
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer: other,
+                connection: ConnectionId::from(1usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(1usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(1usize), other_tx),
+            })
+            .await
+            .unwrap();
+        service.transport_handle.mark_connected(peer, ConnectionId::from(0usize));
+
+        service.open_substream(peer).unwrap();
+        assert!(!service.connections.contains_key(&other));
+        assert_eq!(service.rx.len(), 1);
+        assert_eq!(service.pending_events.len(), 1);
+
+        for expected in [peer, other] {
+            match service.next().await {
+                Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
+                    assert_eq!(peer, expected)
+                }
+                event => panic!("unexpected event: {event:?}"),
+            }
+        }
+    }
+
+    // A failed substream was yielded but the `ConnectionClosed` queued with it was not, so the
+    // protocol still considers the old connection open. The reconnect in `rx` must not be used
+    // until the protocol has seen the close.
+    #[tokio::test]
+    async fn open_substream_waits_for_queued_connection_closed() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+        let (cmd_tx0, _cmd_rx0) = channel(64);
+        let (cmd_tx1, mut cmd_rx1) = channel(64);
+
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(0usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx0),
+            })
+            .await
+            .unwrap();
+
+        assert!(std::matches!(
+            service.next().await,
+            Some(TransportEvent::ConnectionEstablished { .. })
+        ));
+        let pending = service.open_substream(peer).unwrap();
+
+        sender
+            .send(InnerTransportEvent::ConnectionClosed {
+                peer,
+                connection: ConnectionId::from(0usize),
+            })
+            .await
+            .unwrap();
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(1usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+        service.transport_handle.mark_connected(peer, ConnectionId::from(1usize));
+
+        match service.next().await {
+            Some(TransportEvent::SubstreamOpenFailure { substream, .. }) => {
+                assert_eq!(substream, pending)
+            }
+            event => panic!("unexpected event: {event:?}"),
+        }
+
+        assert_eq!(
+            service.open_substream(peer),
+            Err(SubstreamError::PeerDoesNotExist(peer))
+        );
+        assert!(cmd_rx1.try_recv().is_err());
+        assert_eq!(service.rx.len(), 1);
+
+        assert!(std::matches!(
+            service.next().await,
+            Some(TransportEvent::ConnectionClosed { .. })
+        ));
+
+        // the close was yielded, so the reconnect can be applied early again
+        let substream_id = service.open_substream(peer).unwrap();
+        match cmd_rx1.try_recv() {
+            Ok(ProtocolCommand::OpenSubstream {
+                substream_id: opened,
+                ..
+            }) => assert_eq!(opened, substream_id),
+            command => panic!("unexpected command: {command:?}"),
+        }
+        assert!(std::matches!(
+            service.next().await,
+            Some(TransportEvent::ConnectionEstablished { .. })
+        ));
+    }
+
+    // Opening a substream to `other` applies the close and reconnect of the known `peer` queued
+    // before it. Until the protocol has seen that close, `peer` must not be reached over the new
+    // connection.
+    #[tokio::test]
+    async fn queued_close_hides_unseen_reconnect() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+        let other = PeerId::random();
+        let (cmd_tx0, _cmd_rx0) = channel(64);
+        let (cmd_tx1, mut cmd_rx1) = channel(64);
+        let (other_tx, _other_rx) = channel(64);
+
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(0usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx0),
+            })
+            .await
+            .unwrap();
+
+        assert!(std::matches!(
+            service.next().await,
+            Some(TransportEvent::ConnectionEstablished { .. })
+        ));
+
+        sender
+            .send(InnerTransportEvent::ConnectionClosed {
+                peer,
+                connection: ConnectionId::from(0usize),
+            })
+            .await
+            .unwrap();
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(1usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(1usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(1usize), cmd_tx1),
+            })
+            .await
+            .unwrap();
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer: other,
+                connection: ConnectionId::from(2usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(2usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(2usize), other_tx),
+            })
+            .await
+            .unwrap();
+        service.transport_handle.mark_connected(peer, ConnectionId::from(1usize));
+        service.transport_handle.mark_connected(other, ConnectionId::from(2usize));
+
+        service.open_substream(other).unwrap();
+        assert!(service.rx.is_empty());
+
+        assert_eq!(
+            service.open_substream(peer),
+            Err(SubstreamError::PeerDoesNotExist(peer))
+        );
+        assert!(std::matches!(
+            service.force_close(peer),
+            Err(Error::PeerDoesntExist(_))
+        ));
+        assert!(cmd_rx1.try_recv().is_err());
+
+        match service.next().await {
+            Some(TransportEvent::ConnectionClosed { peer: closed }) => assert_eq!(closed, peer),
+            event => panic!("unexpected event: {event:?}"),
+        }
+        for expected in [peer, other] {
+            match service.next().await {
+                Some(TransportEvent::ConnectionEstablished { peer, .. }) => {
+                    assert_eq!(peer, expected)
+                }
+                event => panic!("unexpected event: {event:?}"),
+            }
+        }
+
+        // the protocol has seen the reconnect now
+        service.force_close(peer).unwrap();
+        assert!(std::matches!(
+            cmd_rx1.try_recv(),
+            Ok(ProtocolCommand::ForceClose)
+        ));
+    }
+
+    // Moving an event from `rx` into `pending_events` doesn't lose a wake-up: the transport's
+    // send already woke the task that registered on `rx`, and the woken poll yields the event.
+    #[tokio::test]
+    async fn wake_from_rx_survives_open_substream_drain() {
+        struct CountingWaker(AtomicUsize);
+
+        impl std::task::Wake for CountingWaker {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+        let (cmd_tx, _cmd_rx) = channel(64);
+        let counter = Arc::new(CountingWaker(AtomicUsize::new(0)));
+        let waker = Waker::from(counter.clone());
+        let mut cx = Context::from_waker(&waker);
+
+        // the protocol task parks on the service
+        assert!(service.poll_next_unpin(&mut cx).is_pending());
+        let wakes = counter.0.load(Ordering::SeqCst);
+
+        sender
+            .try_send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(0usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx),
+            })
+            .unwrap();
+        assert_eq!(counter.0.load(Ordering::SeqCst), wakes + 1);
+
+        // before polling again, the woken task opens a substream and drains `rx`
+        service.transport_handle.mark_connected(peer, ConnectionId::from(0usize));
+        service.open_substream(peer).unwrap();
+        assert!(service.rx.is_empty());
+
+        assert!(std::matches!(
+            service.poll_next_unpin(&mut cx),
+            Poll::Ready(Some(TransportEvent::ConnectionEstablished { .. }))
+        ));
+
+        // with the queue empty, the next poll registers the waker on `rx` again
+        assert!(service.poll_next_unpin(&mut cx).is_pending());
+        let wakes = counter.0.load(Ordering::SeqCst);
+
+        sender
+            .try_send(InnerTransportEvent::ConnectionClosed {
+                peer,
+                connection: ConnectionId::from(0usize),
+            })
+            .unwrap();
+        assert_eq!(counter.0.load(Ordering::SeqCst), wakes + 1);
     }
 
     #[tokio::test]

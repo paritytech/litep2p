@@ -46,7 +46,7 @@ use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::HashMap,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -118,13 +118,6 @@ struct PeerContext {
 }
 
 impl PeerContext {
-    /// Create new [`PeerContext`].
-    pub fn new() -> Self {
-        Self {
-            pending_actions: HashMap::new(),
-        }
-    }
-
     /// Add pending action for peer.
     pub fn add_pending_action(&mut self, substream_id: SubstreamId, action: PeerAction) {
         self.pending_actions.insert(substream_id, action);
@@ -234,69 +227,49 @@ impl Kademlia {
     }
 
     /// Connection established to remote peer.
-    fn on_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) -> crate::Result<()> {
+    fn on_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
-        match self.peers.entry(peer) {
-            Entry::Vacant(entry) => {
-                // Set the conenction type to connected and potentially save the address in the
-                // table.
-                //
-                // Note: this happens regardless of the state of the kademlia managed peers, because
-                // an already occupied entry in the `self.peers` map does not mean that we are
-                // no longer interested in the address / connection type of the peer.
-                self.routing_table.on_connection_established(Key::from(peer), endpoint);
+        // Set the conenction type to connected and potentially save the address in the table.
+        //
+        // Note: this happens regardless of the state of the kademlia managed peers, because an
+        // already occupied entry in the `self.peers` map does not mean that we are no longer
+        // interested in the address / connection type of the peer.
+        self.routing_table.on_connection_established(Key::from(peer), endpoint);
 
-                let Some(actions) = self.pending_dials.remove(&peer) else {
-                    // Note that we do not add peer entry if we don't have any pending actions.
-                    // This is done to not populate `self.peers` with peers that don't support
-                    // our Kademlia protocol.
-                    return Ok(());
-                };
+        let Some(actions) = self.pending_dials.remove(&peer) else {
+            // Note that we do not add peer entry if we don't have any pending actions.
+            // This is done to not populate `self.peers` with peers that don't support
+            // our Kademlia protocol.
+            return;
+        };
 
-                // go over all pending actions, open substreams and save the state to `PeerContext`
-                // from which it will be later queried when the substream opens
-                let mut context = PeerContext::new();
+        // The peer may already have an entry: `open_substream()` applies a `ConnectionEstablished`
+        // still queued in the transport service, so substreams can be opened before this event is
+        // polled (#504).
+        let context = self.peers.entry(peer).or_default();
 
-                for action in actions {
-                    match self.service.open_substream(peer) {
-                        Ok(substream_id) => {
-                            context.add_pending_action(substream_id, action);
-                        }
-                        Err(error) => {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                ?action,
-                                ?error,
-                                "connection established to peer but failed to open substream",
-                            );
+        // go over all pending actions, open substreams and save the state to `PeerContext`
+        // from which it will be later queried when the substream opens
+        for action in actions {
+            match self.service.open_substream(peer) {
+                Ok(substream_id) => {
+                    context.add_pending_action(substream_id, action);
+                }
+                Err(error) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?action,
+                        ?error,
+                        "connection established to peer but failed to open substream",
+                    );
 
-                            if let PeerAction::SendFindNode(query_id) = action {
-                                self.engine.register_send_failure(query_id, peer);
-                                self.engine.register_response_failure(query_id, peer);
-                            }
-                        }
+                    if let PeerAction::SendFindNode(query_id) = action {
+                        self.engine.register_send_failure(query_id, peer);
+                        self.engine.register_response_failure(query_id, peer);
                     }
                 }
-
-                entry.insert(context);
-                Ok(())
-            }
-            Entry::Occupied(_) => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?endpoint,
-                    "connection already exists, discarding opening substreams, this is unexpected"
-                );
-
-                // Update the connection in the routing table, similar as above. The function call
-                // happens in two places to avoid unnecessary cloning of the endpoint for logging
-                // purposes.
-                self.routing_table.on_connection_established(Key::from(peer), endpoint);
-
-                Err(Error::PeerAlreadyExists(peer))
             }
         }
     }
@@ -1065,13 +1038,7 @@ impl Kademlia {
             tokio::select! {
                 event = self.service.next() => match event {
                     Some(TransportEvent::ConnectionEstablished { peer, endpoint }) => {
-                        if let Err(error) = self.on_connection_established(peer, endpoint) {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?error,
-                                "failed to handle established connection",
-                            );
-                        }
+                        self.on_connection_established(peer, endpoint);
                     }
                     Some(TransportEvent::ConnectionClosed { peer }) => {
                         self.disconnect_peer(peer, None).await;
@@ -1456,6 +1423,7 @@ mod tests {
     use crate::{
         codec::ProtocolCodec,
         mock::substream::MockSubstream,
+        protocol::{connection::ConnectionHandle, InnerTransportEvent, ProtocolCommand},
         transport::{
             manager::{SubstreamKeepAlive, TransportManager, TransportManagerBuilder},
             KEEP_ALIVE_TIMEOUT,
@@ -1464,13 +1432,18 @@ mod tests {
         ConnectionId,
     };
     use multiaddr::Protocol;
-    use std::{collections::VecDeque, str::FromStr, task::Poll};
+    use std::{
+        collections::{HashSet, VecDeque},
+        str::FromStr,
+        task::Poll,
+    };
     use tokio::sync::mpsc::channel;
 
     #[allow(unused)]
     struct Context {
         _cmd_tx: Sender<KademliaCommand>,
         event_rx: Receiver<KademliaEvent>,
+        transport_tx: Sender<InnerTransportEvent>,
     }
 
     fn make_kademlia() -> (Kademlia, Context, TransportManager) {
@@ -1484,7 +1457,7 @@ mod tests {
         let manager = TransportManagerBuilder::new().build();
 
         let peer = PeerId::random();
-        let (transport_service, _tx) = TransportService::new(
+        let (transport_service, transport_tx) = TransportService::new(
             peer,
             ProtocolName::from("/kad/1"),
             Vec::new(),
@@ -1515,7 +1488,11 @@ mod tests {
 
         (
             Kademlia::new(transport_service, config),
-            Context { _cmd_tx, event_rx },
+            Context {
+                _cmd_tx,
+                event_rx,
+                transport_tx,
+            },
             manager,
         )
     }
@@ -1640,7 +1617,7 @@ mod tests {
         };
 
         // Report successful connection with address b via dialer endpoint.
-        let _ = kademlia.on_connection_established(
+        kademlia.on_connection_established(
             peer,
             Endpoint::Dialer {
                 address: address_b.clone(),
@@ -1661,7 +1638,7 @@ mod tests {
         };
 
         // Report successful connection with a random address via listener endpoint.
-        let _ = kademlia.on_connection_established(
+        kademlia.on_connection_established(
             peer,
             Endpoint::Listener {
                 address: address_c.clone(),
@@ -1692,6 +1669,58 @@ mod tests {
             }
             _ => panic!("Peer not found in routing table"),
         };
+    }
+
+    // A substream opened before `ConnectionEstablished` was polled (#504) must not strand the
+    // actions queued while the peer was being dialed.
+    #[tokio::test]
+    async fn pending_dial_actions_sent_after_early_open_substream() {
+        let (mut kademlia, context, manager) = make_kademlia();
+        let peer = PeerId::random();
+        let (conn_tx, mut conn_rx) = channel(64);
+
+        // action queued while the dial was in progress
+        kademlia.pending_dials.insert(peer, vec![PeerAction::SendFindNode(QueryId(1))]);
+
+        // the dial succeeded but kademlia hasn't polled the notification yet
+        context
+            .transport_tx
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(0usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(0usize), conn_tx),
+            })
+            .await
+            .unwrap();
+        manager
+            .transport_manager_handle()
+            .mark_connected(peer, ConnectionId::from(0usize));
+
+        kademlia
+            .open_substream_or_dial(peer, PeerAction::SendFindNode(QueryId(2)), Some(QueryId(2)))
+            .unwrap();
+        assert!(kademlia.peers.contains_key(&peer));
+
+        match kademlia.service.next().await {
+            Some(TransportEvent::ConnectionEstablished { peer, endpoint }) =>
+                kademlia.on_connection_established(peer, endpoint),
+            event => panic!("unexpected event: {event:?}"),
+        }
+
+        let mut opened = HashSet::new();
+        while let Ok(ProtocolCommand::OpenSubstream { substream_id, .. }) = conn_rx.try_recv() {
+            opened.insert(substream_id);
+        }
+
+        let actions = &kademlia.peers[&peer].pending_actions;
+        assert!(!kademlia.pending_dials.contains_key(&peer));
+        assert_eq!(opened.len(), 2);
+        assert_eq!(actions.keys().copied().collect::<HashSet<_>>(), opened);
+        assert_eq!(
+            actions.values().map(PeerAction::query_id).collect::<HashSet<_>>(),
+            HashSet::from([QueryId(1), QueryId(2)])
+        );
     }
 
     #[tokio::test]
