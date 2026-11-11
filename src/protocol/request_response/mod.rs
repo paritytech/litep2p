@@ -34,7 +34,7 @@ use crate::{
 };
 
 use bytes::BytesMut;
-use futures::{channel, future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use futures::{channel, future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use tokio::{
     sync::{
         mpsc::{Receiver, Sender},
@@ -153,6 +153,9 @@ pub(crate) struct RequestResponseProtocol {
     /// notifies the future that the request should be rejected by closing the substream.
     pending_outbound_responses: FuturesUnordered<BoxFuture<'static, ()>>,
 
+    /// Substreams rejected at `max_concurrent_inbound_requests` that are still closing.
+    pending_rejected_closes: FuturesUnordered<BoxFuture<'static, ()>>,
+
     /// Pending outbound cancellation handles.
     pending_outbound_cancels: HashMap<RequestId, oneshot::Sender<()>>,
 
@@ -208,6 +211,7 @@ impl RequestResponseProtocol {
             pending_outbound_cancels: HashMap::new(),
             pending_inbound_requests: FuturesStream::new(),
             pending_outbound_responses: FuturesUnordered::new(),
+            pending_rejected_closes: FuturesUnordered::new(),
             max_concurrent_inbound_requests: config.max_concurrent_inbound_request,
         }
     }
@@ -412,7 +416,7 @@ impl RequestResponseProtocol {
                                 "request canceled",
                             );
 
-                            let _ = substream.close().await;
+                            let _ = substream.close().now_or_never();
                             (
                                 peer,
                                 request_id,
@@ -428,7 +432,7 @@ impl RequestResponseProtocol {
                                 "request timed out",
                             );
 
-                            let _ = substream.close().await;
+                            let _ = substream.close().now_or_never();
                             (peer, request_id, fallback_protocol, Err(RequestResponseError::Timeout))
                         }
                         event = substream.next() => match event {
@@ -522,7 +526,7 @@ impl RequestResponseProtocol {
                         ?request_id,
                         "request rejected",
                     );
-                    let _ = substream.close().await;
+                    let _ = substream.close().now_or_never();
                 }
                 Ok((response, mut feedback)) => {
                     tracing::trace!(
@@ -594,7 +598,10 @@ impl RequestResponseProtocol {
                     "rejecting request as already at maximum",
                 );
 
-                let _ = substream.close().await;
+                let timeout = self.timeout;
+                self.pending_rejected_closes.push(Box::pin(async move {
+                    let _ = tokio::time::timeout(timeout, substream.close()).await;
+                }));
                 return Ok(());
             }
         }
@@ -1053,6 +1060,8 @@ impl RequestResponseProtocol {
 
                 // These are inbound requests waiting for the user to respond, then for the substream to send the response.
                 _ = self.pending_outbound_responses.next(), if !self.pending_outbound_responses.is_empty() => {}
+
+                _ = self.pending_rejected_closes.next(), if !self.pending_rejected_closes.is_empty() => {}
 
                 // Inbound requests that are moved to `pending_outbound_responses`.
                 event = self.pending_inbound_requests.next(), if !self.pending_inbound_requests.is_empty() => match event {

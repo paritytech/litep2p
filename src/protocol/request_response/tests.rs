@@ -23,8 +23,8 @@ use crate::{
     protocol::{
         connection::ConnectionHandle,
         request_response::{
-            ConfigBuilder, DialOptions, RejectReason, RequestResponseError, RequestResponseEvent,
-            RequestResponseHandle, RequestResponseProtocol,
+            ConfigBuilder, DialOptions, RejectReason, RequestContext, RequestResponseError,
+            RequestResponseEvent, RequestResponseHandle, RequestResponseProtocol,
         },
         InnerTransportEvent, ProtocolCommand, SubstreamError, SubstreamKeepAlive, TransportService,
     },
@@ -37,7 +37,8 @@ use crate::{
     Error, PeerId, ProtocolName,
 };
 
-use futures::StreamExt;
+use bytes::BytesMut;
+use futures::{FutureExt, StreamExt};
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Sender};
 
@@ -238,6 +239,156 @@ async fn inbound_request_read_times_out() {
     ));
     assert!(protocol.peers.get(&peer).unwrap().active_inbound.is_empty());
     assert!(protocol.pending_inbound_requests.is_empty());
+    assert!(protocol.pending_outbound_responses.is_empty());
+}
+
+#[tokio::test]
+async fn rejected_inbound_substream_does_not_wait_for_close() {
+    let (mut protocol, _handle, _manager, _tx) = protocol();
+    protocol.max_concurrent_inbound_requests = Some(0);
+
+    let peer = PeerId::random();
+    protocol.on_connection_established(peer).await.unwrap();
+
+    let mut substream = MockSubstream::new();
+    substream.expect_poll_close().returning(|_| Poll::Pending);
+
+    let result = protocol
+        .on_inbound_substream(
+            peer,
+            None,
+            Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
+        )
+        .now_or_never();
+
+    assert!(matches!(result, Some(Ok(()))));
+    assert_eq!(protocol.pending_rejected_closes.len(), 1);
+    assert!(protocol.pending_inbound_requests.is_empty());
+}
+
+#[tokio::test]
+async fn closing_rejected_substreams_does_not_occupy_request_slots() {
+    let (mut protocol, _handle, _manager, _tx) = protocol();
+    protocol.max_concurrent_inbound_requests = Some(1);
+
+    let peer = PeerId::random();
+    protocol.on_connection_established(peer).await.unwrap();
+
+    let mut active = MockSubstream::new();
+    active.expect_poll_next().returning(|_| Poll::Ready(None));
+    protocol
+        .on_inbound_substream(
+            peer,
+            None,
+            Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(active)),
+        )
+        .await
+        .unwrap();
+
+    // A close that never completes, like a QUIC finish waiting for the peer's ACK.
+    let mut rejected = MockSubstream::new();
+    rejected.expect_poll_close().returning(|_| Poll::Pending);
+    protocol
+        .on_inbound_substream(
+            peer,
+            None,
+            Substream::new_mock(peer, SubstreamId::from(1usize), Box::new(rejected)),
+        )
+        .await
+        .unwrap();
+    assert!(protocol.pending_rejected_closes.next().now_or_never().is_none());
+
+    let (peer, request_id, request, substream) =
+        protocol.pending_inbound_requests.next().await.unwrap();
+    let _ = protocol.on_inbound_request(peer, request_id, request, substream).await;
+    assert!(protocol.pending_inbound_requests.is_empty());
+
+    protocol
+        .on_inbound_substream(
+            peer,
+            None,
+            Substream::new_mock(
+                peer,
+                SubstreamId::from(2usize),
+                Box::new(DummySubstream::new()),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(protocol.pending_inbound_requests.len(), 1);
+}
+
+#[tokio::test]
+async fn outbound_request_timeout_does_not_wait_for_close() {
+    let (mut protocol, _handle, _manager, _tx) = protocol();
+    protocol.timeout = Duration::from_millis(100);
+
+    let peer = PeerId::random();
+    let substream_id = SubstreamId::from(0usize);
+    let request_id = RequestId::from(0usize);
+    protocol.pending_outbound.insert(
+        substream_id,
+        RequestContext::new(peer, request_id, vec![1, 2, 3], None),
+    );
+
+    let mut substream = MockSubstream::new();
+    substream.expect_poll_ready().returning(|_| Poll::Ready(Ok(())));
+    substream.expect_start_send().returning(|_| Ok(()));
+    substream.expect_poll_flush().returning(|_| Poll::Ready(Ok(())));
+    substream.expect_poll_next().returning(|_| Poll::Pending);
+    substream.expect_poll_close().returning(|_| Poll::Pending);
+
+    protocol
+        .on_outbound_substream(
+            peer,
+            substream_id,
+            Substream::new_mock(peer, substream_id, Box::new(substream)),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let (_, _, _, result) =
+        tokio::time::timeout(Duration::from_secs(5), protocol.pending_inbound.next())
+            .await
+            .expect("timeout must not wait for the substream to close")
+            .unwrap();
+    assert!(matches!(result, Err(RequestResponseError::Timeout)));
+}
+
+#[tokio::test]
+async fn rejected_inbound_request_does_not_wait_for_close() {
+    let (mut protocol, mut handle, _manager, _tx) = protocol();
+
+    let peer = PeerId::random();
+    protocol.on_connection_established(peer).await.unwrap();
+    let request_id = protocol.next_request_id();
+    protocol.peers.get_mut(&peer).unwrap().active_inbound.insert(request_id, None);
+
+    let mut substream = MockSubstream::new();
+    substream.expect_poll_close().returning(|_| Poll::Pending);
+
+    protocol
+        .on_inbound_request(
+            peer,
+            request_id,
+            Ok(BytesMut::from(&b"hello"[..])),
+            Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        handle.next().await,
+        Some(RequestResponseEvent::RequestReceived { .. })
+    ));
+    handle.reject_request(request_id);
+
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        protocol.pending_outbound_responses.next(),
+    )
+    .await
+    .expect("rejection must not wait for the substream to close");
     assert!(protocol.pending_outbound_responses.is_empty());
 }
 
