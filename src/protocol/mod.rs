@@ -33,7 +33,7 @@ use multiaddr::Multiaddr;
 
 use std::fmt::Debug;
 
-pub(crate) use connection::Permit;
+pub(crate) use connection::{ConnectionHandle, Permit};
 pub(crate) use protocol_set::{InnerTransportEvent, ProtocolCommand, ProtocolSet};
 
 pub use transport_service::{SubstreamKeepAlive, TransportService};

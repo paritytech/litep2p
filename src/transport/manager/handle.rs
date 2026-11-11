@@ -369,7 +369,7 @@ impl TransportManagerHandle {
 pub struct TransportHandle {
     pub keypair: Keypair,
     pub tx: Sender<TransportManagerEvent>,
-    pub protocols: HashMap<ProtocolName, ProtocolContext>,
+    pub protocols: Arc<RwLock<HashMap<ProtocolName, ProtocolContext>>>,
     pub next_connection_id: Arc<AtomicUsize>,
     pub next_substream_id: Arc<AtomicUsize>,
     pub bandwidth_sink: BandwidthSink,
@@ -382,7 +382,7 @@ impl TransportHandle {
             connection_id,
             self.tx.clone(),
             self.next_substream_id.clone(),
-            self.protocols.clone(),
+            self.protocols.read().clone(),
         )
     }
 

@@ -33,11 +33,12 @@ use crate::{
     addresses::PublicAddresses,
     config::Litep2pConfig,
     error::{DialError, DnsInitError},
+    executor::Executor,
     protocol::{
         libp2p::{
             bitswap::Bitswap,
             identify::Identify,
-            kademlia::{Kademlia, KademliaMode},
+            kademlia::{self, Kademlia, KademliaMode},
             ping::Ping,
         },
         mdns::Mdns,
@@ -71,7 +72,7 @@ use types::ConnectionId;
 pub use bandwidth::BandwidthSink;
 pub use error::Error;
 pub use peer_id::{ParseError, PeerId};
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 pub use types::protocol::ProtocolName;
 
 pub(crate) mod peer_id;
@@ -165,6 +166,12 @@ pub struct Litep2p {
 
     /// Bandwidth sink.
     bandwidth_sink: BandwidthSink,
+
+    /// Executor of the protocols started after [`Litep2p::new`].
+    executor: Arc<dyn Executor>,
+
+    /// Keep-alive timeout of the protocols started after [`Litep2p::new`].
+    keep_alive_timeout: Duration,
 }
 
 impl Litep2p {
@@ -299,35 +306,12 @@ impl Litep2p {
 
         // start kademlia protocol event loops
         for kademlia_config in litep2p_config.kademlia.into_iter() {
-            tracing::debug!(
-                target: LOG_TARGET,
-                protocol_names = ?kademlia_config.protocol_names,
-                mode = ?kademlia_config.mode,
-                "enable ipfs kademlia protocol",
-            );
-
-            let main_protocol =
-                kademlia_config.protocol_names.first().expect("protocol name to exist");
-            let fallback_names = kademlia_config.protocol_names.iter().skip(1).cloned().collect();
-
-            // client-mode instances don't answer inbound requests, so their protocol names are
-            // neither advertised nor negotiated on substreams opened by remote peers
-            let inbound = match kademlia_config.mode {
-                KademliaMode::Client => InboundProtocol::Deny,
-                KademliaMode::Server => InboundProtocol::Accept,
-            };
-
-            let service = transport_manager.register_protocol(
-                main_protocol.clone(),
-                fallback_names,
-                kademlia_config.codec,
+            Self::start_kademlia(
+                &mut transport_manager,
+                &litep2p_config.executor,
                 litep2p_config.keep_alive_timeout,
-                SubstreamKeepAlive::Yes,
-                inbound,
+                kademlia_config,
             );
-            litep2p_config.executor.run(Box::pin(async move {
-                let _ = Kademlia::new(service, kademlia_config).run().await;
-            }));
         }
 
         // start identify protocol event loop if enabled
@@ -482,7 +466,73 @@ impl Litep2p {
             bandwidth_sink,
             listen_addresses,
             transport_manager,
+            executor: litep2p_config.executor,
+            keep_alive_timeout: litep2p_config.keep_alive_timeout,
         })
+    }
+
+    /// Register a Kademlia instance and start its event loop.
+    fn start_kademlia(
+        transport_manager: &mut TransportManager,
+        executor: &Arc<dyn Executor>,
+        keep_alive_timeout: Duration,
+        kademlia_config: kademlia::Config,
+    ) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            protocol_names = ?kademlia_config.protocol_names,
+            mode = ?kademlia_config.mode,
+            "enable ipfs kademlia protocol",
+        );
+
+        let main_protocol = kademlia_config.protocol_names.first().expect("protocol name to exist");
+        let fallback_names = kademlia_config.protocol_names.iter().skip(1).cloned().collect();
+
+        // client-mode instances don't answer inbound requests, so their protocol names are
+        // neither advertised nor negotiated on substreams opened by remote peers
+        let inbound = match kademlia_config.mode {
+            KademliaMode::Client => InboundProtocol::Deny,
+            KademliaMode::Server => InboundProtocol::Accept,
+        };
+
+        let service = transport_manager.register_protocol(
+            main_protocol.clone(),
+            fallback_names,
+            kademlia_config.codec,
+            keep_alive_timeout,
+            SubstreamKeepAlive::Yes,
+            inbound,
+        );
+        executor.run(Box::pin(async move {
+            let _ = Kademlia::new(service, kademlia_config).run().await;
+        }));
+    }
+
+    /// Add a Kademlia instance to the running node.
+    ///
+    /// The instance can use the connections that are already established. It learns of them
+    /// shortly after it starts, so a query started right away may fail. Its protocol names are
+    /// not added to what identify advertises, which is fixed when the node starts, so remote
+    /// peers learn of a server-mode instance only when it contacts them.
+    ///
+    /// Fails with [`Error::ProtocolAlreadyExists`] if one of the instance's protocol names is
+    /// already in use.
+    pub fn register_kademlia(&mut self, kademlia_config: kademlia::Config) -> crate::Result<()> {
+        if let Some(name) = kademlia_config
+            .protocol_names
+            .iter()
+            .find(|name| self.transport_manager.is_protocol_registered(name))
+        {
+            return Err(Error::ProtocolAlreadyExists(name.clone()));
+        }
+
+        Self::start_kademlia(
+            &mut self.transport_manager,
+            &self.executor,
+            self.keep_alive_timeout,
+            kademlia_config,
+        );
+        Ok(())
     }
 
     /// Collect supported transports before initializing the transports themselves.

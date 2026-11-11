@@ -662,7 +662,7 @@ mod tests {
             tx: event_tx1,
             bandwidth_sink: BandwidthSink::new(),
 
-            protocols: HashMap::from_iter([(
+            protocols: std::sync::Arc::new(parking_lot::RwLock::new(HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
                     tx: tx1,
@@ -671,7 +671,7 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )]))),
         };
         let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
 
@@ -691,7 +691,7 @@ mod tests {
             tx: event_tx2,
             bandwidth_sink: BandwidthSink::new(),
 
-            protocols: HashMap::from_iter([(
+            protocols: std::sync::Arc::new(parking_lot::RwLock::new(HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
                     tx: tx2,
@@ -700,7 +700,7 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )]))),
         };
 
         let (mut transport2, _) =

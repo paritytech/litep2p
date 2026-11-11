@@ -1181,3 +1181,205 @@ async fn discovered_peers_reported_but_not_added_to_routing_table() {
     assert_eq!(discovered, vec![peer3]);
     assert_eq!(routing_table_updates, vec![peer2]);
 }
+
+/// Two nodes: `node1` serves `protocol` from the start, `node2` only has an unrelated
+/// Kademlia instance, as a node has other protocols that keep its connections open.
+fn runtime_kademlia_nodes(protocol: &ProtocolName) -> (Litep2p, Litep2p) {
+    let (kad_config2, kad_handle2) = KademliaConfigBuilder::new()
+        .with_protocol_names(vec![ProtocolName::from("/startup/kad")])
+        .build();
+    let (kad_config1, _kad_handle1) =
+        KademliaConfigBuilder::new().with_protocol_names(vec![protocol.clone()]).build();
+    let config1 = ConfigBuilder::new()
+        .with_tcp(TcpConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config1)
+        .build();
+    let config2 = ConfigBuilder::new()
+        .with_tcp(TcpConfig {
+            listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            ..Default::default()
+        })
+        .with_libp2p_kademlia(kad_config2)
+        // one connection to node1 at most, so a query can only succeed over the open one
+        .with_connection_limits(
+            litep2p::transport::ConnectionLimitsConfig::default().max_outgoing_connections(Some(1)),
+        )
+        .build();
+
+    // the handles are not used, and dropping one would stop its instance
+    std::mem::forget(_kad_handle1);
+    std::mem::forget(kad_handle2);
+    (
+        Litep2p::new(config1).unwrap(),
+        Litep2p::new(config2).unwrap(),
+    )
+}
+
+/// Query `node1` through `kad_handle2`, retrying a failed query up to `retries` times, and
+/// return how many connections `node2` established until a query succeeded.
+async fn find_node_through(
+    node1: &mut Litep2p,
+    node2: &mut Litep2p,
+    kad_handle2: &mut litep2p::protocol::libp2p::kademlia::KademliaHandle,
+    mut retries: usize,
+) -> usize {
+    let mut connections = 0;
+    kad_handle2
+        .add_known_peer(
+            *node1.local_peer_id(),
+            node1.listen_addresses().cloned().collect(),
+        )
+        .await;
+    let mut query = kad_handle2.find_node(PeerId::random()).await;
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
+                panic!("query did not finish in 10 secs")
+            }
+            _ = node1.next_event() => {}
+            event = node2.next_event() => {
+                if let Some(litep2p::Litep2pEvent::ConnectionEstablished { .. }) = event {
+                    connections += 1;
+                }
+            }
+            event = kad_handle2.next() => match event {
+                Some(KademliaEvent::FindNodeSuccess { query_id, .. }) => {
+                    assert_eq!(query_id, query);
+                    return connections;
+                }
+                Some(KademliaEvent::QueryFailed { query_id }) if query_id == query => {
+                    assert!(retries > 0, "query failed");
+                    retries -= 1;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    query = kad_handle2.find_node(PeerId::random()).await;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Connect `node2` to `node1`. With `settle`, keep both nodes running briefly afterwards, so that
+/// `node2`'s manager has recorded the connection.
+async fn connect(node1: &mut Litep2p, node2: &mut Litep2p, settle: bool) {
+    let address = node1.listen_addresses().next().unwrap().clone();
+    let address = address.with(Protocol::P2p((*node1.local_peer_id()).into()));
+    node2.dial_address(address).await.unwrap();
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
+                panic!("nodes did not connect in 10 secs")
+            }
+            _ = node1.next_event() => {}
+            event = node2.next_event() => {
+                if let Some(litep2p::Litep2pEvent::ConnectionEstablished { .. }) = event {
+                    break;
+                }
+            }
+        }
+    }
+    if settle {
+        let settled = tokio::time::sleep(tokio::time::Duration::from_millis(200));
+        tokio::pin!(settled);
+        loop {
+            tokio::select! {
+                _ = &mut settled => break,
+                _ = node1.next_event() => {}
+                _ = node2.next_event() => {}
+            }
+        }
+    }
+}
+
+/// Register a client-mode instance on `protocol` with `node2` once it is connected to `node1`,
+/// and query `node1` through it.
+///
+/// The instance learns of established connections shortly after it starts, so a query started
+/// right away may fail and is retried. Without the connection it would never succeed.
+async fn query_over_open_connection(settle: bool) {
+    let protocol = ProtocolName::from("/runtime/kad");
+    let (mut node1, mut node2) = runtime_kademlia_nodes(&protocol);
+    connect(&mut node1, &mut node2, settle).await;
+
+    let (kad_config2, mut kad_handle2) = KademliaConfigBuilder::new()
+        .with_protocol_names(vec![protocol])
+        .with_mode(KademliaMode::Client)
+        .build();
+    node2.register_kademlia(kad_config2).unwrap();
+
+    // the query goes over the connection that was already open
+    let connections = find_node_through(&mut node1, &mut node2, &mut kad_handle2, 5).await;
+    assert_eq!(connections, 0);
+}
+
+#[tokio::test]
+async fn kademlia_registered_at_runtime_uses_established_connections() {
+    query_over_open_connection(true).await;
+}
+
+/// The connection may still be reporting itself to the manager when the instance is registered.
+#[tokio::test]
+async fn kademlia_registered_at_runtime_uses_connections_being_set_up() {
+    query_over_open_connection(false).await;
+}
+
+#[tokio::test]
+async fn kademlia_registered_at_runtime_reaches_new_connections() {
+    let protocol = ProtocolName::from("/runtime/kad");
+    let (mut node1, mut node2) = runtime_kademlia_nodes(&protocol);
+
+    let (kad_config2, mut kad_handle2) = KademliaConfigBuilder::new()
+        .with_protocol_names(vec![protocol])
+        .with_mode(KademliaMode::Client)
+        .build();
+    node2.register_kademlia(kad_config2).unwrap();
+
+    let connections = find_node_through(&mut node1, &mut node2, &mut kad_handle2, 0).await;
+    assert_eq!(connections, 1);
+}
+
+#[tokio::test]
+async fn kademlia_registered_at_runtime_needs_unused_protocol_names() {
+    let protocol = ProtocolName::from("/runtime/kad");
+    let (mut node1, _node2) = runtime_kademlia_nodes(&protocol);
+
+    let (kad_config, _kad_handle) =
+        KademliaConfigBuilder::new().with_protocol_names(vec![protocol.clone()]).build();
+    assert!(matches!(
+        node1.register_kademlia(kad_config),
+        Err(litep2p::Error::ProtocolAlreadyExists(name)) if name == protocol,
+    ));
+}
+
+#[tokio::test]
+async fn kademlia_protocol_names_are_released_when_the_handle_is_dropped() {
+    let protocol = ProtocolName::from("/runtime/kad");
+    let (_node1, mut node2) = runtime_kademlia_nodes(&ProtocolName::from("/other/kad"));
+
+    let (kad_config, kad_handle) =
+        KademliaConfigBuilder::new().with_protocol_names(vec![protocol.clone()]).build();
+    node2.register_kademlia(kad_config).unwrap();
+    drop(kad_handle);
+
+    // the instance exits and unregisters while the node runs
+    let started = std::time::Instant::now();
+    loop {
+        let (kad_config, kad_handle) =
+            KademliaConfigBuilder::new().with_protocol_names(vec![protocol.clone()]).build();
+        match node2.register_kademlia(kad_config) {
+            Ok(()) => break,
+            Err(litep2p::Error::ProtocolAlreadyExists(_)) => drop(kad_handle),
+            Err(error) => panic!("unexpected error: {error:?}"),
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "names never released"
+        );
+        let _ =
+            tokio::time::timeout(tokio::time::Duration::from_millis(50), node2.next_event()).await;
+    }
+}

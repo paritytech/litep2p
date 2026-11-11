@@ -40,12 +40,14 @@ use crate::{
 
 use futures::{stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::Multiaddr;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{
+    channel, unbounded_channel, Receiver, Sender, UnboundedReceiver, UnboundedSender,
+};
 
 #[cfg(any(feature = "quic", feature = "webrtc", feature = "websocket"))]
 use std::sync::atomic::Ordering;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Debug,
     pin::Pin,
     sync::{atomic::AtomicUsize, Arc},
@@ -237,6 +239,13 @@ pub struct ProtocolSet {
     fallback_names: HashMap<ProtocolName, ProtocolName>,
     /// Connection keep-alive settings for both main & fallback protocol names.
     keep_alives: HashMap<ProtocolName, SubstreamKeepAlive>,
+    /// Protocols registered after the connection was established, from the manager.
+    new_protocols: UnboundedReceiver<(ProtocolName, ProtocolContext)>,
+    /// Given to the manager, which sends the protocols registered later.
+    new_protocols_tx: UnboundedSender<(ProtocolName, ProtocolContext)>,
+    /// Protocols added through `new_protocols`. The manager tells them when the connection
+    /// closes.
+    added: HashSet<ProtocolName>,
 }
 
 impl ProtocolSet {
@@ -280,6 +289,8 @@ impl ProtocolSet {
             .collect::<Vec<_>>();
         let keep_alives = main_keep_alives.into_iter().chain(fallback_keep_alives).collect();
 
+        let (new_protocols_tx, new_protocols) = unbounded_channel();
+
         ProtocolSet {
             rx,
             mgr_tx,
@@ -288,7 +299,25 @@ impl ProtocolSet {
             fallback_names,
             keep_alives,
             connection: ConnectionHandle::new(connection_id, tx),
+            new_protocols,
+            new_protocols_tx,
+            added: HashSet::new(),
         }
+    }
+
+    /// Install a protocol registered after the connection was established.
+    fn add_protocol(&mut self, protocol: ProtocolName, context: ProtocolContext) {
+        for fallback in &context.fallback_names {
+            self.fallback_names.insert(fallback.clone(), protocol.clone());
+            if context.inbound == InboundProtocol::Accept {
+                self.keep_alives.insert(fallback.clone(), context.keep_alive);
+            }
+        }
+        if context.inbound == InboundProtocol::Accept {
+            self.keep_alives.insert(protocol.clone(), context.keep_alive);
+        }
+        self.added.insert(protocol.clone());
+        self.protocols.insert(protocol, context);
     }
 
     /// Stop advertising a protocol that has exited.
@@ -415,11 +444,17 @@ impl ProtocolSet {
         Ok(())
     }
 
-    /// Report `event` to all protocols, skipping the ones that have exited.
-    async fn report_to_protocols(&mut self, event: impl Fn() -> InnerTransportEvent) {
+    /// Report `event` to all protocols, skipping the ones that have exited, and with
+    /// `skip_added` the ones the manager added, which it reports to itself.
+    async fn report_to_protocols(
+        &mut self,
+        skip_added: bool,
+        event: impl Fn() -> InnerTransportEvent,
+    ) {
         let closed = self
             .protocols
             .iter()
+            .filter(|(protocol, _)| !skip_added || !self.added.contains(*protocol))
             .map(|(protocol, context)| {
                 let event = event();
                 async move { context.tx.send(event).await.is_err().then(|| protocol.clone()) }
@@ -437,13 +472,26 @@ impl ProtocolSet {
     /// Report to protocols that a connection was established.
     pub(crate) async fn report_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) {
         let connection_handle = self.connection.downgrade();
-        self.report_to_protocols(|| InnerTransportEvent::ConnectionEstablished {
+        self.report_to_protocols(false, || InnerTransportEvent::ConnectionEstablished {
             peer,
             connection: endpoint.connection_id(),
             endpoint: endpoint.clone(),
             sender: connection_handle.clone(),
         })
         .await;
+
+        // The manager adds the protocols registered since this set was built, and the ones
+        // registered while the connection is open.
+        let _ = self
+            .mgr_tx
+            .send(TransportManagerEvent::ConnectionOpened {
+                peer,
+                endpoint,
+                handle: connection_handle.inactive(),
+                new_protocols: self.new_protocols_tx.clone(),
+                reported: self.protocols.keys().cloned().collect(),
+            })
+            .await;
     }
 
     /// Report to protocols that a connection was closed.
@@ -452,7 +500,8 @@ impl ProtocolSet {
         peer: PeerId,
         connection_id: ConnectionId,
     ) -> crate::Result<()> {
-        self.report_to_protocols(|| InnerTransportEvent::ConnectionClosed {
+        // The manager tells the protocols it added, including the ones not installed yet.
+        self.report_to_protocols(true, || InnerTransportEvent::ConnectionClosed {
             peer,
             connection: connection_id,
         })
@@ -475,6 +524,11 @@ impl Stream for ProtocolSet {
     type Item = ProtocolCommand;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // A protocol is added before it learns of the connection, so it is installed before any
+        // command it sends.
+        while let Poll::Ready(Some((protocol, context))) = self.new_protocols.poll_recv(cx) {
+            self.add_protocol(protocol, context);
+        }
         self.rx.poll_recv(cx)
     }
 }

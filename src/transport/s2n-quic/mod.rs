@@ -392,14 +392,14 @@ mod tests {
             tx: event_tx1,
             rx: command_rx1,
             keypair: keypair1.clone(),
-            protocols: HashMap::from_iter([(
+            protocols: std::sync::Arc::new(parking_lot::RwLock::new(HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
                     tx: tx1,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                 },
-            )]),
+            )]))),
         };
         let transport_config1 = config::Config {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
@@ -425,14 +425,14 @@ mod tests {
             tx: event_tx2,
             rx: command_rx2,
             keypair: keypair2.clone(),
-            protocols: HashMap::from_iter([(
+            protocols: std::sync::Arc::new(parking_lot::RwLock::new(HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
                     tx: tx2,
                     codec: ProtocolCodec::Identity(32),
                     fallback_names: Vec::new(),
                 },
-            )]),
+            )]))),
         };
         let transport_config2 = config::Config {
             listen_address: "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),

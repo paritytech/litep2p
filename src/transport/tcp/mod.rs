@@ -750,7 +750,7 @@ mod tests {
             tx: event_tx1,
             bandwidth_sink: bandwidth_sink.clone(),
 
-            protocols: HashMap::from_iter([(
+            protocols: std::sync::Arc::new(parking_lot::RwLock::new(HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
                     tx: tx1,
@@ -759,7 +759,7 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )]))),
         };
         let transport_config1 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -783,7 +783,7 @@ mod tests {
             tx: event_tx2,
             bandwidth_sink: bandwidth_sink.clone(),
 
-            protocols: HashMap::from_iter([(
+            protocols: std::sync::Arc::new(parking_lot::RwLock::new(HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
                     tx: tx2,
@@ -792,7 +792,7 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )]))),
         };
         let transport_config2 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -848,7 +848,7 @@ mod tests {
             tx: event_tx1,
             bandwidth_sink: bandwidth_sink.clone(),
 
-            protocols: HashMap::from_iter([(
+            protocols: std::sync::Arc::new(parking_lot::RwLock::new(HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
                     tx: tx1,
@@ -857,7 +857,7 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )]))),
         };
         let transport_config1 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -881,7 +881,7 @@ mod tests {
             tx: event_tx2,
             bandwidth_sink: bandwidth_sink.clone(),
 
-            protocols: HashMap::from_iter([(
+            protocols: std::sync::Arc::new(parking_lot::RwLock::new(HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
                     tx: tx2,
@@ -890,7 +890,7 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )]))),
         };
         let transport_config2 = Config {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
@@ -941,7 +941,7 @@ mod tests {
             tx: event_tx1,
             bandwidth_sink: bandwidth_sink.clone(),
 
-            protocols: HashMap::from_iter([(
+            protocols: std::sync::Arc::new(parking_lot::RwLock::new(HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
                     tx: tx1,
@@ -950,7 +950,7 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )]))),
         };
         let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
         let (mut transport1, _) =
@@ -981,7 +981,7 @@ mod tests {
             tx: event_tx2,
             bandwidth_sink: bandwidth_sink.clone(),
 
-            protocols: HashMap::from_iter([(
+            protocols: std::sync::Arc::new(parking_lot::RwLock::new(HashMap::from_iter([(
                 ProtocolName::from("/notif/1"),
                 ProtocolContext {
                     tx: tx2,
@@ -990,7 +990,7 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )]))),
         };
 
         let (mut transport2, _) = TcpTransport::new(handle2, Default::default(), resolver).unwrap();

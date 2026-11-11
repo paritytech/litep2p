@@ -24,7 +24,7 @@ use crate::{
     crypto::ed25519::Keypair,
     error::{AddressError, DialError, Error},
     executor::Executor,
-    protocol::{InnerTransportEvent, TransportService},
+    protocol::{ConnectionHandle, InnerTransportEvent, TransportService},
     transport::{
         manager::{
             address::AddressRecord,
@@ -43,7 +43,7 @@ use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use indexmap::IndexMap;
 use multiaddr::{Multiaddr, Protocol};
 use parking_lot::RwLock;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{channel, Receiver, Sender, UnboundedSender};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -85,6 +85,24 @@ enum ConnectionEstablishedResult {
 
 /// [`crate::transport::manager::TransportManager`] events.
 pub enum TransportManagerEvent {
+    /// A connection reported itself to the protocols it knew of.
+    ConnectionOpened {
+        /// Peer ID.
+        peer: PeerId,
+
+        /// Endpoint of the connection.
+        endpoint: Endpoint,
+
+        /// Handle to the connection, which does not keep it open.
+        handle: ConnectionHandle,
+
+        /// Adds a protocol registered after the connection was established.
+        new_protocols: UnboundedSender<(ProtocolName, ProtocolContext)>,
+
+        /// The protocols the connection reported itself to.
+        reported: HashSet<ProtocolName>,
+    },
+
     /// Connection closed to remote peer.
     ConnectionClosed {
         /// Peer ID.
@@ -229,6 +247,12 @@ pub struct TransportManager {
     /// Installed protocols.
     protocols: HashMap<ProtocolName, ProtocolContext>,
 
+    /// The installed protocols as transports read them when a connection is established.
+    shared_protocols: Arc<RwLock<HashMap<ProtocolName, ProtocolContext>>>,
+
+    /// Established connections, so that protocols registered later can be told about them.
+    connections: HashMap<ConnectionId, OpenConnection>,
+
     /// All names (main and fallback(s)) of the installed protocols.
     protocol_names: HashSet<ProtocolName>,
 
@@ -273,6 +297,26 @@ pub struct TransportManager {
 
     /// Pending accept futures with associated connection information.
     pending_accept: FuturesUnordered<BoxFuture<'static, (PeerId, Endpoint, crate::Result<()>)>>,
+}
+
+/// An established connection, as known to the manager.
+#[derive(Debug)]
+struct OpenConnection {
+    /// Peer ID.
+    peer: PeerId,
+
+    /// Endpoint of the connection.
+    endpoint: Endpoint,
+
+    /// Handle to the connection, which does not keep it open.
+    handle: ConnectionHandle,
+
+    /// Adds a protocol to the connection.
+    new_protocols: UnboundedSender<(ProtocolName, ProtocolContext)>,
+
+    /// Protocols the manager told about the connection, which it also tells when the
+    /// connection closes.
+    added: Vec<ProtocolName>,
 }
 
 /// Builder for [`crate::transport::manager::TransportManager`].
@@ -361,6 +405,8 @@ impl TransportManagerBuilder {
             keypair,
             bandwidth_sink: self.bandwidth_sink.unwrap_or_else(BandwidthSink::new),
             protocols: HashMap::new(),
+            shared_protocols: Default::default(),
+            connections: HashMap::new(),
             protocol_names: HashSet::new(),
             listen_addresses,
             public_addresses,
@@ -450,10 +496,108 @@ impl TransportManager {
                 inbound,
             ),
         );
-        self.protocol_names.insert(protocol);
+        self.protocol_names.insert(protocol.clone());
         self.protocol_names.extend(fallback_names);
+        *self.shared_protocols.write() = self.protocols.clone();
+
+        // A protocol registered while the node runs is told about the connections that are
+        // already established.
+        let context = self.protocols[&protocol].clone();
+        for connection in self.connections.values_mut() {
+            Self::add_protocol(connection, protocol.clone(), context.clone());
+        }
 
         service
+    }
+
+    /// Whether `name` is the main or a fallback name of an installed protocol.
+    pub fn is_protocol_registered(&self, name: &ProtocolName) -> bool {
+        self.protocol_names.contains(name)
+    }
+
+    /// Add `protocol` to `connection` and tell the protocol about the connection.
+    fn add_protocol(
+        connection: &mut OpenConnection,
+        protocol: ProtocolName,
+        context: ProtocolContext,
+    ) {
+        let mut sender = connection.handle.clone();
+        sender.try_upgrade();
+        if !sender.is_active() {
+            // the connection is closing, and the manager hears of it next
+            return;
+        }
+
+        // The connection applies the protocol before it handles any command the protocol sends
+        // after this event, so the protocol can open substreams right away.
+        if connection.new_protocols.send((protocol.clone(), context.clone())).is_err() {
+            return;
+        }
+
+        let event = InnerTransportEvent::ConnectionEstablished {
+            peer: connection.peer,
+            connection: connection.endpoint.connection_id(),
+            endpoint: connection.endpoint.clone(),
+            sender,
+        };
+        if context.tx.try_send(event).is_err() {
+            tracing::warn!(
+                target: LOG_TARGET,
+                peer = ?connection.peer,
+                %protocol,
+                "protocol cannot be told about an established connection",
+            );
+            return;
+        }
+        connection.added.push(protocol);
+    }
+
+    /// A connection reported itself to the `reported` protocols. Protocols registered since it
+    /// was set up are added to it.
+    fn on_connection_reported(
+        &mut self,
+        peer: PeerId,
+        endpoint: Endpoint,
+        handle: ConnectionHandle,
+        new_protocols: UnboundedSender<(ProtocolName, ProtocolContext)>,
+        reported: HashSet<ProtocolName>,
+    ) {
+        let mut connection = OpenConnection {
+            peer,
+            endpoint,
+            handle,
+            new_protocols,
+            added: Vec::new(),
+        };
+        for (protocol, context) in &self.protocols {
+            if !reported.contains(protocol) {
+                Self::add_protocol(&mut connection, protocol.clone(), context.clone());
+            }
+        }
+        self.connections.insert(connection.endpoint.connection_id(), connection);
+    }
+
+    /// Tell the protocols the manager added to a closed connection that it closed.
+    fn on_added_protocols_closed(&mut self, peer: PeerId, connection_id: ConnectionId) {
+        let Some(connection) = self.connections.remove(&connection_id) else {
+            return;
+        };
+        for protocol in connection.added {
+            if let Some(context) = self.protocols.get(&protocol) {
+                let event = InnerTransportEvent::ConnectionClosed {
+                    peer,
+                    connection: connection_id,
+                };
+                if context.tx.try_send(event).is_err() {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        %protocol,
+                        "protocol cannot be told that a connection closed",
+                    );
+                }
+            }
+        }
     }
 
     /// Unregister a protocol in response of the user dropping the protocol handle.
@@ -462,6 +606,8 @@ impl TransportManager {
             tracing::error!(target: LOG_TARGET, ?protocol, "Cannot unregister protocol, not registered");
             return;
         };
+        *self.shared_protocols.write() = self.protocols.clone();
+        self.protocol_names.remove(&protocol);
 
         for fallback in &context.fallback_names {
             if !self.protocol_names.remove(fallback) {
@@ -482,7 +628,7 @@ impl TransportManager {
             tx: self.event_tx.clone(),
             executor,
             keypair: self.keypair.clone(),
-            protocols: self.protocols.clone(),
+            protocols: self.shared_protocols.clone(),
             bandwidth_sink: self.bandwidth_sink.clone(),
             next_substream_id: self.next_substream_id.clone(),
             next_connection_id: self.next_connection_id.clone(),
@@ -1154,11 +1300,21 @@ impl TransportManager {
                     };
 
                     match event {
+                        TransportManagerEvent::ConnectionOpened {
+                            peer,
+                            endpoint,
+                            handle,
+                            new_protocols,
+                            reported,
+                        } => self.on_connection_reported(peer, endpoint, handle, new_protocols, reported),
                         TransportManagerEvent::ConnectionClosed {
                             peer,
                             connection: connection_id,
-                        } => if let Some(event) = self.on_connection_closed(peer, connection_id) {
-                            return Some(event);
+                        } => {
+                            self.on_added_protocols_closed(peer, connection_id);
+                            if let Some(event) = self.on_connection_closed(peer, connection_id) {
+                                return Some(event);
+                            }
                         }
                     };
                 },

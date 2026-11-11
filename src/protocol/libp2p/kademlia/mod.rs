@@ -1416,7 +1416,11 @@ impl Kademlia {
 
                             self.store.put(record);
                         }
-                        None => return Err(Error::EssentialTaskClosed),
+                        None => {
+                            // the user dropped the handle, so the protocol names can be reused
+                            self.service.unregister_protocol();
+                            return Err(Error::EssentialTaskClosed);
+                        }
                     }
                 },
                 action = self.store.next_action() => match action {
