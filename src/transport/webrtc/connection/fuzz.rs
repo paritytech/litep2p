@@ -124,14 +124,14 @@ impl FuzzConnection {
                     },
                 )
             })
-            .collect();
+            .collect::<std::collections::HashMap<_, _>>();
 
         let connection_id = ConnectionId::from(0usize);
         let protocol_set = ProtocolSet::new(
             connection_id,
             mgr_tx,
             Arc::new(AtomicUsize::new(0)),
-            protocols,
+            protocols.into(),
         );
 
         // Placeholder, like the certificate: `addrs` is hardcoded and no I/O runs on it. Bound once

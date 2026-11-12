@@ -29,7 +29,7 @@ use crate::{
 
 use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use multiaddr::{Multiaddr, Protocol};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{channel, Receiver, Sender, WeakSender};
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -298,6 +298,9 @@ pub struct TransportService {
     /// RX channel for receiving events from tranports and connections.
     rx: Receiver<InnerTransportEvent>,
 
+    /// Sender of `rx`, identifies this service among the installed protocols.
+    tx: WeakSender<InnerTransportEvent>,
+
     /// Next substream ID.
     next_substream_id: Arc<AtomicUsize>,
 
@@ -333,6 +336,7 @@ impl TransportService {
         (
             Self {
                 rx,
+                tx: tx.downgrade(),
                 protocol,
                 local_peer_id,
                 fallback_names,
@@ -356,6 +360,11 @@ impl TransportService {
     /// Get the list of listen addresses of the node.
     pub fn listen_addresses(&self) -> HashSet<Multiaddr> {
         self.transport_handle.listen_addresses()
+    }
+
+    /// Get the protocols currently advertised to remote peers.
+    pub(crate) fn advertised_protocols(&self) -> Vec<ProtocolName> {
+        self.transport_handle.advertised_protocols()
     }
 
     /// Handle connection established event.
@@ -645,13 +654,13 @@ impl TransportService {
     pub fn local_peer_id(&self) -> PeerId {
         self.local_peer_id
     }
+}
 
-    /// Dynamically unregister a protocol.
-    ///
-    /// This must be called when a protocol is no longer needed (e.g. user dropped the protocol
-    /// handle).
-    pub fn unregister_protocol(&self) {
-        self.transport_handle.unregister_protocol(self.protocol.clone());
+impl Drop for TransportService {
+    fn drop(&mut self) {
+        if let Some(tx) = self.tx.upgrade() {
+            self.transport_handle.unregister_protocol(&self.protocol, &tx);
+        }
     }
 }
 
@@ -706,7 +715,16 @@ impl Stream for TransportService {
                     opening_permit,
                 }) => {
                     if let Direction::Outbound(substream_id) = direction {
-                        self.pending_outbound.remove(&substream_id);
+                        if self.pending_outbound.remove(&substream_id).is_none() {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?peer,
+                                protocol = %self.protocol,
+                                ?substream_id,
+                                "outbound substream not opened by this service, dropping",
+                            );
+                            continue;
+                        }
                     }
 
                     if protocol == self.protocol
@@ -731,7 +749,9 @@ impl Stream for TransportService {
                     }));
                 }
                 Some(InnerTransportEvent::SubstreamOpenFailure { substream, error }) => {
-                    self.pending_outbound.remove(&substream);
+                    if self.pending_outbound.remove(&substream).is_none() {
+                        continue;
+                    }
 
                     return Poll::Ready(Some(TransportEvent::SubstreamOpenFailure {
                         substream,
@@ -795,6 +815,7 @@ mod tests {
             HashSet::new(),
             Default::default(),
             PublicAddresses::new(peer),
+            Default::default(),
         );
 
         let (service, sender) = TransportService::new(
@@ -1246,6 +1267,49 @@ mod tests {
         let context = service.connections.get(&peer).unwrap();
         assert_eq!(context.primary.connection_id(), &ConnectionId::from(1usize));
         assert!(context.secondary.is_none());
+    }
+
+    #[tokio::test]
+    async fn outbound_events_of_substreams_not_opened_by_service_are_dropped() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+        let (cmd_tx, _cmd_rx) = channel(64);
+        sender
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: ConnectionId::from(0usize),
+                endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(0usize)),
+                sender: ConnectionHandle::new(ConnectionId::from(0usize), cmd_tx.clone()),
+            })
+            .await
+            .unwrap();
+        assert!(std::matches!(
+            service.next().await,
+            Some(TransportEvent::ConnectionEstablished { .. })
+        ));
+
+        let substream = SubstreamId::from(1337usize);
+        sender
+            .send(InnerTransportEvent::SubstreamOpened {
+                peer,
+                protocol: ProtocolName::from("/notif/1"),
+                fallback: None,
+                direction: Direction::Outbound(substream),
+                connection_id: ConnectionId::from(0usize),
+                substream: Substream::new_mock(peer, substream, Box::new(MockSubstream::new())),
+                opening_permit: Permit::new(cmd_tx),
+            })
+            .await
+            .unwrap();
+        sender
+            .send(InnerTransportEvent::SubstreamOpenFailure {
+                substream,
+                error: SubstreamError::ConnectionClosed,
+            })
+            .await
+            .unwrap();
+
+        poll_service(&mut service).await;
     }
 
     #[tokio::test]

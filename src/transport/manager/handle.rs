@@ -23,12 +23,13 @@ use crate::{
     crypto::ed25519::Keypair,
     error::ImmediateDialError,
     executor::Executor,
-    protocol::ProtocolSet,
+    protocol::{InnerTransportEvent, ProtocolSet},
     transport::manager::{
         address::AddressRecord,
         peer_state::StateDialResult,
+        protocols::WeakProtocolRegistry,
         types::{PeerContext, SupportedTransport},
-        ProtocolContext, TransportManagerEvent, LOG_TARGET,
+        ProtocolRegistry, TransportManagerEvent, LOG_TARGET,
     },
     types::{protocol::ProtocolName, ConnectionId},
     BandwidthSink, PeerId,
@@ -61,11 +62,6 @@ pub enum InnerTransportManagerCommand {
         /// Remote address.
         address: Multiaddr,
     },
-
-    UnregisterProtocol {
-        /// Protocol name.
-        protocol: ProtocolName,
-    },
 }
 
 /// Handle for communicating with [`crate::transport::manager::TransportManager`].
@@ -88,6 +84,9 @@ pub struct TransportManagerHandle {
 
     /// Public addresses.
     public_addresses: PublicAddresses,
+
+    /// Installed protocols.
+    protocols: WeakProtocolRegistry,
 }
 
 impl TransportManagerHandle {
@@ -99,6 +98,7 @@ impl TransportManagerHandle {
         supported_transport: HashSet<SupportedTransport>,
         listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
         public_addresses: PublicAddresses,
+        protocols: ProtocolRegistry,
     ) -> Self {
         Self {
             peers,
@@ -107,6 +107,7 @@ impl TransportManagerHandle {
             supported_transport,
             listen_addresses,
             public_addresses,
+            protocols: protocols.downgrade(),
         }
     }
 
@@ -123,6 +124,13 @@ impl TransportManagerHandle {
     /// Get the list of listen addresses of the node.
     pub(crate) fn listen_addresses(&self) -> HashSet<Multiaddr> {
         self.listen_addresses.read().clone()
+    }
+
+    pub(crate) fn advertised_protocols(&self) -> Vec<ProtocolName> {
+        self.protocols
+            .upgrade()
+            .map(|protocols| protocols.advertised())
+            .unwrap_or_default()
     }
 
     /// Check if `address` is supported by one of the enabled transports.
@@ -342,26 +350,10 @@ impl TransportManagerHandle {
             })
     }
 
-    /// Dynamically unregister a protocol.
-    ///
-    /// This must be called when a protocol is no longer needed (e.g. user dropped the protocol
-    /// handle).
-    pub fn unregister_protocol(&self, protocol: ProtocolName) {
-        tracing::info!(
-            target: LOG_TARGET,
-            ?protocol,
-            "Unregistering user protocol on handle drop"
-        );
-
-        if let Err(err) = self
-            .cmd_tx
-            .try_send(InnerTransportManagerCommand::UnregisterProtocol { protocol })
-        {
-            tracing::error!(
-                target: LOG_TARGET,
-                ?err,
-                "Failed to unregister protocol"
-            );
+    /// Unregister `protocol` if it's still installed with `tx`.
+    pub fn unregister_protocol(&self, protocol: &ProtocolName, tx: &Sender<InnerTransportEvent>) {
+        if self.protocols.upgrade().is_some_and(|protocols| protocols.remove(protocol, tx)) {
+            tracing::debug!(target: LOG_TARGET, ?protocol, "protocol unregistered");
         }
     }
 }
@@ -369,7 +361,7 @@ impl TransportManagerHandle {
 pub struct TransportHandle {
     pub keypair: Keypair,
     pub tx: Sender<TransportManagerEvent>,
-    pub protocols: HashMap<ProtocolName, ProtocolContext>,
+    pub protocols: ProtocolRegistry,
     pub next_connection_id: Arc<AtomicUsize>,
     pub next_substream_id: Arc<AtomicUsize>,
     pub bandwidth_sink: BandwidthSink,
@@ -420,6 +412,7 @@ mod tests {
                 supported_transport: HashSet::new(),
                 listen_addresses: Default::default(),
                 public_addresses: PublicAddresses::new(local_peer_id),
+                protocols: Default::default(),
             },
             cmd_rx,
         )
@@ -812,6 +805,7 @@ mod tests {
             supported_transport: HashSet::new(),
             listen_addresses,
             public_addresses: PublicAddresses::new(local_peer_id),
+            protocols: Default::default(),
         };
 
         // Exact matches

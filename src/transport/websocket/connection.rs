@@ -43,7 +43,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use url::Url;
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 mod schema {
     pub(super) mod noise {
@@ -378,7 +378,7 @@ impl WebSocketConnection {
         stream: crate::yamux::Stream,
         permit: Permit,
         substream_id: SubstreamId,
-        protocols: HashMap<ProtocolName, SubstreamKeepAlive>,
+        protocols: Arc<HashMap<ProtocolName, SubstreamKeepAlive>>,
         substream_open_timeout: Duration,
     ) -> Result<NegotiatedSubstream, NegotiationError> {
         tracing::trace!(
