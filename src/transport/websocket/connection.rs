@@ -563,11 +563,11 @@ impl WebSocketConnection {
                             let lifetime_permit =
                                 substream.keep_alive.then(|| opening_permit.clone());
 
-                            let substream = substream::Substream::new_websocket(
+                            let substream = |codec| substream::Substream::new_websocket(
                                 self.peer,
                                 substream_id,
                                 Substream::new(socket, bandwidth_sink, lifetime_permit),
-                                self.protocol_set.protocol_codec(&protocol)
+                                codec,
                             );
 
                             if let Err(error) = self.protocol_set.report_substream_open(

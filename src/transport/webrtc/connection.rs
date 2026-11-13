@@ -648,10 +648,9 @@ impl WebRtcConnection {
         };
 
         let substream_id = self.protocol_set.next_substream_id();
-        let codec = self.protocol_set.protocol_codec(&protocol);
         let opening_permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
         let (substream, handle) = WebRtcSubstream::new();
-        let substream = Substream::new_webrtc(self.peer, substream_id, substream, codec);
+        let substream = |codec| Substream::new_webrtc(self.peer, substream_id, substream, codec);
         let keep_alive = protocols
             .get(&protocol)
             .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?;
@@ -803,9 +802,8 @@ impl WebRtcConnection {
             opening_permit,
             ..
         } = context;
-        let codec = self.protocol_set.protocol_codec(&protocol);
         let (substream, handle) = WebRtcSubstream::new();
-        let substream = Substream::new_webrtc(self.peer, substream_id, substream, codec);
+        let substream = |codec| Substream::new_webrtc(self.peer, substream_id, substream, codec);
 
         tracing::trace!(
             target: LOG_TARGET,
