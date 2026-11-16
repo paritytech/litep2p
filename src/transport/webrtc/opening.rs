@@ -108,6 +108,9 @@ pub struct OpeningWebRtcConnection {
     /// Connection ID.
     connection_id: ConnectionId,
 
+    /// Absolute deadline, including manager validation.
+    deadline: Instant,
+
     /// Noise channel ID.
     noise_channel_id: ChannelId,
 
@@ -172,6 +175,7 @@ impl OpeningWebRtcConnection {
         id_keypair: Keypair,
         addrs: AddressPair,
         socket: Arc<WebRtcSocket>,
+        deadline: Instant,
     ) -> OpeningWebRtcConnection {
         tracing::trace!(
             target: LOG_TARGET,
@@ -184,6 +188,7 @@ impl OpeningWebRtcConnection {
             rtc,
             state: State::Closed,
             connection_id,
+            deadline,
             noise_channel_id,
             id_keypair,
             addrs,
@@ -195,6 +200,16 @@ impl OpeningWebRtcConnection {
     /// Returns the [`ConnectionId`] assigned to this opening connection.
     pub fn connection_id(&self) -> &ConnectionId {
         &self.connection_id
+    }
+
+    /// Absolute opening deadline.
+    pub fn deadline(&self) -> Instant {
+        self.deadline
+    }
+
+    /// Whether the opening deadline has elapsed.
+    fn is_expired(&self) -> bool {
+        Instant::now() >= self.deadline
     }
 
     /// Socket the session's datagrams are received on and sent from.
@@ -267,6 +282,10 @@ impl OpeningWebRtcConnection {
 
     /// Handle timeout.
     pub fn on_timeout(&mut self) -> crate::Result<()> {
+        if self.is_expired() {
+            return Err(Error::Timeout);
+        }
+
         if let Err(error) = self.rtc.handle_input(Input::Timeout(Instant::now())) {
             tracing::error!(
                 target: LOG_TARGET,
@@ -385,6 +404,10 @@ impl OpeningWebRtcConnection {
     /// Accept connection by sending the final Noise handshake message
     /// and return the `Rtc` object for further use.
     pub fn on_accept(mut self) -> crate::Result<Rtc> {
+        if self.is_expired() {
+            return Err(Error::Timeout);
+        }
+
         tracing::trace!(
             target: LOG_TARGET,
             connection_id = ?self.connection_id,
@@ -420,6 +443,10 @@ impl OpeningWebRtcConnection {
 
     /// Handle input from peer.
     pub fn on_input(&mut self, buffer: DatagramRecv) -> crate::Result<()> {
+        if self.is_expired() {
+            return Err(Error::Timeout);
+        }
+
         tracing::trace!(
             target: LOG_TARGET,
             peer = ?self.addrs.remote,
@@ -463,6 +490,10 @@ impl OpeningWebRtcConnection {
         }
 
         loop {
+            if self.is_expired() {
+                return WebRtcEvent::ConnectionClosed;
+            }
+
             let output = match self.rtc.poll_output() {
                 Ok(output) => output,
                 Err(error) => {
@@ -492,7 +523,11 @@ impl OpeningWebRtcConnection {
                         datagram: transmit.contents,
                     };
                 }
-                Output::Timeout(timeout) => return WebRtcEvent::Timeout { timeout },
+                Output::Timeout(timeout) => {
+                    return WebRtcEvent::Timeout {
+                        timeout: timeout.min(self.deadline),
+                    };
+                }
                 Output::Event(e) => match e {
                     Event::IceConnectionStateChange(v) =>
                         if v == IceConnectionState::Disconnected {
