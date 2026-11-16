@@ -22,18 +22,39 @@
 
 use crate::types::ConnectionId;
 
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc, time::Instant};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// Configuration for the connection limits.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ConnectionLimitsConfig {
+    /// Maximum number of incoming connections being opened concurrently.
+    max_pending_incoming_connections: usize,
     /// Maximum number of incoming connections that can be established.
     max_incoming_connections: Option<usize>,
     /// Maximum number of outgoing connections that can be established.
     max_outgoing_connections: Option<usize>,
 }
 
+impl Default for ConnectionLimitsConfig {
+    fn default() -> Self {
+        Self {
+            max_pending_incoming_connections: 256,
+            max_incoming_connections: None,
+            max_outgoing_connections: None,
+        }
+    }
+}
+
 impl ConnectionLimitsConfig {
+    /// Limit concurrent incoming openings across TCP, WebSocket and WebRTC. Defaults to 256.
+    ///
+    /// Zero disables incoming connections on these transports.
+    pub fn max_pending_incoming_connections(mut self, limit: usize) -> Self {
+        self.max_pending_incoming_connections = limit;
+        self
+    }
+
     /// Configures the maximum number of incoming connections that can be established.
     pub fn max_incoming_connections(mut self, limit: Option<usize>) -> Self {
         self.max_incoming_connections = limit;
@@ -44,6 +65,19 @@ impl ConnectionLimitsConfig {
     pub fn max_outgoing_connections(mut self, limit: Option<usize>) -> Self {
         self.max_outgoing_connections = limit;
         self
+    }
+}
+
+/// Reserves opening capacity until acceptance or removal.
+#[derive(Debug)]
+pub(crate) struct InboundConnectionPermit {
+    pub(crate) _permit: OwnedSemaphorePermit,
+    pub(crate) deadline: Instant,
+}
+
+impl InboundConnectionPermit {
+    pub(crate) fn is_expired(&self) -> bool {
+        Instant::now() >= self.deadline
     }
 }
 
@@ -59,6 +93,8 @@ pub enum ConnectionLimitsError {
 /// Connection limits.
 #[derive(Debug, Clone)]
 pub struct ConnectionLimits {
+    /// Shared capacity for incoming openings.
+    pub(super) pending_incoming_connections: Arc<Semaphore>,
     /// Configuration for the connection limits.
     config: ConnectionLimitsConfig,
 
@@ -75,6 +111,9 @@ impl ConnectionLimits {
         let max_outgoing_connections = config.max_outgoing_connections.unwrap_or(0);
 
         Self {
+            pending_incoming_connections: Arc::new(Semaphore::new(
+                config.max_pending_incoming_connections,
+            )),
             config,
             incoming_connections: HashSet::with_capacity(max_incoming_connections),
             outgoing_connections: HashSet::with_capacity(max_outgoing_connections),

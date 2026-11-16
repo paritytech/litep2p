@@ -30,6 +30,7 @@ use crate::{
     substream,
     transport::{
         common::listener::{AddressType, DnsType},
+        manager::limits::InboundConnectionPermit,
         tcp::substream::Substream,
         Endpoint,
     },
@@ -112,6 +113,9 @@ enum ConnectionError {
 
 /// Connection context for an opened connection that hasn't yet started its event loop.
 pub struct NegotiatedConnection {
+    /// Inbound opening capacity, held until acceptance.
+    pub(super) opening_permit: Option<InboundConnectionPermit>,
+
     /// Yamux connection.
     connection: crate::yamux::ControlledConnection<NoiseSocket<Compat<TcpStream>>>,
 
@@ -203,6 +207,7 @@ impl TcpConnection {
         next_substream_id: Arc<AtomicUsize>,
     ) -> Self {
         let NegotiatedConnection {
+            opening_permit: _,
             connection,
             control,
             peer,
@@ -505,6 +510,7 @@ impl TcpConnection {
         };
 
         Ok(NegotiatedConnection {
+            opening_permit: None,
             peer,
             control,
             connection,

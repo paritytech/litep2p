@@ -180,7 +180,7 @@ pub(crate) struct WebRtcTransport {
     /// Datagram buffer size.
     datagram_buffer_size: usize,
 
-    /// Connection open timeout.
+    /// Absolute connection opening timeout.
     connection_open_timeout: Duration,
 
     /// Connected peers.
@@ -499,7 +499,10 @@ impl WebRtcTransport {
         );
 
         // create new `Rtc` object for the peer and give it the received STUN message
-        let deadline = Instant::now() + self.connection_open_timeout;
+        let Some(permit) = self.context.try_acquire_inbound_permit(self.connection_open_timeout)
+        else {
+            return Ok(false);
+        };
         let (rtc, noise_channel_id) = self.make_rtc(ufrag, pass, &addrs)?;
 
         let connection_id = self.context.next_connection_id();
@@ -510,7 +513,7 @@ impl WebRtcTransport {
             self.context.keypair.clone(),
             addrs,
             socket.clone(),
-            deadline,
+            permit,
         );
         connection.on_input(contents)?;
         self.opening.insert(addrs, connection);
@@ -943,6 +946,11 @@ mod tests {
         socket: Arc<WebRtcSocket>,
         deadline: Instant,
     ) -> ConnectionId {
+        let mut permit = transport
+            .context
+            .try_acquire_inbound_permit(transport.connection_open_timeout)
+            .unwrap();
+        permit.deadline = deadline;
         let (rtc, channel_id) = transport.make_rtc("user", "password", &addrs).unwrap();
         let connection_id = transport.context.next_connection_id();
         transport.opening.insert(
@@ -954,7 +962,7 @@ mod tests {
                 transport.context.keypair.clone(),
                 addrs,
                 socket,
-                deadline,
+                permit,
             ),
         );
         connection_id
@@ -1130,6 +1138,194 @@ mod tests {
             transport.listener.poll_recv_from(&mut cx, &mut transport.read_buffer),
             Poll::Ready(Ok(_))
         ));
+    }
+
+    async fn opening_transport(limit: usize) -> (WebRtcTransport, Arc<WebRtcSocket>, AddressPair) {
+        let manager = crate::transport::manager::TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                crate::transport::ConnectionLimitsConfig::default()
+                    .max_pending_incoming_connections(limit),
+            )
+            .build();
+        let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
+        let (transport, _) = WebRtcTransport::new(
+            handle,
+            Config {
+                listen_addresses: vec!["/ip4/127.0.0.1/udp/0/webrtc-direct".parse().unwrap()],
+                ..Default::default()
+            },
+            resolver,
+        )
+        .unwrap();
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addrs = AddressPair {
+            local: socket.local_addr().unwrap(),
+            remote: "127.0.0.1:40000".parse().unwrap(),
+        };
+        (
+            transport,
+            Arc::new(WebRtcSocket::new(socket).unwrap()),
+            addrs,
+        )
+    }
+
+    fn opening_datagram() -> Vec<u8> {
+        let message = str0m::ice::StunMessage::binding_request(
+            "user:password",
+            str0m::ice::TransId::new(),
+            true,
+            1,
+            1,
+            false,
+        );
+        let mut buffer = vec![0; 256];
+        // Admission precedes ICE authentication.
+        let len = message.to_bytes(Some(b"password"), &mut buffer, |_, _| [0; 20]).unwrap();
+        buffer.truncate(len);
+        buffer
+    }
+
+    fn queue_established_event(
+        transport: &mut WebRtcTransport,
+        addrs: AddressPair,
+    ) -> ConnectionId {
+        let connection_id = *transport.opening[&addrs].connection_id();
+        let peer = PeerId::random();
+        let endpoint = Endpoint::listener(Multiaddr::empty(), connection_id);
+        transport.connections.insert(connection_id, (peer, addrs, endpoint.clone()));
+        transport
+            .pending_events
+            .push_back(TransportEvent::ConnectionEstablished { peer, endpoint });
+        connection_id
+    }
+
+    #[tokio::test]
+    async fn opening_admission_and_existing_session_traffic() {
+        let (mut transport, socket, addrs) = opening_transport(1).await;
+        let other = transport
+            .context
+            .try_acquire_inbound_permit(transport.connection_open_timeout)
+            .unwrap();
+        assert!(!transport.on_socket_input(addrs, &socket, opening_datagram()).unwrap());
+        assert!(transport.opening.is_empty());
+        drop(other);
+
+        let before = Instant::now();
+        assert!(transport.on_socket_input(addrs, &socket, opening_datagram()).unwrap());
+        let deadline = transport.opening[&addrs].permit.deadline;
+        assert!(deadline >= before + Duration::from_secs(10));
+        assert!(deadline <= Instant::now() + Duration::from_secs(10));
+        assert!(matches!(
+            transport.poll_connection(&addrs),
+            ConnectionEvent::Timeout { .. }
+        ));
+
+        let another = AddressPair {
+            remote: "127.0.0.1:40001".parse().unwrap(),
+            ..addrs
+        };
+        assert!(!transport.on_socket_input(another, &socket, opening_datagram()).unwrap());
+        assert!(transport.on_socket_input(addrs, &socket, opening_datagram()).unwrap());
+        assert_eq!(transport.opening.len(), 1);
+        assert_eq!(transport.opening[&addrs].permit.deadline, deadline);
+    }
+
+    #[tokio::test]
+    async fn openings_share_a_global_budget_without_a_per_ip_limit() {
+        let (mut transport, socket, addrs) = opening_transport(2).await;
+        assert!(transport.on_socket_input(addrs, &socket, opening_datagram()).unwrap());
+        let another = AddressPair {
+            remote: "127.0.0.1:40001".parse().unwrap(),
+            ..addrs
+        };
+        assert!(transport.on_socket_input(another, &socket, opening_datagram()).unwrap());
+        let third = AddressPair {
+            remote: "127.0.0.2:40000".parse().unwrap(),
+            ..addrs
+        };
+        assert!(!transport.on_socket_input(third, &socket, opening_datagram()).unwrap());
+        let capacity = transport.context.pending_incoming_connections.clone();
+        assert_eq!(capacity.available_permits(), 0);
+        drop(transport);
+        assert_eq!(capacity.available_permits(), 2);
+    }
+
+    #[tokio::test]
+    async fn opening_expiry_removes_timers_and_stale_events() {
+        let (mut transport, socket, addrs) = opening_transport(1).await;
+        assert!(transport.on_socket_input(addrs, &socket, opening_datagram()).unwrap());
+        queue_established_event(&mut transport, addrs);
+        transport.timeouts.insert(addrs, Delay::new(Duration::from_secs(60)));
+        transport.opening.get_mut(&addrs).unwrap().permit.deadline = Instant::now();
+
+        assert!(futures::poll!(transport.next()).is_pending());
+        assert!(transport.opening.is_empty());
+        assert!(transport.connections.is_empty());
+        assert!(transport.timeouts.is_empty());
+        assert!(transport.pending_events.is_empty());
+        assert_eq!(
+            transport.context.pending_incoming_connections.available_permits(),
+            1
+        );
+        assert!(transport.on_socket_input(addrs, &socket, opening_datagram()).unwrap());
+    }
+
+    #[tokio::test]
+    async fn opening_timeout_is_capped_by_absolute_deadline() {
+        let (mut transport, socket, addrs) = opening_transport(1).await;
+        assert!(transport.on_socket_input(addrs, &socket, opening_datagram()).unwrap());
+        transport.opening.get_mut(&addrs).unwrap().permit.deadline =
+            Instant::now() + Duration::from_millis(20);
+        let ConnectionEvent::Timeout { timeout } = transport.poll_connection(&addrs) else {
+            panic!("expected a timeout");
+        };
+        assert!(timeout <= transport.opening[&addrs].deadline());
+        // Force a protocol timer to fire before the absolute deadline.
+        transport.timeouts.insert(addrs, Delay::new(Duration::ZERO));
+        let start = Instant::now();
+
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            futures::future::poll_fn(|cx| {
+                assert!(Pin::new(&mut transport).poll_next(cx).is_pending());
+                if transport.opening.is_empty() {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(start.elapsed() < Duration::from_millis(500));
+        assert_eq!(
+            transport.context.pending_incoming_connections.available_permits(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn opening_rejection_and_failed_acceptance_release_capacity() {
+        let (mut transport, socket, addrs) = opening_transport(1).await;
+        for accept in [false, true] {
+            assert!(transport.on_socket_input(addrs, &socket, opening_datagram()).unwrap());
+            let connection_id = queue_established_event(&mut transport, addrs);
+            transport.timeouts.insert(addrs, Delay::new(Duration::from_secs(60)));
+            if accept {
+                assert!(transport.accept(connection_id).is_err());
+            } else {
+                transport.reject(connection_id).unwrap();
+            }
+            assert!(transport.opening.is_empty());
+            assert!(transport.timeouts.is_empty());
+            assert!(transport.connections.is_empty());
+            assert!(transport.pending_events.is_empty());
+            assert_eq!(
+                transport.context.pending_incoming_connections.available_permits(),
+                1
+            );
+        }
     }
 
     /// A STUN-shaped datagram of `len` bytes, carrying the magic cookie.

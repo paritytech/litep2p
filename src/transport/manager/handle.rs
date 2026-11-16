@@ -26,6 +26,7 @@ use crate::{
     protocol::{InnerTransportEvent, ProtocolSet},
     transport::manager::{
         address::AddressRecord,
+        limits::InboundConnectionPermit,
         peer_state::StateDialResult,
         protocols::WeakProtocolRegistry,
         types::{PeerContext, SupportedTransport},
@@ -37,7 +38,10 @@ use crate::{
 
 use multiaddr::{Multiaddr, Protocol};
 use parking_lot::RwLock;
-use tokio::sync::mpsc::{error::TrySendError, Sender};
+use tokio::sync::{
+    mpsc::{error::TrySendError, Sender},
+    Semaphore,
+};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -46,6 +50,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::{Duration, Instant},
 };
 
 /// Inner commands sent from [`TransportManagerHandle`] to
@@ -359,6 +364,7 @@ impl TransportManagerHandle {
 }
 
 pub struct TransportHandle {
+    pub(crate) pending_incoming_connections: Arc<Semaphore>,
     pub keypair: Keypair,
     pub tx: Sender<TransportManagerEvent>,
     pub protocols: ProtocolRegistry,
@@ -369,6 +375,18 @@ pub struct TransportHandle {
 }
 
 impl TransportHandle {
+    /// Reserve inbound opening capacity without waiting.
+    pub(crate) fn try_acquire_inbound_permit(
+        &self,
+        timeout: Duration,
+    ) -> Option<InboundConnectionPermit> {
+        let permit = self.pending_incoming_connections.clone().try_acquire_owned().ok()?;
+        Some(InboundConnectionPermit {
+            _permit: permit,
+            deadline: Instant::now() + timeout,
+        })
+    }
+
     pub fn protocol_set(&self, connection_id: ConnectionId) -> ProtocolSet {
         ProtocolSet::new(
             connection_id,
@@ -396,6 +414,48 @@ mod tests {
     use super::*;
     use parking_lot::lock_api::RwLock;
     use tokio::sync::mpsc::{channel, Receiver};
+
+    #[test]
+    fn default_inbound_opening_capacity() {
+        let manager = crate::transport::manager::TransportManagerBuilder::new().build();
+        let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        let permits: Vec<_> = (0..256)
+            .map(|_| handle.try_acquire_inbound_permit(Duration::from_secs(10)).unwrap())
+            .collect();
+        assert!(handle.try_acquire_inbound_permit(Duration::from_secs(10)).is_none());
+        drop(permits);
+        assert_eq!(handle.pending_incoming_connections.available_permits(), 256);
+    }
+
+    #[test]
+    fn inbound_opening_capacity_is_shared_and_released_on_drop() {
+        let manager = crate::transport::manager::TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                crate::transport::ConnectionLimitsConfig::default()
+                    .max_pending_incoming_connections(1),
+            )
+            .build();
+        let first = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        let second = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        let permit = first.try_acquire_inbound_permit(Duration::from_secs(10)).unwrap();
+        assert!(!permit.is_expired());
+        assert!(second.try_acquire_inbound_permit(Duration::from_secs(10)).is_none());
+        drop(permit);
+        let permit = second.try_acquire_inbound_permit(Duration::ZERO).unwrap();
+        assert!(permit.is_expired());
+    }
+
+    #[test]
+    fn zero_inbound_opening_capacity() {
+        let manager = crate::transport::manager::TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                crate::transport::ConnectionLimitsConfig::default()
+                    .max_pending_incoming_connections(0),
+            )
+            .build();
+        let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        assert!(handle.try_acquire_inbound_permit(Duration::from_secs(10)).is_none());
+    }
 
     fn make_transport_manager_handle() -> (
         TransportManagerHandle,

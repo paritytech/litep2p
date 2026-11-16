@@ -140,9 +140,14 @@ impl WebSocketTransport {
         connection: TcpStream,
         address: SocketAddr,
     ) {
+        let Some(permit) =
+            self.context.try_acquire_inbound_permit(self.config.connection_open_timeout)
+        else {
+            return;
+        };
+        let deadline = tokio::time::Instant::from_std(permit.deadline);
         let keypair = self.context.keypair.clone();
         let yamux_config = self.config.yamux_config.clone();
-        let connection_open_timeout = self.config.connection_open_timeout;
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
         let substream_open_timeout = self.config.substream_open_timeout;
@@ -152,7 +157,7 @@ impl WebSocketTransport {
             .with(Protocol::Ws(std::borrow::Cow::Borrowed("/")));
 
         self.pending_connections.push(Box::pin(async move {
-            match tokio::time::timeout(connection_open_timeout, async move {
+            match tokio::time::timeout_at(deadline, async move {
                 WebSocketConnection::accept_connection(
                     connection,
                     connection_id,
@@ -170,7 +175,10 @@ impl WebSocketTransport {
             {
                 Err(_) => Err((connection_id, DialError::Timeout)),
                 Ok(Err(error)) => Err(error),
-                Ok(Ok(result)) => Ok(result),
+                Ok(Ok(mut result)) => {
+                    result.opening_permit = Some(permit);
+                    Ok(result)
+                }
             }
         }));
     }
@@ -398,10 +406,13 @@ impl Transport for WebSocketTransport {
         &mut self,
         connection_id: ConnectionId,
     ) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
-        let context = self
+        let mut context = self
             .pending_open
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
+        if context.opening_permit.take().is_some_and(|permit| permit.is_expired()) {
+            return Err(Error::Timeout);
+        }
         let mut protocol_set = self.context.protocol_set(connection_id);
         let bandwidth_sink = self.context.bandwidth_sink.clone();
         let substream_open_timeout = self.config.substream_open_timeout;
@@ -618,6 +629,33 @@ impl Stream for WebSocketTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
+            match connection {
+                Ok(connection) => {
+                    let peer = connection.peer();
+                    let endpoint = connection.endpoint();
+                    self.pending_dials.remove(&connection.connection_id());
+                    self.pending_open.insert(connection.connection_id(), connection);
+
+                    return Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                        peer,
+                        endpoint,
+                    }));
+                }
+                Err((connection_id, error)) => {
+                    if let Some(address) = self.pending_dials.remove(&connection_id) {
+                        return Poll::Ready(Some(TransportEvent::DialFailure {
+                            connection_id,
+                            address,
+                            error,
+                        }));
+                    } else {
+                        tracing::debug!(target: LOG_TARGET, ?error, ?connection_id, "Pending inbound connection failed");
+                    }
+                }
+            }
+        }
+
         if let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
             return match event {
                 None => {
@@ -725,33 +763,95 @@ impl Stream for WebSocketTransport {
             }
         }
 
-        while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
-            match connection {
-                Ok(connection) => {
-                    let peer = connection.peer();
-                    let endpoint = connection.endpoint();
-                    self.pending_dials.remove(&connection.connection_id());
-                    self.pending_open.insert(connection.connection_id(), connection);
-
-                    return Poll::Ready(Some(TransportEvent::ConnectionEstablished {
-                        peer,
-                        endpoint,
-                    }));
-                }
-                Err((connection_id, error)) => {
-                    if let Some(address) = self.pending_dials.remove(&connection_id) {
-                        return Poll::Ready(Some(TransportEvent::DialFailure {
-                            connection_id,
-                            address,
-                            error,
-                        }));
-                    } else {
-                        tracing::debug!(target: LOG_TARGET, ?error, ?connection_id, "Pending inbound connection failed");
-                    }
-                }
-            }
-        }
-
         Poll::Pending
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn inbound_socket() -> (TcpStream, TcpStream, SocketAddr) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (client, server) = tokio::join!(
+            TcpStream::connect(listener.local_addr().unwrap()),
+            listener.accept()
+        );
+        let (server, address) = server.unwrap();
+        (client.unwrap(), server, address)
+    }
+
+    #[tokio::test]
+    async fn inbound_opening_capacity_and_failure_cleanup() {
+        let manager = crate::transport::manager::TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                crate::transport::ConnectionLimitsConfig::default()
+                    .max_pending_incoming_connections(1),
+            )
+            .build();
+        let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        let capacity = handle.pending_incoming_connections.clone();
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
+        let (mut transport, _) = WebSocketTransport::new(
+            handle,
+            Config {
+                listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
+                ..Default::default()
+            },
+            resolver,
+        )
+        .unwrap();
+        let (client, server, address) = inbound_socket().await;
+        transport.on_inbound_connection(ConnectionId::from(0usize), server, address);
+        assert_eq!(capacity.available_permits(), 0);
+
+        let (_other_client, server, address) = inbound_socket().await;
+        transport.on_inbound_connection(ConnectionId::from(1usize), server, address);
+        assert_eq!(transport.pending_connections.len(), 1);
+
+        drop(client);
+        assert!(transport.pending_connections.next().await.unwrap().is_err());
+        assert_eq!(capacity.available_permits(), 1);
+
+        let (_client, server, address) = inbound_socket().await;
+        transport.on_inbound_connection(ConnectionId::from(2usize), server, address);
+        assert_eq!(capacity.available_permits(), 0);
+        drop(transport);
+        assert_eq!(capacity.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn inbound_opening_deadline_is_serviced_before_accepting_more_sockets() {
+        let manager = crate::transport::manager::TransportManagerBuilder::new().build();
+        let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        let capacity = handle.pending_incoming_connections.clone();
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
+        let (mut transport, listen_addresses) = WebSocketTransport::new(
+            handle,
+            Config {
+                listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
+                connection_open_timeout: Duration::from_millis(20),
+                ..Default::default()
+            },
+            resolver,
+        )
+        .unwrap();
+        let (_client, server, address) = inbound_socket().await;
+        transport.on_inbound_connection(ConnectionId::from(0usize), server, address);
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        let port = listen_addresses[0]
+            .iter()
+            .find_map(|protocol| match protocol {
+                Protocol::Tcp(port) => Some(port),
+                _ => None,
+            })
+            .unwrap();
+        let _incoming = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        assert!(matches!(
+            transport.next().await,
+            Some(TransportEvent::PendingInboundConnection { .. })
+        ));
+        assert!(transport.pending_connections.is_empty());
+        assert_eq!(capacity.available_permits(), 256);
     }
 }

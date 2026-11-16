@@ -446,6 +446,10 @@ impl TransportManager {
     /// Acquire `TransportHandle`.
     pub fn transport_handle(&self, executor: Arc<dyn Executor>) -> TransportHandle {
         TransportHandle {
+            pending_incoming_connections: self
+                .connection_limits
+                .pending_incoming_connections
+                .clone(),
             tx: self.event_tx.clone(),
             executor,
             keypair: self.keypair.clone(),

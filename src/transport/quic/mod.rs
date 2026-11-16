@@ -655,6 +655,7 @@ mod tests {
         let (event_tx1, _event_rx1) = channel(64);
 
         let handle1 = TransportHandle {
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(256)),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -685,6 +686,7 @@ mod tests {
         let (event_tx2, _event_rx2) = channel(64);
 
         let handle2 = TransportHandle {
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(256)),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
