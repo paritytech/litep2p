@@ -13,7 +13,6 @@ use crate::yamux::{Connection, ConnectionError, Result, Stream, MAX_ACK_BACKLOG}
 use futures::{
     channel::{mpsc, oneshot},
     prelude::*,
-    stream::FusedStream,
 };
 use std::{
     pin::Pin,
@@ -75,7 +74,7 @@ impl Control {
     pub async fn close(&mut self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         if self.close_sender.send(tx).await.is_err() {
-            // The receiver is closed which means the connection is closing or closed.
+            // The receiver is closed which means the connection is closed.
             return Ok(());
         }
         // A dropped `oneshot::Sender` means the `Connection` is gone,
@@ -129,7 +128,6 @@ where
             let _ = opening.send(Err(ConnectionError::Closed));
         }
         self.open_requests.close();
-        self.close_requests.close();
         self.close_reply = reply;
         self.state = State::Draining;
     }
@@ -179,33 +177,33 @@ where
                         Poll::Pending => return Poll::Pending,
                     }
                 }
-                State::Draining => {
-                    while let Poll::Ready(Some(reply)) = self.close_requests.poll_next_unpin(cx) {
-                        let _ = reply.send(());
+                State::Draining => match self.open_requests.poll_next_unpin(cx) {
+                    Poll::Ready(Some(reply)) => {
+                        let _ = reply.send(Err(ConnectionError::Closed));
                     }
-
-                    match self.open_requests.poll_next_unpin(cx) {
-                        Poll::Ready(Some(reply)) => {
-                            let _ = reply.send(Err(ConnectionError::Closed));
-                        }
-                        // A close racing `start_closing` may be counted but not yet queued.
-                        Poll::Ready(None) if self.close_requests.is_terminated() => {
-                            self.state = State::Closing;
-                        }
-                        Poll::Ready(None) | Poll::Pending => return Poll::Pending,
-                    }
-                }
+                    Poll::Ready(None) => self.state = State::Closing,
+                    Poll::Pending => return Poll::Pending,
+                },
                 State::Closing => {
                     let result = futures::ready!(self.connection.poll_close(cx));
-                    let result = self.error.take().map_or(result, Err);
-                    self.state = State::Closed;
+                    self.error = self.error.take().or(result.err());
+                    self.close_requests.close();
                     if let Some(reply) = self.close_reply.take() {
                         let _ = reply.send(());
                     }
+                    self.state = State::AnsweringCloses;
+                }
+                State::AnsweringCloses => {
+                    // A close racing `close_requests.close()` may be counted but not yet queued.
+                    while let Some(reply) = futures::ready!(self.close_requests.poll_next_unpin(cx))
+                    {
+                        let _ = reply.send(());
+                    }
+                    self.state = State::Closed;
 
-                    return match result {
-                        Ok(()) | Err(ConnectionError::Closed) => Poll::Ready(None),
-                        Err(error) => Poll::Ready(Some(Err(error))),
+                    return match self.error.take() {
+                        None | Some(ConnectionError::Closed) => Poll::Ready(None),
+                        Some(error) => Poll::Ready(Some(Err(error))),
                     };
                 }
                 State::Closed => return Poll::Ready(None),
@@ -216,9 +214,11 @@ where
 
 enum State {
     Idle,
-    /// Answering queued requests, including ones racing `start_closing`, before closing.
+    /// Answering queued opens, including ones racing `start_closing`, before closing.
     Draining,
     Closing,
+    /// Close requests wait for `poll_close`, so their channel is only closed afterwards.
+    AnsweringCloses,
     Closed,
 }
 
@@ -396,6 +396,30 @@ mod tests {
         tokio::spawn(async move { tokio::io::copy(&mut remote, &mut tokio::io::sink()).await });
         assert!(timeout(connection.next()).await.is_none());
         timeout(close).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn racing_and_late_closes_wait_for_connection_to_close() {
+        let (local, mut remote) = tokio::io::duplex(1);
+        let connection = Connection::new(local.compat(), Config::default(), Mode::Client);
+        let (mut control, mut connection) = Control::new(connection);
+        let (mut second, mut third) = (control.clone(), control.clone());
+
+        let mut first = Box::pin(control.close());
+        let mut racing = Box::pin(second.close());
+        assert!(futures::poll!(&mut first).is_pending());
+        assert!(futures::poll!(&mut racing).is_pending());
+        assert!(futures::poll!(connection.next()).is_pending());
+        assert!(futures::poll!(&mut racing).is_pending());
+
+        let mut late = Box::pin(third.close());
+        assert!(futures::poll!(&mut late).is_pending());
+        assert!(futures::poll!(connection.next()).is_pending());
+        assert!(futures::poll!(&mut late).is_pending());
+
+        tokio::spawn(async move { tokio::io::copy(&mut remote, &mut tokio::io::sink()).await });
+        assert!(timeout(connection.next()).await.is_none());
+        timeout(future::try_join_all([first, racing, late])).await.unwrap();
     }
 
     #[tokio::test]
