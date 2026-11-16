@@ -479,8 +479,19 @@ impl Kademlia {
     }
 
     // Dropped if the user lags behind, so remote peers can't stall Kademlia (and with it every
-    // connection delivering to its `TransportService`) on a slow consumer.
+    // connection delivering to its `TransportService`) on a slow consumer. Unsolicited events,
+    // whose rate remote peers control, may only fill half of the channel so they can't crowd out
+    // query results and routing table updates.
     fn report_remote_triggered_event(&self, event: KademliaEvent) {
+        let unsolicited = std::matches!(
+            event,
+            KademliaEvent::IncomingRecord { .. } | KademliaEvent::IncomingProvider { .. }
+        );
+        if unsolicited && self.event_tx.capacity() <= self.event_tx.max_capacity() / 2 {
+            tracing::debug!(target: LOG_TARGET, "event channel half full, dropping unsolicited event");
+            return;
+        }
+
         if let Err(TrySendError::Full(_)) = self.event_tx.try_send(event) {
             tracing::debug!(target: LOG_TARGET, "event channel clogged, dropping remote-triggered event");
         }
@@ -2028,5 +2039,57 @@ mod tests {
                 .expect("remote-triggered event must not block kademlia")
                 .unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn incoming_record_flood_does_not_crowd_out_routing_table_updates() {
+        let (mut kademlia, mut context, _manager) = make_kademlia();
+
+        let responder_peer = PeerId::random();
+        let responder = KademliaPeer::new(
+            responder_peer,
+            vec![Multiaddr::from_str("/ip4/8.8.8.8/tcp/30333").unwrap()],
+            ConnectionType::NotConnected,
+        );
+        kademlia.engine.start_find_node(
+            QueryId(0),
+            PeerId::random(),
+            VecDeque::from([responder.clone()]),
+        );
+        assert!(std::matches!(
+            kademlia.engine.next_action(),
+            Some(QueryAction::SendMessage { .. })
+        ));
+
+        let attacker = PeerId::random();
+        let record = Record::new(RecordKey::from(vec![1, 2, 3]), vec![4, 5, 6]);
+        let flood = KademliaMessage::put_value(record).to_vec();
+        let response = KademliaMessage::find_node_response(PeerId::random().to_bytes(), vec![]);
+        let messages =
+            std::iter::repeat_n((attacker, None, flood), kademlia.event_tx.max_capacity()).chain(
+                std::iter::once((responder_peer, Some(QueryId(0)), response.to_vec())),
+            );
+
+        for (peer, query_id, message) in messages {
+            let mut substream = MockSubstream::new();
+            substream.expect_poll_close().returning(|_| Poll::Ready(Ok(())));
+            kademlia
+                .on_message_received(
+                    peer,
+                    query_id,
+                    BytesMut::from(&message[..]),
+                    Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
+                )
+                .await
+                .unwrap();
+        }
+
+        let mut routing_table_updates = Vec::new();
+        while let Ok(event) = context.event_rx.try_recv() {
+            if let KademliaEvent::RoutingTableUpdate { peers } = event {
+                routing_table_updates.push(peers);
+            }
+        }
+        assert_eq!(routing_table_updates, vec![vec![responder_peer]]);
     }
 }
