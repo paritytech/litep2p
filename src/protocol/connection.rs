@@ -82,6 +82,19 @@ impl ConnectionHandle {
         }
     }
 
+    /// A copy of the handle that does not keep the connection open.
+    pub(crate) fn inactive(&self) -> Self {
+        let connection = match &self.connection {
+            ConnectionType::Active(active) => active.downgrade(),
+            ConnectionType::Inactive(inactive) => inactive.clone(),
+        };
+
+        Self {
+            connection_id: self.connection_id,
+            connection: ConnectionType::Inactive(connection),
+        }
+    }
+
     /// Get reference to connection ID.
     pub fn connection_id(&self) -> &ConnectionId {
         &self.connection_id
