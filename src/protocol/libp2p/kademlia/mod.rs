@@ -134,6 +134,7 @@ impl PeerContext {
 /// Main Kademlia object.
 pub(crate) struct Kademlia {
     /// Transport service.
+    // Must precede `event_tx`: names are unregistered before `KademliaHandle::shutdown` returns.
     service: TransportService,
 
     /// Local Kademlia key.

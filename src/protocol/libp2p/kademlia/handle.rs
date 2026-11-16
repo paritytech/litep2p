@@ -518,6 +518,19 @@ impl KademliaHandle {
         self.cmd_tx.try_send(KademliaCommand::StoreRecord { record }).map_err(|_| ())
     }
 
+    /// Stop the instance and wait until it has exited and released its protocol names.
+    pub async fn shutdown(self) {
+        let Self {
+            cmd_tx,
+            mut event_rx,
+            ..
+        } = self;
+        drop(cmd_tx);
+
+        // the instance drops its event sender after unregistering its protocol names
+        while event_rx.recv().await.is_some() {}
+    }
+
     #[cfg(feature = "fuzz")]
     /// Expose functionality for fuzzing
     pub async fn fuzz_send_message(&mut self, command: KademliaCommand) -> crate::Result<()> {

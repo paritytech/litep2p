@@ -511,7 +511,8 @@ impl Litep2p {
     /// The instance uses the connections that are already established.
     ///
     /// Dropping the [`kademlia::KademliaHandle`] stops the instance, which then unregisters its
-    /// protocol names. They can be registered again once it has stopped.
+    /// protocol names. [`kademlia::KademliaHandle::shutdown`] resolves once they can be
+    /// registered again.
     ///
     /// Fails with [`Error::ProtocolAlreadyExists`] if one of the instance's protocol names is
     /// already in use.
