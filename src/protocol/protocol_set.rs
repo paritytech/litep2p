@@ -267,13 +267,14 @@ impl ProtocolSet {
 
     /// Report to `protocol` that substream was opened for `peer`.
     ///
-    /// `substream` builds the substream with the codec of the protocol it's reported to.
+    /// `substream` builds the substream with the codec of the protocol it's reported to and, if
+    /// that protocol keeps connections alive, the permit to hold for the substream's lifetime.
     pub async fn report_substream_open(
         &mut self,
         peer: PeerId,
         protocol: ProtocolName,
         direction: Direction,
-        substream: impl FnOnce(ProtocolCodec) -> Substream,
+        substream: impl FnOnce(ProtocolCodec, Option<Permit>) -> Substream,
         opening_permit: Permit,
     ) -> Result<(), SubstreamError> {
         tracing::debug!(target: LOG_TARGET, %protocol, ?peer, ?direction, "substream opened");
@@ -289,12 +290,13 @@ impl ProtocolSet {
             return Ok(());
         }
 
+        let lifetime_permit = protocol_context.keep_alive.then(|| opening_permit.clone());
         let event = InnerTransportEvent::SubstreamOpened {
             peer,
             fallback: (main_protocol != protocol).then_some(protocol),
             protocol: main_protocol,
             direction,
-            substream: substream(protocol_context.codec),
+            substream: substream(protocol_context.codec, lifetime_permit),
             connection_id: *self.connection.connection_id(),
             opening_permit,
         };
@@ -451,7 +453,7 @@ mod tests {
                 PeerId::random(),
                 ProtocolName::from("/notif/1/fallback/2"),
                 Direction::Inbound,
-                |_| {
+                |_, _| {
                     Substream::new_mock(
                         PeerId::random(),
                         SubstreamId::from(0usize),
@@ -551,7 +553,7 @@ mod tests {
                 PeerId::random(),
                 ProtocolName::from("/notif/1"),
                 Direction::Inbound,
-                |_| {
+                |_, _| {
                     Substream::new_mock(
                         PeerId::random(),
                         SubstreamId::from(0usize),
@@ -605,7 +607,7 @@ mod tests {
                 PeerId::random(),
                 ProtocolName::from("/notif/1/fallback/2"),
                 Direction::Inbound,
-                |_| {
+                |_, _| {
                     Substream::new_mock(
                         PeerId::random(),
                         SubstreamId::from(0usize),
@@ -713,7 +715,7 @@ mod tests {
                 PeerId::random(),
                 ProtocolName::from("/notif/1"),
                 Direction::Inbound,
-                |_| {
+                |_, _| {
                     Substream::new_mock(
                         PeerId::random(),
                         SubstreamId::from(0usize),
@@ -828,7 +830,7 @@ mod tests {
                 PeerId::random(),
                 protocol,
                 Direction::Inbound,
-                |_| {
+                |_, _| {
                     Substream::new_mock(
                         PeerId::random(),
                         SubstreamId::from(0usize),
@@ -967,7 +969,7 @@ mod tests {
                 PeerId::random(),
                 protocol,
                 Direction::Inbound,
-                |codec| tcp_substream(outbound, codec),
+                |codec, _| tcp_substream(outbound, codec),
                 permit,
             )
             .await
@@ -1020,7 +1022,7 @@ mod tests {
                     PeerId::random(),
                     protocol.clone(),
                     direction,
-                    |_| {
+                    |_, _| {
                         Substream::new_mock(
                             PeerId::random(),
                             SubstreamId::from(0usize),

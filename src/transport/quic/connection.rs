@@ -330,7 +330,7 @@ impl QuicConnection {
                             let lifetime_permit =
                                 substream.keep_alive.then(|| opening_permit.clone());
 
-                            let substream = |codec| substream::Substream::new_quic(
+                            let substream = |codec, _| substream::Substream::new_quic(
                                 self.peer,
                                 substream_id,
                                 Substream::new(
