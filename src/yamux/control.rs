@@ -175,7 +175,7 @@ where
                         Err(error) => Poll::Ready(Some(Err(error))),
                     };
                 }
-                State::Closed => return Poll::Pending,
+                State::Closed => return Poll::Ready(None),
             }
         }
     }
@@ -361,5 +361,24 @@ mod tests {
         let (control, mut connection, _remote) = controlled();
         drop(control);
         assert!(connection.next().now_or_never().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn connection_ends_after_close_error() {
+        let (reader, _remote_writer) = tokio::io::duplex(1 << 20);
+        let (writer, remote_reader) = tokio::io::duplex(1 << 20);
+
+        let socket = tokio::io::join(reader, writer).compat();
+        let connection = Connection::new(socket, Config::default(), Mode::Client);
+        let (mut control, mut connection) = Control::new(connection);
+
+        assert!(futures::poll!(connection.next()).is_pending());
+        drop(remote_reader);
+
+        let close = tokio::spawn(async move { control.close().await });
+        assert!(matches!(timeout(connection.next()).await, Some(Err(_))));
+        timeout(close).await.unwrap().unwrap();
+
+        assert!(timeout(connection.next()).await.is_none());
     }
 }
