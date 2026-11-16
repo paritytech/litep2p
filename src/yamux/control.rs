@@ -39,8 +39,11 @@ impl Control {
 
         let control = Control { sender };
         let connection = ControlledConnection {
-            state: State::Idle(connection),
+            connection,
+            state: State::Idle,
             commands: receiver,
+            opening: None,
+            close_reply: None,
         };
 
         (control, connection)
@@ -69,149 +72,110 @@ impl Control {
 
 /// Wraps a [`Connection`] which can be controlled with a [`Control`].
 pub struct ControlledConnection<T> {
-    state: State<T>,
+    connection: Connection<T>,
+    state: State,
     commands: mpsc::Receiver<ControlCommand>,
+    opening: Option<oneshot::Sender<Result<Stream>>>,
+    /// Answered once the connection is closed if the close was requested by a [`Control`].
+    close_reply: Option<oneshot::Sender<()>>,
 }
 
 impl<T> ControlledConnection<T>
 where
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    /// Returns `true` if the pending open has been answered or canceled.
+    fn poll_opening(&mut self, cx: &mut Context<'_>) -> bool {
+        let Some(mut reply) = self.opening.take() else {
+            return false;
+        };
+
+        if reply.poll_canceled(cx).is_ready() {
+            return true;
+        }
+
+        match self.connection.poll_new_outbound(cx) {
+            Poll::Ready(stream) => {
+                let _ = reply.send(stream);
+                true
+            }
+            Poll::Pending => {
+                self.opening = Some(reply);
+                false
+            }
+        }
+    }
+
     fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Stream>>> {
         loop {
-            match std::mem::replace(&mut self.state, State::Poisoned) {
-                State::Idle(mut connection) => {
-                    match connection.poll_next_inbound(cx) {
-                        Poll::Ready(maybe_stream) => {
-                            // Transport layers will close the connection on the first
-                            // substream error. The `connection.poll_next_inbound` should
-                            // not be called again after returning an error. Instead, we
-                            // must close the connection gracefully.
-                            match maybe_stream.as_ref() {
-                                Some(Err(error)) => {
-                                    tracing::debug!(target: LOG_TARGET, ?error, "Inbound stream error, closing connection");
+            match self.state {
+                State::Idle => {
+                    // Retry before `poll_next_inbound`, which returns early for every inbound
+                    // stream and would otherwise starve the open.
+                    self.poll_opening(cx);
 
-                                    self.state = State::Closing {
-                                        reply: None,
-                                        inner: Closing::DrainingControlCommands { connection },
-                                    };
-                                }
-                                other => {
-                                    tracing::debug!(target: LOG_TARGET, ?other, "Inbound stream reset state to idle");
-                                    self.state = State::Idle(connection)
-                                }
-                            }
+                    match self.connection.poll_next_inbound(cx) {
+                        Poll::Ready(Some(Ok(stream))) => return Poll::Ready(Some(Ok(stream))),
+                        // Transport layers will close the connection on the first substream
+                        // error. `poll_next_inbound` must not be called again after it returns an
+                        // error, so close the connection instead.
+                        Poll::Ready(Some(Err(error))) => {
+                            tracing::debug!(target: LOG_TARGET, ?error, "Inbound stream error, closing connection");
 
-                            return Poll::Ready(maybe_stream);
+                            self.state = State::Draining;
+                            return Poll::Ready(Some(Err(error)));
                         }
+                        Poll::Ready(None) => return Poll::Ready(None),
                         Poll::Pending => {}
+                    }
+
+                    // Local drops and remote RST/FIN on unacked streams free the ACK backlog
+                    // inside `poll_next_inbound` without waking the pending open.
+                    if self.poll_opening(cx) {
+                        continue;
+                    }
+
+                    // Queued commands wait until the pending open is answered or canceled.
+                    if self.opening.is_some() {
+                        return Poll::Pending;
                     }
 
                     match self.commands.poll_next_unpin(cx) {
-                        Poll::Ready(Some(ControlCommand::OpenStream(reply))) => {
-                            self.state = State::OpeningNewStream { reply, connection };
-                            continue;
-                        }
+                        Poll::Ready(Some(ControlCommand::OpenStream(reply))) =>
+                            self.opening = Some(reply),
                         Poll::Ready(Some(ControlCommand::CloseConnection(reply))) => {
                             self.commands.close();
-
-                            self.state = State::Closing {
-                                reply: Some(reply),
-                                inner: Closing::DrainingControlCommands { connection },
-                            };
-                            continue;
+                            self.close_reply = Some(reply);
+                            self.state = State::Draining;
                         }
-                        Poll::Ready(None) => {
-                            // Last `Control` sender was dropped, close te connection.
-                            self.state = State::Closing {
-                                reply: None,
-                                inner: Closing::ClosingConnection { connection },
-                            };
-                            continue;
-                        }
-                        Poll::Pending => {}
+                        // Last `Control` sender was dropped, close the connection.
+                        Poll::Ready(None) => self.state = State::Closing,
+                        Poll::Pending => return Poll::Pending,
                     }
-
-                    self.state = State::Idle(connection);
-                    return Poll::Pending;
                 }
-                State::OpeningNewStream {
-                    reply,
-                    mut connection,
-                } => match connection.poll_new_outbound(cx) {
-                    Poll::Ready(stream) => {
-                        let _ = reply.send(stream);
-
-                        self.state = State::Idle(connection);
-                        continue;
+                State::Draining => match self.commands.poll_next_unpin(cx) {
+                    Poll::Ready(Some(ControlCommand::OpenStream(reply))) => {
+                        let _ = reply.send(Err(ConnectionError::Closed));
                     }
-                    Poll::Pending => {
-                        self.state = State::OpeningNewStream { reply, connection };
-                        return Poll::Pending;
+                    Poll::Ready(Some(ControlCommand::CloseConnection(reply))) => {
+                        let _ = reply.send(());
                     }
+                    Poll::Ready(None) => self.state = State::Closing,
+                    Poll::Pending => return Poll::Pending,
                 },
-                State::Closing {
-                    reply,
-                    inner: Closing::DrainingControlCommands { connection },
-                } => match self.commands.poll_next_unpin(cx) {
-                    Poll::Ready(Some(ControlCommand::OpenStream(new_reply))) => {
-                        let _ = new_reply.send(Err(ConnectionError::Closed));
+                State::Closing => {
+                    let result = futures::ready!(self.connection.poll_close(cx));
+                    self.state = State::Closed;
+                    if let Some(reply) = self.close_reply.take() {
+                        let _ = reply.send(());
+                    }
 
-                        self.state = State::Closing {
-                            reply,
-                            inner: Closing::DrainingControlCommands { connection },
-                        };
-                        continue;
-                    }
-                    Poll::Ready(Some(ControlCommand::CloseConnection(new_reply))) => {
-                        let _ = new_reply.send(());
-
-                        self.state = State::Closing {
-                            reply,
-                            inner: Closing::DrainingControlCommands { connection },
-                        };
-                        continue;
-                    }
-                    Poll::Ready(None) => {
-                        self.state = State::Closing {
-                            reply,
-                            inner: Closing::ClosingConnection { connection },
-                        };
-                        continue;
-                    }
-                    Poll::Pending => {
-                        self.state = State::Closing {
-                            reply,
-                            inner: Closing::DrainingControlCommands { connection },
-                        };
-                        return Poll::Pending;
-                    }
-                },
-                State::Closing {
-                    reply,
-                    inner: Closing::ClosingConnection { mut connection },
-                } => match connection.poll_close(cx) {
-                    Poll::Ready(Ok(())) | Poll::Ready(Err(ConnectionError::Closed)) => {
-                        if let Some(reply) = reply {
-                            let _ = reply.send(());
-                        }
-                        return Poll::Ready(None);
-                    }
-                    Poll::Ready(Err(other)) => {
-                        if let Some(reply) = reply {
-                            let _ = reply.send(());
-                        }
-                        return Poll::Ready(Some(Err(other)));
-                    }
-                    Poll::Pending => {
-                        self.state = State::Closing {
-                            reply,
-                            inner: Closing::ClosingConnection { connection },
-                        };
-                        return Poll::Pending;
-                    }
-                },
-                State::Poisoned => return Poll::Pending,
+                    return match result {
+                        Ok(()) | Err(ConnectionError::Closed) => Poll::Ready(None),
+                        Err(error) => Poll::Ready(Some(Err(error))),
+                    };
+                }
+                State::Closed => return Poll::Pending,
             }
         }
     }
@@ -225,31 +189,12 @@ enum ControlCommand {
     CloseConnection(oneshot::Sender<()>),
 }
 
-/// The state of a [`ControlledConnection`].
-enum State<T> {
-    Idle(Connection<T>),
-    OpeningNewStream {
-        reply: oneshot::Sender<Result<Stream>>,
-        connection: Connection<T>,
-    },
-    Closing {
-        /// A channel to the [`Control`] in case the close was requested. `None` if we are closing
-        /// because the last [`Control`] was dropped.
-        reply: Option<oneshot::Sender<()>>,
-        inner: Closing<T>,
-    },
-    Poisoned,
-}
-
-/// A sub-state of our larger state machine for a [`ControlledConnection`].
-///
-/// Closing connection involves two steps:
-///
-/// 1. Draining and answered all remaining [`Closing::DrainingControlCommands`].
-/// 1. Closing the underlying [`Connection`].
-enum Closing<T> {
-    DrainingControlCommands { connection: Connection<T> },
-    ClosingConnection { connection: Connection<T> },
+enum State {
+    Idle,
+    /// Answering queued requests before closing.
+    Draining,
+    Closing,
+    Closed,
 }
 
 impl<T> futures::Stream for ControlledConnection<T>
@@ -260,5 +205,161 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.get_mut().poll_next(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::yamux::{Config, Mode};
+    use futures::AsyncWriteExt;
+    use std::time::Duration;
+    use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
+
+    type Socket = Compat<tokio::io::DuplexStream>;
+
+    fn controlled() -> (Control, ControlledConnection<Socket>, Socket) {
+        let (local, remote) = tokio::io::duplex(1 << 20);
+        let connection = Connection::new(local.compat(), Config::default(), Mode::Client);
+        let (control, connection) = Control::new(connection);
+        (control, connection, remote.compat())
+    }
+
+    async fn timeout<F: Future>(future: F) -> F::Output {
+        tokio::time::timeout(Duration::from_secs(5), future).await.expect("timed out")
+    }
+
+    /// The remote never ACKs: its inbound streams are kept alive and never written to.
+    /// The connection is kept alive after it ends so dropping it cannot answer requests.
+    async fn saturate_ack_backlog() -> (
+        Control,
+        Vec<Stream>,
+        tokio::sync::mpsc::UnboundedReceiver<Stream>,
+    ) {
+        let (mut control, mut connection, remote) = controlled();
+        tokio::spawn(async move {
+            while connection.next().await.is_some() {}
+            future::pending::<()>().await
+        });
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut remote = Connection::new(remote, Config::default(), Mode::Server);
+        tokio::spawn(async move {
+            while let Some(Ok(stream)) =
+                futures::future::poll_fn(|cx| remote.poll_next_inbound(cx)).await
+            {
+                let _ = tx.send(stream);
+            }
+        });
+
+        let mut outbound = Vec::new();
+        for _ in 0..MAX_ACK_BACKLOG {
+            let mut stream = control.open_stream().await.unwrap();
+            stream.write_all(b"syn").await.unwrap();
+            outbound.push(stream);
+        }
+
+        (control, outbound, rx)
+    }
+
+    /// Spawns an open and checks that it waits for an ACK.
+    async fn pending_open(control: &Control) -> tokio::task::JoinHandle<Result<Stream>> {
+        let mut control = control.clone();
+        let open = tokio::spawn(async move { control.open_stream().await });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!open.is_finished());
+        open
+    }
+
+    #[tokio::test]
+    async fn opens_queue_behind_pending_open() {
+        let (control, _outbound, mut inbound) = saturate_ack_backlog().await;
+        let first = pending_open(&control).await;
+        let second = pending_open(&control).await;
+
+        for _ in 0..2 {
+            inbound.recv().await.unwrap().write_all(b"ack").await.unwrap();
+        }
+
+        assert!(timeout(first).await.unwrap().is_ok());
+        assert!(timeout(second).await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn pending_open_completes_when_unacked_stream_is_dropped() {
+        let (control, mut outbound, _inbound) = saturate_ack_backlog().await;
+        let open = pending_open(&control).await;
+
+        drop(outbound.pop());
+
+        assert!(timeout(open).await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn inbound_streams_do_not_starve_pending_open() {
+        let (mut control, mut connection, mut remote) = controlled();
+
+        let mut outbound = Vec::new();
+        for _ in 0..MAX_ACK_BACKLOG {
+            match future::select(Box::pin(control.open_stream()), connection.next()).await {
+                future::Either::Left((stream, _)) => outbound.push(stream.unwrap()),
+                future::Either::Right(_) => panic!("connection ended"),
+            }
+        }
+
+        let mut pending = Box::pin(control.open_stream());
+        assert!(futures::poll!(&mut pending).is_pending());
+        assert!(futures::poll!(connection.next()).is_pending());
+
+        // ACK for stream 1, then SYNs for remote streams 2, 4 and 6.
+        let mut frames = vec![0, 1, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0];
+        for id in [2, 4, 6] {
+            frames.extend([0, 1, 0, 1, 0, 0, 0, id, 0, 0, 0, 0]);
+        }
+        remote.write_all(&frames).await.unwrap();
+
+        for _ in 0..3 {
+            assert!(matches!(timeout(connection.next()).await, Some(Ok(_))));
+        }
+        assert!(matches!(futures::poll!(&mut pending), Poll::Ready(Ok(_))));
+    }
+
+    #[tokio::test]
+    async fn canceled_pending_open_does_not_open_a_stream() {
+        let (mut control, outbound, mut inbound) = saturate_ack_backlog().await;
+        let last_id = outbound.last().unwrap().id().val();
+
+        let open = pending_open(&control).await;
+        open.abort();
+        let _ = open.await;
+
+        inbound.recv().await.unwrap().write_all(b"ack").await.unwrap();
+
+        let stream = timeout(control.open_stream()).await.unwrap();
+        assert_eq!(stream.id().val(), last_id + 2);
+    }
+
+    #[tokio::test]
+    async fn close_waits_for_connection_to_close() {
+        // A one-byte pipe the remote does not read yet keeps `poll_close` pending.
+        let (local, mut remote) = tokio::io::duplex(1);
+        let connection = Connection::new(local.compat(), Config::default(), Mode::Client);
+        let (mut control, mut connection) = Control::new(connection);
+
+        let mut close = Box::pin(control.close());
+        assert!(futures::poll!(&mut close).is_pending());
+        assert!(futures::poll!(connection.next()).is_pending());
+        assert!(futures::poll!(&mut close).is_pending());
+
+        tokio::spawn(async move { tokio::io::copy(&mut remote, &mut tokio::io::sink()).await });
+        assert!(timeout(connection.next()).await.is_none());
+        timeout(close).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dropping_last_control_closes_connection() {
+        let (control, mut connection, _remote) = controlled();
+        drop(control);
+        assert!(connection.next().now_or_never().unwrap().is_none());
     }
 }
