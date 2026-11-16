@@ -272,10 +272,7 @@ impl Kademlia {
                                 "connection established to peer but failed to open substream",
                             );
 
-                            if let PeerAction::SendFindNode(query_id) = action {
-                                self.engine.register_send_failure(query_id, peer);
-                                self.engine.register_response_failure(query_id, peer);
-                            }
+                            self.engine.register_peer_failure(action.query_id(), peer);
                         }
                     }
                 }
@@ -923,10 +920,18 @@ impl Kademlia {
                 );
                 let key = record.key.clone();
                 let message: Bytes = KademliaMessage::put_value(record);
+                let targets: Vec<PeerId> = peers.iter().map(|peer| peer.peer).collect();
 
-                for peer in &peers {
+                self.engine.start_put_record_to_found_nodes_requests_tracking(
+                    query,
+                    key.clone(),
+                    peers,
+                    quorum,
+                );
+
+                for peer in targets {
                     if let Err(error) = self.open_substream_or_dial(
-                        peer.peer,
+                        peer,
                         // `message` is cheaply clonable because of `Bytes` reference counting.
                         PeerAction::SendPutValue(query, message.clone()),
                         None,
@@ -938,11 +943,9 @@ impl Kademlia {
                             ?error,
                             "failed to put record to peer",
                         );
+                        self.engine.register_peer_failure(query, peer);
                     }
                 }
-
-                self.engine
-                    .start_put_record_to_found_nodes_requests_tracking(query, key, peers, quorum);
 
                 Ok(())
             }
@@ -973,10 +976,18 @@ impl Kademlia {
                 );
 
                 let message = KademliaMessage::add_provider(provided_key.clone(), provider);
+                let targets: Vec<PeerId> = peers.iter().map(|peer| peer.peer).collect();
 
-                for peer in &peers {
+                self.engine.start_add_provider_to_found_nodes_requests_tracking(
+                    query,
+                    provided_key.clone(),
+                    peers,
+                    quorum,
+                );
+
+                for peer in targets {
                     if let Err(error) = self.open_substream_or_dial(
-                        peer.peer,
+                        peer,
                         PeerAction::SendAddProvider(query, message.clone()),
                         None,
                     ) {
@@ -986,16 +997,10 @@ impl Kademlia {
                             ?provided_key,
                             ?error,
                             "failed to add provider record to peer",
-                        )
+                        );
+                        self.engine.register_peer_failure(query, peer);
                     }
                 }
-
-                self.engine.start_add_provider_to_found_nodes_requests_tracking(
-                    query,
-                    provided_key,
-                    peers,
-                    quorum,
-                );
 
                 Ok(())
             }
@@ -1966,5 +1971,88 @@ mod tests {
             }
             event => panic!("unexpected event: {event:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn put_record_to_unreachable_peer_fails_query() {
+        let (mut kademlia, _context, _manager) = make_kademlia();
+        let peer = KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected);
+
+        kademlia
+            .on_query_action(QueryAction::PutRecordToFoundNodes {
+                query: QueryId(0),
+                record: Record::new(RecordKey::from(vec![1, 2, 3]), vec![4, 5, 6]),
+                peers: vec![peer],
+                quorum: Quorum::One,
+            })
+            .await
+            .unwrap();
+
+        assert!(std::matches!(
+            kademlia.engine.next_action(),
+            Some(QueryAction::QueryFailed { query: QueryId(0) })
+        ));
+    }
+
+    #[tokio::test]
+    async fn add_provider_to_unreachable_peer_fails_query() {
+        let (mut kademlia, _context, _manager) = make_kademlia();
+        let peer = KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected);
+
+        kademlia
+            .on_query_action(QueryAction::AddProviderToFoundNodes {
+                query: QueryId(0),
+                provided_key: RecordKey::from(vec![1, 2, 3]),
+                provider: ContentProvider {
+                    peer: PeerId::random(),
+                    addresses: vec![],
+                },
+                peers: vec![peer],
+                quorum: Quorum::One,
+            })
+            .await
+            .unwrap();
+
+        assert!(std::matches!(
+            kademlia.engine.next_action(),
+            Some(QueryAction::QueryFailed { query: QueryId(0) })
+        ));
+    }
+
+    #[tokio::test]
+    async fn put_value_substream_open_failure_on_connection_established_fails_query() {
+        let (mut kademlia, _context, _manager) = make_kademlia();
+        let peer = PeerId::random();
+        let record = Record::new(RecordKey::from(vec![1, 2, 3]), vec![4, 5, 6]);
+
+        kademlia.engine.start_put_record_to_found_nodes_requests_tracking(
+            QueryId(0),
+            record.key.clone(),
+            vec![KademliaPeer::new(
+                peer,
+                vec![],
+                ConnectionType::NotConnected,
+            )],
+            Quorum::One,
+        );
+        kademlia.pending_dials.insert(
+            peer,
+            vec![PeerAction::SendPutValue(
+                QueryId(0),
+                KademliaMessage::put_value(record),
+            )],
+        );
+
+        kademlia
+            .on_connection_established(
+                peer,
+                Endpoint::listener(Multiaddr::empty(), ConnectionId::from(0usize)),
+            )
+            .unwrap();
+
+        assert!(std::matches!(
+            kademlia.engine.next_action(),
+            Some(QueryAction::QueryFailed { query: QueryId(0) })
+        ));
     }
 }
