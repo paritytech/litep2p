@@ -508,8 +508,7 @@ impl Litep2p {
 
     /// Add a Kademlia instance to the running node.
     ///
-    /// The instance can use the connections that are already established. It learns of them
-    /// shortly after it starts, so a query started right away may fail.
+    /// The instance uses the connections that are already established.
     ///
     /// Dropping the [`kademlia::KademliaHandle`] stops the instance, which then unregisters its
     /// protocol names. They can be registered again once it has stopped.

@@ -229,9 +229,6 @@ pub struct ProtocolSet {
     rx: Receiver<ProtocolCommand>,
     #[allow(unused)]
     next_substream_id: Arc<AtomicUsize>,
-    /// Protocols told that the connection was established, which are told when it closes.
-    /// The manager tells the protocols registered later.
-    reported: Vec<Sender<InnerTransportEvent>>,
 }
 
 impl ProtocolSet {
@@ -249,7 +246,6 @@ impl ProtocolSet {
             protocols,
             next_substream_id,
             connection: ConnectionHandle::new(connection_id, tx),
-            reported: Vec::new(),
         }
     }
 
@@ -336,10 +332,10 @@ impl ProtocolSet {
     }
 
     async fn report_to(
-        senders: &[Sender<InnerTransportEvent>],
+        senders: Vec<(ProtocolName, Sender<InnerTransportEvent>)>,
         event: impl Fn() -> InnerTransportEvent,
     ) {
-        let futures = senders.iter().map(|tx| {
+        let futures = senders.into_iter().map(|(_, tx)| {
             let event = event();
             async move {
                 let _ = tx.send(event).await;
@@ -352,28 +348,18 @@ impl ProtocolSet {
     /// Report to protocols that a connection was established.
     pub(crate) async fn report_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) {
         let connection_handle = self.connection.downgrade();
-        self.reported = self.protocols.senders().into_iter().map(|(_, tx)| tx).collect();
-        Self::report_to(&self.reported, || {
-            InnerTransportEvent::ConnectionEstablished {
-                peer,
-                connection: endpoint.connection_id(),
-                endpoint: endpoint.clone(),
-                sender: connection_handle.clone(),
-            }
+        // protocols registered later get the downgraded handle, so it doesn't keep the connection
+        // open
+        let senders =
+            self.protocols.add_connection(peer, endpoint.clone(), self.connection.clone());
+
+        Self::report_to(senders, || InnerTransportEvent::ConnectionEstablished {
+            peer,
+            connection: endpoint.connection_id(),
+            endpoint: endpoint.clone(),
+            sender: connection_handle.clone(),
         })
         .await;
-
-        // The manager tells the protocols registered since, and the ones registered while the
-        // connection is open.
-        let _ = self
-            .mgr_tx
-            .send(TransportManagerEvent::ConnectionOpened {
-                peer,
-                endpoint,
-                handle: connection_handle.inactive(),
-                reported: self.reported.clone(),
-            })
-            .await;
     }
 
     /// Report to protocols that a connection was closed.
@@ -382,10 +368,11 @@ impl ProtocolSet {
         peer: PeerId,
         connection_id: ConnectionId,
     ) -> crate::Result<()> {
-        // The manager tells the protocols it told about the connection.
-        Self::report_to(&self.reported, || InnerTransportEvent::ConnectionClosed {
-            peer,
-            connection: connection_id,
+        Self::report_to(self.protocols.remove_connection(connection_id), || {
+            InnerTransportEvent::ConnectionClosed {
+                peer,
+                connection: connection_id,
+            }
         })
         .await;
 

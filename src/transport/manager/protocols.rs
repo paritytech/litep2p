@@ -19,9 +19,13 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    protocol::{InnerTransportEvent, SubstreamKeepAlive},
-    transport::manager::{InboundProtocol, ProtocolContext},
-    types::protocol::ProtocolName,
+    protocol::{ConnectionHandle, InnerTransportEvent, SubstreamKeepAlive},
+    transport::{
+        manager::{InboundProtocol, ProtocolContext},
+        Endpoint,
+    },
+    types::{protocol::ProtocolName, ConnectionId},
+    PeerId,
 };
 
 use parking_lot::RwLock;
@@ -33,6 +37,10 @@ use std::{
 };
 
 /// Installed protocols shared between the transport manager and the open connections.
+///
+/// Established connections are tracked under the same lock, so every protocol is told about a
+/// connection exactly once, by the connection or when it's installed, and is told about the
+/// connection closing only if it was told about the connection.
 #[derive(Debug, Clone, Default)]
 pub struct ProtocolRegistry(Arc<RwLock<Protocols>>);
 
@@ -52,6 +60,7 @@ struct Protocols {
     /// Maps a fallback name to the main protocol name.
     fallback_names: HashMap<ProtocolName, ProtocolName>,
     keep_alives: Arc<HashMap<ProtocolName, SubstreamKeepAlive>>,
+    connections: HashMap<ConnectionId, (PeerId, Endpoint, ConnectionHandle)>,
 }
 
 impl Protocols {
@@ -80,6 +89,7 @@ impl Protocols {
             contexts,
             fallback_names,
             keep_alives: Arc::new(keep_alives),
+            connections: HashMap::new(),
         }
     }
 }
@@ -95,21 +105,58 @@ impl ProtocolRegistry {
         WeakProtocolRegistry(Arc::downgrade(&self.0))
     }
 
-    fn update<R>(&self, f: impl FnOnce(&mut HashMap<ProtocolName, ProtocolContext>) -> R) -> R {
-        let mut protocols = self.0.write();
+    fn rebuild<R>(
+        protocols: &mut Protocols,
+        f: impl FnOnce(&mut HashMap<ProtocolName, ProtocolContext>) -> R,
+    ) -> R {
         let mut contexts = std::mem::take(&mut protocols.contexts);
         let updated = f(&mut contexts);
+        let connections = std::mem::take(&mut protocols.connections);
         *protocols = Protocols::new(contexts);
+        protocols.connections = connections;
         updated
     }
 
-    pub fn insert(&self, protocol: ProtocolName, context: ProtocolContext) {
-        self.update(|contexts| contexts.insert(protocol, context));
+    /// Install `protocol` and return the established connections it must be told about.
+    pub fn insert(
+        &self,
+        protocol: ProtocolName,
+        context: ProtocolContext,
+    ) -> Vec<(PeerId, Endpoint, ConnectionHandle)> {
+        let mut protocols = self.0.write();
+        Self::rebuild(&mut protocols, |contexts| {
+            contexts.insert(protocol, context)
+        });
+        protocols.connections.values().cloned().collect()
+    }
+
+    /// Track an established connection and return the protocols that must be told about it.
+    pub fn add_connection(
+        &self,
+        peer: PeerId,
+        endpoint: Endpoint,
+        handle: ConnectionHandle,
+    ) -> Vec<(ProtocolName, Sender<InnerTransportEvent>)> {
+        let mut protocols = self.0.write();
+        protocols.connections.insert(endpoint.connection_id(), (peer, endpoint, handle));
+        Self::senders_of(&protocols)
+    }
+
+    /// Stop tracking a closed connection and return the protocols that must be told about it.
+    pub fn remove_connection(
+        &self,
+        connection_id: ConnectionId,
+    ) -> Vec<(ProtocolName, Sender<InnerTransportEvent>)> {
+        let mut protocols = self.0.write();
+        match protocols.connections.remove(&connection_id) {
+            Some(_) => Self::senders_of(&protocols),
+            None => Vec::new(),
+        }
     }
 
     /// Remove `protocol` if it's still installed with `tx`.
     pub fn remove(&self, protocol: &ProtocolName, tx: &Sender<InnerTransportEvent>) -> bool {
-        self.update(|contexts| {
+        Self::rebuild(&mut self.0.write(), |contexts| {
             contexts.get(protocol).is_some_and(|context| context.tx.same_channel(tx))
                 && contexts.remove(protocol).is_some()
         })
@@ -147,8 +194,11 @@ impl ProtocolRegistry {
     }
 
     pub fn senders(&self) -> Vec<(ProtocolName, Sender<InnerTransportEvent>)> {
-        self.0
-            .read()
+        Self::senders_of(&self.0.read())
+    }
+
+    fn senders_of(protocols: &Protocols) -> Vec<(ProtocolName, Sender<InnerTransportEvent>)> {
+        protocols
             .contexts
             .iter()
             .map(|(protocol, context)| (protocol.clone(), context.tx.clone()))

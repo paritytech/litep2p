@@ -1297,9 +1297,6 @@ async fn connect(node1: &mut Litep2p, node2: &mut Litep2p, settle: bool) {
 
 /// Register a client-mode instance on `protocol` with `node2` once it is connected to `node1`,
 /// and query `node1` through it.
-///
-/// The instance learns of established connections shortly after it starts, so a query started
-/// right away may fail and is retried. Without the connection it would never succeed.
 async fn query_over_open_connection(settle: bool) {
     let protocol = ProtocolName::from("/runtime/kad");
     let (mut node1, mut node2) = runtime_kademlia_nodes(&protocol);
@@ -1312,7 +1309,7 @@ async fn query_over_open_connection(settle: bool) {
     node2.register_kademlia(kad_config2).unwrap();
 
     // the query goes over the connection that was already open
-    let connections = find_node_through(&mut node1, &mut node2, &mut kad_handle2, 5).await;
+    let connections = find_node_through(&mut node1, &mut node2, &mut kad_handle2, 0).await;
     assert_eq!(connections, 0);
 }
 

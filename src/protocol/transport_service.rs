@@ -434,6 +434,20 @@ impl TransportService {
         }
     }
 
+    /// Report a connection that was established before the protocol was registered.
+    pub(crate) fn on_existing_connection(
+        &mut self,
+        peer: PeerId,
+        endpoint: Endpoint,
+        handle: ConnectionHandle,
+    ) {
+        let connection_id = endpoint.connection_id();
+
+        if let Some(event) = self.on_connection_established(peer, endpoint, connection_id, handle) {
+            self.pending_events.push_back(event);
+        }
+    }
+
     /// Handle connection closed event.
     fn on_connection_closed(&mut self, peer: PeerId, connection_id: ConnectionId) {
         tracing::debug!(

@@ -24,7 +24,7 @@ use crate::{
     crypto::ed25519::Keypair,
     error::{AddressError, DialError, Error},
     executor::Executor,
-    protocol::{ConnectionHandle, InnerTransportEvent, TransportService},
+    protocol::{InnerTransportEvent, TransportService},
     transport::{
         manager::{
             address::AddressRecord,
@@ -43,7 +43,7 @@ use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use indexmap::IndexMap;
 use multiaddr::{Multiaddr, Protocol};
 use parking_lot::RwLock;
-use tokio::sync::mpsc::{channel, error::TrySendError, Receiver, Sender};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -87,21 +87,6 @@ enum ConnectionEstablishedResult {
 
 /// [`crate::transport::manager::TransportManager`] events.
 pub enum TransportManagerEvent {
-    /// A connection reported itself to the protocols that were registered at the time.
-    ConnectionOpened {
-        /// Peer ID.
-        peer: PeerId,
-
-        /// Endpoint of the connection.
-        endpoint: Endpoint,
-
-        /// Handle to the connection, which does not keep it open.
-        handle: ConnectionHandle,
-
-        /// The protocols the connection reported itself to.
-        reported: Vec<Sender<InnerTransportEvent>>,
-    },
-
     /// Connection closed to remote peer.
     ConnectionClosed {
         /// Peer ID.
@@ -246,9 +231,6 @@ pub struct TransportManager {
     /// Installed protocols.
     protocols: ProtocolRegistry,
 
-    /// Established connections, so that protocols registered later can be told about them.
-    connections: HashMap<ConnectionId, OpenConnection>,
-
     /// Listen addresses.
     listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
 
@@ -290,23 +272,6 @@ pub struct TransportManager {
 
     /// Pending accept futures with associated connection information.
     pending_accept: FuturesUnordered<BoxFuture<'static, (PeerId, Endpoint, crate::Result<()>)>>,
-}
-
-/// An established connection, as known to the manager.
-#[derive(Debug)]
-struct OpenConnection {
-    /// Peer ID.
-    peer: PeerId,
-
-    /// Endpoint of the connection.
-    endpoint: Endpoint,
-
-    /// Handle to the connection, which does not keep it open.
-    handle: ConnectionHandle,
-
-    /// Protocols registered after the connection reported itself, which the manager told about
-    /// the connection and tells when it closes.
-    added: Vec<Sender<InnerTransportEvent>>,
 }
 
 /// Builder for [`crate::transport::manager::TransportManager`].
@@ -397,7 +362,6 @@ impl TransportManagerBuilder {
             keypair,
             bandwidth_sink: self.bandwidth_sink.unwrap_or_else(BandwidthSink::new),
             protocols,
-            connections: HashMap::new(),
             listen_addresses,
             public_addresses,
             next_connection_id: Arc::new(AtomicUsize::new(0usize)),
@@ -461,7 +425,7 @@ impl TransportManager {
             }
         }
 
-        let (service, sender) = TransportService::new(
+        let (mut service, sender) = TransportService::new(
             self.local_peer_id,
             protocol.clone(),
             fallback_names.clone(),
@@ -471,15 +435,13 @@ impl TransportManager {
             substream_keep_alive,
         );
 
-        // A protocol registered while the node runs is told about the established connections.
-        for connection in self.connections.values_mut() {
-            Self::add_protocol(connection, &protocol, &sender);
-        }
-
-        self.protocols.insert(
+        let connections = self.protocols.insert(
             protocol,
             ProtocolContext::new(codec, sender, fallback_names, substream_keep_alive, inbound),
         );
+        for (peer, endpoint, handle) in connections {
+            service.on_existing_connection(peer, endpoint, handle);
+        }
 
         service
     }
@@ -487,81 +449,6 @@ impl TransportManager {
     /// Check if `name` is the main or a fallback name of an installed protocol.
     pub fn is_protocol_registered(&self, name: &ProtocolName) -> bool {
         self.protocols.contains(name)
-    }
-
-    /// Tell `protocol` about `connection`, which reported itself before the protocol was
-    /// registered.
-    fn add_protocol(
-        connection: &mut OpenConnection,
-        protocol: &ProtocolName,
-        tx: &Sender<InnerTransportEvent>,
-    ) {
-        let mut alive = connection.handle.clone();
-        alive.try_upgrade();
-        if !alive.is_active() {
-            // The connection is closing, and the manager hears of it next.
-            return;
-        }
-
-        let event = InnerTransportEvent::ConnectionEstablished {
-            peer: connection.peer,
-            connection: connection.endpoint.connection_id(),
-            endpoint: connection.endpoint.clone(),
-            sender: alive,
-        };
-        if tx.try_send(event).is_err() {
-            tracing::warn!(
-                target: LOG_TARGET,
-                peer = ?connection.peer,
-                %protocol,
-                "protocol cannot be told about an established connection",
-            );
-            return;
-        }
-        connection.added.push(tx.clone());
-    }
-
-    /// A connection reported itself to the `reported` protocols. The ones registered since are
-    /// told about it here.
-    fn on_connection_reported(
-        &mut self,
-        peer: PeerId,
-        endpoint: Endpoint,
-        handle: ConnectionHandle,
-        reported: Vec<Sender<InnerTransportEvent>>,
-    ) {
-        let mut connection = OpenConnection {
-            peer,
-            endpoint,
-            handle,
-            added: Vec::new(),
-        };
-        for (protocol, tx) in self.protocols.senders() {
-            if !reported.iter().any(|reported| reported.same_channel(&tx)) {
-                Self::add_protocol(&mut connection, &protocol, &tx);
-            }
-        }
-        self.connections.insert(connection.endpoint.connection_id(), connection);
-    }
-
-    /// Tell the protocols the manager told about a connection that it closed.
-    fn on_added_protocols_closed(&mut self, peer: PeerId, connection_id: ConnectionId) {
-        let Some(connection) = self.connections.remove(&connection_id) else {
-            return;
-        };
-        for tx in connection.added {
-            let event = InnerTransportEvent::ConnectionClosed {
-                peer,
-                connection: connection_id,
-            };
-            if let Err(TrySendError::Full(_)) = tx.try_send(event) {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    "protocol cannot be told that a connection closed",
-                );
-            }
-        }
     }
 
     /// Acquire `TransportHandle`.
@@ -1242,20 +1129,11 @@ impl TransportManager {
                     };
 
                     match event {
-                        TransportManagerEvent::ConnectionOpened {
-                            peer,
-                            endpoint,
-                            handle,
-                            reported,
-                        } => self.on_connection_reported(peer, endpoint, handle, reported),
                         TransportManagerEvent::ConnectionClosed {
                             peer,
                             connection: connection_id,
-                        } => {
-                            self.on_added_protocols_closed(peer, connection_id);
-                            if let Some(event) = self.on_connection_closed(peer, connection_id) {
-                                return Some(event);
-                            }
+                        } => if let Some(event) = self.on_connection_closed(peer, connection_id) {
+                            return Some(event);
                         }
                     };
                 },
@@ -2015,6 +1893,62 @@ mod tests {
             SubstreamKeepAlive::Yes,
             InboundProtocol::Accept,
         );
+    }
+
+    #[tokio::test]
+    async fn protocols_registered_later_are_told_about_open_connections() {
+        use crate::protocol::TransportEvent as ProtocolEvent;
+        use futures::FutureExt;
+
+        let mut manager = TransportManagerBuilder::new().build();
+        let register = |manager: &mut TransportManager, name: &'static str| {
+            manager.register_protocol(
+                ProtocolName::from(name),
+                Vec::new(),
+                ProtocolCodec::UnsignedVarint(None),
+                KEEP_ALIVE_TIMEOUT,
+                SubstreamKeepAlive::Yes,
+                InboundProtocol::Deny,
+            )
+        };
+        let next_event = |service: &mut TransportService| service.next().now_or_never().flatten();
+
+        let mut service1 = register(&mut manager, "/proto/1");
+        let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
+        let mut protocol_set = handle.protocol_set(ConnectionId::from(0usize));
+        let mut never_established = handle.protocol_set(ConnectionId::from(1usize));
+        let peer = PeerId::random();
+        let endpoint = Endpoint::listener(Multiaddr::empty(), ConnectionId::from(0usize));
+        protocol_set.report_connection_established(peer, endpoint).await;
+
+        let mut service2 = register(&mut manager, "/proto/2");
+        drop(register(&mut manager, "/proto/3"));
+
+        for service in [&mut service1, &mut service2] {
+            assert!(std::matches!(
+                next_event(service),
+                Some(ProtocolEvent::ConnectionEstablished { peer: connected, .. }) if connected == peer
+            ));
+        }
+
+        never_established
+            .report_connection_closed(peer, ConnectionId::from(1usize))
+            .await
+            .unwrap();
+        protocol_set
+            .report_connection_closed(peer, ConnectionId::from(0usize))
+            .await
+            .unwrap();
+        let mut service4 = register(&mut manager, "/proto/4");
+
+        for service in [&mut service1, &mut service2] {
+            assert!(std::matches!(
+                next_event(service),
+                Some(ProtocolEvent::ConnectionClosed { peer: disconnected }) if disconnected == peer
+            ));
+            assert!(next_event(service).is_none());
+        }
+        assert!(next_event(&mut service4).is_none());
     }
 
     #[test]
