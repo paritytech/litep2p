@@ -742,7 +742,8 @@ async fn provider_retrieved_by_remote_node() {
 
 #[tokio::test]
 async fn provider_added_to_remote_node() {
-    let (kad_config1, mut kad_handle1) = KademliaConfigBuilder::new().build();
+    let (kad_config1, mut kad_handle1) =
+        KademliaConfigBuilder::new().with_max_provider_keys(1).build();
     let (kad_config2, mut kad_handle2) = KademliaConfigBuilder::new().build();
 
     let config1 = ConfigBuilder::new()
@@ -821,6 +822,37 @@ async fn provider_added_to_remote_node() {
                     if add_provider_success {
                         break
                     }
+                }
+            }
+        }
+    }
+
+    // The second key exceeds the local provider key limit.
+    let key2 = RecordKey::new(&vec![4, 5, 6]);
+    let query2 = kad_handle1.start_providing(key2.clone(), Quorum::All).await;
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
+                panic!("the second key was not rejected in 10 secs")
+            }
+            _ = litep2p1.next_event() => {}
+            _ = litep2p2.next_event() => {}
+            event = kad_handle1.next() => {
+                match event {
+                    Some(KademliaEvent::QueryFailed { query_id }) => {
+                        assert_eq!(query_id, query2);
+                        break
+                    }
+                    Some(KademliaEvent::AddProviderSuccess { provided_key, .. }) => {
+                        panic!("provided {provided_key:?} over the provider key limit")
+                    }
+                    _ => {}
+                }
+            }
+            event = kad_handle2.next() => {
+                if let Some(KademliaEvent::IncomingProvider { provided_key, .. }) = event {
+                    assert_ne!(provided_key, key2, "the rejected key was announced anyway");
                 }
             }
         }

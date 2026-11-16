@@ -43,7 +43,7 @@ pub struct Config {
     /// Fallback names for the main protocol name.
     pub(crate) fallback_names: Vec<ProtocolName>,
 
-    /// Timeout for outbound requests.
+    /// Timeout for outbound and inbound requests.
     pub(crate) timeout: Duration,
 
     /// Codec used by the protocol.
@@ -108,7 +108,7 @@ pub struct ConfigBuilder {
     /// Maximum message size.
     max_message_size: Option<usize>,
 
-    /// Timeout for outbound requests.
+    /// Timeout for outbound and inbound requests.
     timeout: Option<Duration>,
 
     /// Maximum number of concurrent inbound requests.
@@ -139,7 +139,7 @@ impl ConfigBuilder {
         self
     }
 
-    /// Set timeout for outbound requests.
+    /// Set timeout for outbound and inbound requests.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
