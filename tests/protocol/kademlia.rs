@@ -1380,3 +1380,24 @@ async fn kademlia_protocol_names_are_released_when_the_handle_is_dropped() {
             tokio::time::timeout(tokio::time::Duration::from_millis(50), node2.next_event()).await;
     }
 }
+
+#[tokio::test]
+async fn server_kademlia_registered_at_runtime_serves_established_connections() {
+    let protocol = ProtocolName::from("/runtime/kad");
+    let (mut node1, mut node2) = runtime_kademlia_nodes(&ProtocolName::from("/other/kad"));
+    connect(&mut node1, &mut node2, true).await;
+
+    let (kad_config1, _kad_handle1) = KademliaConfigBuilder::new()
+        .with_protocol_names(vec![protocol.clone()])
+        .with_mode(KademliaMode::Server)
+        .build();
+    node1.register_kademlia(kad_config1).unwrap();
+    let (kad_config2, mut kad_handle2) = KademliaConfigBuilder::new()
+        .with_protocol_names(vec![protocol])
+        .with_mode(KademliaMode::Client)
+        .build();
+    node2.register_kademlia(kad_config2).unwrap();
+
+    let connections = find_node_through(&mut node1, &mut node2, &mut kad_handle2, 0).await;
+    assert_eq!(connections, 0);
+}
