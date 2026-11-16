@@ -93,7 +93,7 @@ pub struct ControlledConnection<T> {
     opening: Option<oneshot::Sender<Result<Stream>>>,
     /// Answered once the connection is closed if the close was requested by a [`Control`].
     close_reply: Option<oneshot::Sender<()>>,
-    /// Inbound error returned once the connection is closed.
+    /// Error returned once the connection is closed.
     error: Option<ConnectionError>,
 }
 
@@ -112,8 +112,15 @@ where
         }
 
         match self.connection.poll_new_outbound(cx) {
-            Poll::Ready(stream) => {
-                let _ = reply.send(stream);
+            Poll::Ready(Ok(stream)) => {
+                let _ = reply.send(Ok(stream));
+                true
+            }
+            // A failed open ends the connection, so the error is reported as the connection's.
+            Poll::Ready(Err(error)) => {
+                let _ = reply.send(Err(ConnectionError::Closed));
+                self.error = Some(error);
+                self.start_closing(None);
                 true
             }
             Poll::Pending => {
@@ -143,7 +150,9 @@ where
 
                     // Retry before `poll_next_inbound`, which returns early for every inbound
                     // stream and would otherwise starve the open.
-                    self.poll_opening(cx);
+                    if self.poll_opening(cx) {
+                        continue;
+                    }
 
                     match self.connection.poll_next_inbound(cx) {
                         Poll::Ready(Some(Ok(stream))) => return Poll::Ready(Some(Ok(stream))),
@@ -509,6 +518,31 @@ mod tests {
         remote.write_all(&[0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).await.unwrap();
         assert!(timeout(connection.next()).await.is_none());
         assert!(timeout(queued).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn open_ending_connection_returns_error() {
+        let (local, _remote) = tokio::io::duplex(1 << 20);
+        let mut config = Config::default();
+        config.set_max_num_streams(1);
+        let connection = Connection::new(local.compat(), config, Mode::Client);
+        let (mut control, mut connection) = Control::new(connection);
+
+        let _stream = match future::select(Box::pin(control.open_stream()), connection.next()).await
+        {
+            future::Either::Left((stream, _)) => stream.unwrap(),
+            future::Either::Right(_) => panic!("connection ended"),
+        };
+
+        let mut open = Box::pin(control.open_stream());
+        assert!(futures::poll!(&mut open).is_pending());
+
+        assert!(matches!(
+            timeout(connection.next()).await,
+            Some(Err(ConnectionError::TooManyStreams))
+        ));
+        assert!(matches!(timeout(open).await, Err(ConnectionError::Closed)));
+        assert!(timeout(connection.next()).await.is_none());
     }
 
     #[tokio::test]
