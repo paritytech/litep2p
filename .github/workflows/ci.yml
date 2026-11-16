@@ -42,13 +42,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v7.0.1
 
-      - name: Install Rust stable toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-
       - name: Rust Cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -69,11 +62,11 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Install Rust stable toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+        # Updating the image's stable in place fails with EXDEV on some runners.
+        run: |
+          rustup toolchain uninstall stable
+          rustup toolchain install stable --profile minimal
+          rustup default stable
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -98,11 +91,11 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Install Rust stable toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+        # Updating the image's stable in place fails with EXDEV on some runners.
+        run: |
+          rustup toolchain uninstall stable
+          rustup toolchain install stable --profile minimal
+          rustup default stable
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -124,11 +117,11 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Install Rust stable toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+        # Updating the image's stable in place fails with EXDEV on some runners.
+        run: |
+          rustup toolchain uninstall stable
+          rustup toolchain install stable --profile minimal
+          rustup default stable
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -149,11 +142,11 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Install Rust stable toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+        # Updating the image's stable in place fails with EXDEV on some runners.
+        run: |
+          rustup toolchain uninstall stable
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
