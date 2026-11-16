@@ -246,7 +246,7 @@ where
 mod tests {
     use super::*;
     use crate::yamux::{Config, Mode};
-    use futures::AsyncWriteExt;
+    use futures::{AsyncReadExt, AsyncWriteExt};
     use std::time::Duration;
     use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
 
@@ -362,6 +362,26 @@ mod tests {
             assert!(matches!(timeout(connection.next()).await, Some(Ok(_))));
         }
         assert!(matches!(futures::poll!(&mut pending), Poll::Ready(Ok(_))));
+    }
+
+    #[tokio::test]
+    async fn writes_on_opened_stream_wake_connection() {
+        let (mut control, mut connection, mut remote) = controlled();
+        tokio::spawn(async move { while connection.next().await.is_some() {} });
+
+        // Opening the first stream wakes the connection regardless.
+        let _first = timeout(control.open_stream()).await.unwrap();
+        let mut stream = timeout(control.open_stream()).await.unwrap();
+        stream.write_all(b"x").await.unwrap();
+
+        // SYN data frame for stream 3 carrying one byte.
+        let frame = [0, 0, 0, 1, 0, 0, 0, 3, 0, 0, 0, 1, b'x'];
+        let mut received = Vec::new();
+        while !received.ends_with(&frame) {
+            let mut buf = [0; 64];
+            let read = timeout(remote.read(&mut buf)).await.unwrap();
+            received.extend_from_slice(&buf[..read]);
+        }
     }
 
     #[tokio::test]
