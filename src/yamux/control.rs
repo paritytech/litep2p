@@ -44,6 +44,7 @@ impl Control {
             commands: receiver,
             opening: None,
             close_reply: None,
+            error: None,
         };
 
         (control, connection)
@@ -78,6 +79,8 @@ pub struct ControlledConnection<T> {
     opening: Option<oneshot::Sender<Result<Stream>>>,
     /// Answered once the connection is closed if the close was requested by a [`Control`].
     close_reply: Option<oneshot::Sender<()>>,
+    /// Inbound error returned once the connection is closed.
+    error: Option<ConnectionError>,
 }
 
 impl<T> ControlledConnection<T>
@@ -106,6 +109,15 @@ where
         }
     }
 
+    fn start_closing(&mut self, reply: Option<oneshot::Sender<()>>) {
+        if let Some(opening) = self.opening.take() {
+            let _ = opening.send(Err(ConnectionError::Closed));
+        }
+        self.commands.close();
+        self.close_reply = reply;
+        self.state = State::Draining;
+    }
+
     fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Stream>>> {
         loop {
             match self.state {
@@ -116,16 +128,15 @@ where
 
                     match self.connection.poll_next_inbound(cx) {
                         Poll::Ready(Some(Ok(stream))) => return Poll::Ready(Some(Ok(stream))),
-                        // Transport layers will close the connection on the first substream
-                        // error. `poll_next_inbound` must not be called again after it returns an
-                        // error, so close the connection instead.
-                        Poll::Ready(Some(Err(error))) => {
-                            tracing::debug!(target: LOG_TARGET, ?error, "Inbound stream error, closing connection");
+                        // The connection has ended and must not be polled for inbound streams
+                        // again. Answer the outstanding requests before returning the error.
+                        Poll::Ready(result) => {
+                            tracing::debug!(target: LOG_TARGET, ?result, "Connection ended, answering outstanding requests");
 
-                            self.state = State::Draining;
-                            return Poll::Ready(Some(Err(error)));
+                            self.error = result.and_then(Result::err);
+                            self.start_closing(None);
+                            continue;
                         }
-                        Poll::Ready(None) => return Poll::Ready(None),
                         Poll::Pending => {}
                     }
 
@@ -143,11 +154,8 @@ where
                     match self.commands.poll_next_unpin(cx) {
                         Poll::Ready(Some(ControlCommand::OpenStream(reply))) =>
                             self.opening = Some(reply),
-                        Poll::Ready(Some(ControlCommand::CloseConnection(reply))) => {
-                            self.commands.close();
-                            self.close_reply = Some(reply);
-                            self.state = State::Draining;
-                        }
+                        Poll::Ready(Some(ControlCommand::CloseConnection(reply))) =>
+                            self.start_closing(Some(reply)),
                         // Last `Control` sender was dropped, close the connection.
                         Poll::Ready(None) => self.state = State::Closing,
                         Poll::Pending => return Poll::Pending,
@@ -165,6 +173,7 @@ where
                 },
                 State::Closing => {
                     let result = futures::ready!(self.connection.poll_close(cx));
+                    let result = self.error.take().map_or(result, Err);
                     self.state = State::Closed;
                     if let Some(reply) = self.close_reply.take() {
                         let _ = reply.send(());
@@ -361,6 +370,37 @@ mod tests {
         let (control, mut connection, _remote) = controlled();
         drop(control);
         assert!(connection.next().now_or_never().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn inbound_error_closes_connection_with_live_control() {
+        let (mut control, mut connection, mut remote) = controlled();
+
+        let mut opener = control.clone();
+        let mut queued = Box::pin(opener.open_stream());
+        assert!(futures::poll!(&mut queued).is_pending());
+
+        remote.write_all(&[0xff; 12]).await.unwrap();
+        assert!(matches!(timeout(connection.next()).await, Some(Err(_))));
+
+        // None of them wait for the connection to be polled again.
+        assert!(timeout(queued).await.is_err());
+        timeout(control.open_stream()).await.unwrap_err();
+        timeout(control.close()).await.unwrap();
+
+        assert!(timeout(connection.next()).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn remote_go_away_answers_queued_open() {
+        let (mut control, mut connection, mut remote) = controlled();
+
+        let mut queued = Box::pin(control.open_stream());
+        assert!(futures::poll!(&mut queued).is_pending());
+
+        remote.write_all(&[0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).await.unwrap();
+        assert!(timeout(connection.next()).await.is_none());
+        assert!(timeout(queued).await.is_err());
     }
 
     #[tokio::test]
