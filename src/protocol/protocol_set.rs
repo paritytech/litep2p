@@ -28,7 +28,7 @@ use crate::{
     },
     substream::Substream,
     transport::{
-        manager::{ProtocolRegistry, TransportManagerEvent},
+        manager::{InboundProtocol, ProtocolRegistry, TransportManagerEvent},
         Endpoint,
     },
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
@@ -283,6 +283,12 @@ impl ProtocolSet {
             return Ok(());
         };
 
+        // The holder of the name may have changed to a client-mode protocol during negotiation.
+        if direction == Direction::Inbound && protocol_context.inbound == InboundProtocol::Deny {
+            tracing::debug!(target: LOG_TARGET, %protocol, ?peer, "inbound denied, dropping substream");
+            return Ok(());
+        }
+
         let event = InnerTransportEvent::SubstreamOpened {
             peer,
             fallback: (main_protocol != protocol).then_some(protocol),
@@ -398,10 +404,7 @@ impl Stream for ProtocolSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        mock::substream::MockSubstream,
-        transport::manager::{InboundProtocol, ProtocolContext},
-    };
+    use crate::{mock::substream::MockSubstream, transport::manager::ProtocolContext};
     use std::collections::HashSet;
 
     #[tokio::test]
@@ -979,5 +982,64 @@ mod tests {
 
         let mut remote = tcp_substream(inbound, ProtocolCodec::UnsignedVarint(Some(64)));
         assert_eq!(remote.next().await.unwrap().unwrap(), &b"hello"[..]);
+    }
+
+    #[tokio::test]
+    async fn inbound_substream_not_delivered_to_reregistered_deny_protocol() {
+        let (tx, _rx) = channel(64);
+        let (tx_a, _rx_a) = channel(64);
+        let (tx_b, mut rx_b) = channel(64);
+        let protocol = ProtocolName::from("/kad/1");
+        let registry = ProtocolRegistry::from(HashMap::from_iter([(
+            protocol.clone(),
+            protocol_context(tx_a.clone(), ProtocolCodec::UnsignedVarint(None)),
+        )]));
+        let mut protocol_set = ProtocolSet::new(
+            ConnectionId::from(0usize),
+            tx,
+            Default::default(),
+            registry.clone(),
+        );
+
+        assert!(registry.remove(&protocol, &tx_a));
+        registry.insert(
+            protocol.clone(),
+            ProtocolContext {
+                inbound: InboundProtocol::Deny,
+                ..protocol_context(tx_b, ProtocolCodec::UnsignedVarint(None))
+            },
+        );
+
+        for direction in [
+            Direction::Inbound,
+            Direction::Outbound(SubstreamId::from(1usize)),
+        ] {
+            let permit = protocol_set.try_get_permit().unwrap();
+            protocol_set
+                .report_substream_open(
+                    PeerId::random(),
+                    protocol.clone(),
+                    direction,
+                    |_| {
+                        Substream::new_mock(
+                            PeerId::random(),
+                            SubstreamId::from(0usize),
+                            Box::new(MockSubstream::new()),
+                        )
+                    },
+                    permit,
+                )
+                .await
+                .unwrap();
+        }
+
+        assert!(std::matches!(
+            rx_b.try_recv(),
+            Ok(InnerTransportEvent::SubstreamOpened {
+                direction: Direction::Outbound(_),
+                ..
+            })
+        ));
+        assert!(rx_b.try_recv().is_err());
     }
 }
