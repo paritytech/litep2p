@@ -58,11 +58,13 @@ use std::{
 
 pub use crate::protocol::SubstreamKeepAlive;
 pub use handle::{TransportHandle, TransportManagerHandle};
+pub use protocols::ProtocolRegistry;
 pub use types::SupportedTransport;
 
 pub(crate) mod address;
 pub mod limits;
 mod peer_state;
+mod protocols;
 mod types;
 
 pub(crate) mod handle;
@@ -227,10 +229,7 @@ pub struct TransportManager {
     bandwidth_sink: BandwidthSink,
 
     /// Installed protocols.
-    protocols: HashMap<ProtocolName, ProtocolContext>,
-
-    /// All names (main and fallback(s)) of the installed protocols.
-    protocol_names: HashSet<ProtocolName>,
+    protocols: ProtocolRegistry,
 
     /// Listen addresses.
     listen_addresses: Arc<RwLock<HashSet<Multiaddr>>>,
@@ -346,6 +345,7 @@ impl TransportManagerBuilder {
         let (event_tx, event_rx) = channel(256);
         let listen_addresses = Arc::new(RwLock::new(HashSet::new()));
         let public_addresses = PublicAddresses::new(local_peer_id);
+        let protocols = ProtocolRegistry::default();
 
         let handle = TransportManagerHandle::new(
             local_peer_id,
@@ -354,14 +354,14 @@ impl TransportManagerBuilder {
             self.supported_transports,
             listen_addresses.clone(),
             public_addresses.clone(),
+            protocols.clone(),
         );
 
         TransportManager {
             local_peer_id,
             keypair,
             bandwidth_sink: self.bandwidth_sink.unwrap_or_else(BandwidthSink::new),
-            protocols: HashMap::new(),
-            protocol_names: HashSet::new(),
+            protocols,
             listen_addresses,
             public_addresses,
             next_connection_id: Arc::new(AtomicUsize::new(0usize)),
@@ -381,14 +381,6 @@ impl TransportManagerBuilder {
 }
 
 impl TransportManager {
-    /// Get iterator to installed protocols that are advertised to remote peers.
-    pub fn advertised_protocols(&self) -> impl Iterator<Item = &ProtocolName> {
-        self.protocols
-            .iter()
-            .filter(|(_, context)| context.inbound == InboundProtocol::Accept)
-            .map(|(protocol, _)| protocol)
-    }
-
     /// Get iterator to installed transports
     pub fn installed_transports(&self) -> impl Iterator<Item = &SupportedTransport> {
         self.transports.keys()
@@ -413,6 +405,9 @@ impl TransportManager {
     ///
     /// `inbound` controls whether remote peers can negotiate the protocol on inbound substreams
     /// and whether the protocol name is exposed to them via the identify protocol.
+    ///
+    /// The protocol is unregistered when the returned [`TransportService`] is dropped.
+    #[must_use]
     pub fn register_protocol(
         &mut self,
         protocol: ProtocolName,
@@ -422,10 +417,10 @@ impl TransportManager {
         substream_keep_alive: SubstreamKeepAlive,
         inbound: InboundProtocol,
     ) -> TransportService {
-        assert!(!self.protocol_names.contains(&protocol));
+        assert!(!self.protocols.contains(&protocol));
 
         for fallback in &fallback_names {
-            if self.protocol_names.contains(fallback) {
+            if self.protocols.contains(fallback) {
                 panic!("duplicate fallback protocol given: {fallback:?}");
             }
         }
@@ -441,39 +436,11 @@ impl TransportManager {
         );
 
         self.protocols.insert(
-            protocol.clone(),
-            ProtocolContext::new(
-                codec,
-                sender,
-                fallback_names.clone(),
-                substream_keep_alive,
-                inbound,
-            ),
+            protocol,
+            ProtocolContext::new(codec, sender, fallback_names, substream_keep_alive, inbound),
         );
-        self.protocol_names.insert(protocol);
-        self.protocol_names.extend(fallback_names);
 
         service
-    }
-
-    /// Unregister a protocol in response of the user dropping the protocol handle.
-    fn unregister_protocol(&mut self, protocol: ProtocolName) {
-        let Some(context) = self.protocols.remove(&protocol) else {
-            tracing::error!(target: LOG_TARGET, ?protocol, "Cannot unregister protocol, not registered");
-            return;
-        };
-
-        for fallback in &context.fallback_names {
-            if !self.protocol_names.remove(fallback) {
-                tracing::error!(target: LOG_TARGET, ?fallback, ?protocol, "Cannot unregister fallback protocol, not registered");
-            }
-        }
-
-        tracing::info!(
-            target: LOG_TARGET,
-            ?protocol,
-            "Protocol fully unregistered"
-        );
     }
 
     /// Acquire `TransportHandle`.
@@ -1184,9 +1151,6 @@ impl TransportManager {
                                 tracing::debug!(target: LOG_TARGET, ?error, "failed to dial peer")
                             }
                         }
-                        InnerTransportManagerCommand::UnregisterProtocol { protocol } => {
-                            self.unregister_protocol(protocol);
-                        }
                     }
                 },
 
@@ -1220,16 +1184,17 @@ impl TransportManager {
                                 match address.iter().last() {
                                     Some(Protocol::P2p(hash)) => match PeerId::from_multihash(hash) {
                                         Ok(peer) => {
+                                            let protocols = self.protocols.senders();
                                             tracing::trace!(
                                                 target: LOG_TARGET,
                                                 ?connection_id,
                                                 ?error,
                                                 ?address,
-                                                num_protocols = self.protocols.len(),
+                                                num_protocols = protocols.len(),
                                                 "dial failure, notify protocols",
                                             );
 
-                                            for (protocol, context) in &self.protocols {
+                                            for (protocol, tx) in &protocols {
                                                 tracing::trace!(
                                                     target: LOG_TARGET,
                                                     ?connection_id,
@@ -1238,7 +1203,7 @@ impl TransportManager {
                                                     ?protocol,
                                                     "dial failure, notify protocol",
                                                 );
-                                                match context.tx.try_send(InnerTransportEvent::DialFailure {
+                                                match tx.try_send(InnerTransportEvent::DialFailure {
                                                     peer,
                                                     addresses: vec![address.clone()],
                                                 }) {
@@ -1252,8 +1217,7 @@ impl TransportManager {
                                                             ?protocol,
                                                             "dial failure, channel to protocol clogged, use await",
                                                         );
-                                                        let _ = context
-                                                            .tx
+                                                        let _ = tx
                                                             .send(InnerTransportEvent::DialFailure {
                                                                 peer,
                                                                 addresses: vec![address.clone()],
@@ -1398,11 +1362,12 @@ impl TransportManager {
                                     "failed to handle opened connection",
                                 ),
                                 Ok(Some(peer)) => {
+                                    let protocols = self.protocols.senders();
                                     tracing::trace!(
                                         target: LOG_TARGET,
                                         ?peer,
                                         ?connection_id,
-                                        num_protocols = self.protocols.len(),
+                                        num_protocols = protocols.len(),
                                         "inform protocols about open failure",
                                     );
 
@@ -1411,9 +1376,8 @@ impl TransportManager {
                                         .map(|(address, _)| address.clone())
                                         .collect::<Vec<_>>();
 
-                                    for (protocol, context) in &self.protocols {
-                                        let _ = match context
-                                            .tx
+                                    for (protocol, tx) in &protocols {
+                                        let _ = match tx
                                             .try_send(InnerTransportEvent::DialFailure {
                                                 peer,
                                                 addresses: addresses.clone(),
@@ -1428,8 +1392,7 @@ impl TransportManager {
                                                     "call to protocol would block try sending in a blocking way",
                                                 );
 
-                                                context
-                                                    .tx
+                                                tx
                                                     .send(InnerTransportEvent::DialFailure {
                                                         peer,
                                                         addresses: addresses.clone(),
@@ -1718,7 +1681,7 @@ mod tests {
     fn only_advertised_protocols_are_reported() {
         let mut manager = TransportManagerBuilder::new().build();
 
-        manager.register_protocol(
+        let _service1 = manager.register_protocol(
             ProtocolName::from("/advertised/1"),
             vec![ProtocolName::from("/advertised/1/fallback")],
             ProtocolCodec::UnsignedVarint(None),
@@ -1726,7 +1689,7 @@ mod tests {
             SubstreamKeepAlive::Yes,
             InboundProtocol::Accept,
         );
-        manager.register_protocol(
+        let _service2 = manager.register_protocol(
             ProtocolName::from("/local/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
@@ -1736,9 +1699,111 @@ mod tests {
         );
 
         assert_eq!(
-            manager.advertised_protocols().cloned().collect::<HashSet<_>>(),
+            manager.protocols.advertised().into_iter().collect::<HashSet<_>>(),
             HashSet::from_iter([ProtocolName::from("/advertised/1")]),
         );
+    }
+
+    #[test]
+    fn unregistered_protocol_can_be_registered_again() {
+        let mut manager = TransportManagerBuilder::new().build();
+        let protocol = ProtocolName::from("/notif/1");
+        let fallback = ProtocolName::from("/notif/1/fallback");
+        let register = |manager: &mut TransportManager| {
+            manager.register_protocol(
+                protocol.clone(),
+                vec![fallback.clone()],
+                ProtocolCodec::UnsignedVarint(None),
+                KEEP_ALIVE_TIMEOUT,
+                SubstreamKeepAlive::Yes,
+                InboundProtocol::Accept,
+            )
+        };
+
+        let old = register(&mut manager);
+        let old_tx = manager.protocols.get(&protocol).unwrap().1.tx;
+
+        manager.transport_manager_handle().unregister_protocol(&protocol, &old_tx);
+        assert!(!manager.protocols.contains(&protocol));
+        assert!(!manager.protocols.contains(&fallback));
+
+        let _new = register(&mut manager);
+        drop(old);
+        assert!(manager.protocols.contains(&protocol));
+        assert!(manager.protocols.contains(&fallback));
+    }
+
+    #[test]
+    fn dropped_service_unregisters_protocol() {
+        let mut manager = TransportManagerBuilder::new().build();
+        let protocol = ProtocolName::from("/notif/1");
+
+        let service = manager.register_protocol(
+            protocol.clone(),
+            Vec::new(),
+            ProtocolCodec::UnsignedVarint(None),
+            KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
+            InboundProtocol::Accept,
+        );
+        assert!(manager.protocols.contains(&protocol));
+
+        drop(service);
+        assert!(!manager.protocols.contains(&protocol));
+        assert!(manager.protocols.advertised().is_empty());
+        assert!(manager.protocols.keep_alives().is_empty());
+    }
+
+    #[tokio::test]
+    async fn service_closes_when_manager_is_dropped() {
+        let mut manager = TransportManagerBuilder::new().build();
+        let mut service = manager.register_protocol(
+            ProtocolName::from("/notif/1"),
+            Vec::new(),
+            ProtocolCodec::UnsignedVarint(None),
+            KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
+            InboundProtocol::Accept,
+        );
+
+        drop(manager);
+        assert!(std::matches!(
+            tokio::time::timeout(Duration::from_secs(5), service.next()).await,
+            Ok(None)
+        ));
+    }
+
+    #[test]
+    fn connections_stop_negotiating_unregistered_protocol() {
+        let mut manager = TransportManagerBuilder::new().build();
+        let protocol = ProtocolName::from("/notif/1");
+        let fallback = ProtocolName::from("/notif/1/fallback");
+
+        let service = manager.register_protocol(
+            protocol.clone(),
+            vec![fallback.clone()],
+            ProtocolCodec::UnsignedVarint(None),
+            KEEP_ALIVE_TIMEOUT,
+            SubstreamKeepAlive::Yes,
+            InboundProtocol::Accept,
+        );
+        let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
+        let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
+        assert_eq!(
+            protocol_set
+                .protocols_with_keep_alives()
+                .keys()
+                .cloned()
+                .collect::<HashSet<_>>(),
+            HashSet::from([protocol.clone(), fallback.clone()]),
+        );
+
+        drop(service);
+        assert!(protocol_set.protocols_with_keep_alives().is_empty());
+        assert!(handle
+            .protocol_set(ConnectionId::from(1usize))
+            .protocols_with_keep_alives()
+            .is_empty());
     }
 
     #[test]
@@ -1747,7 +1812,7 @@ mod tests {
     fn duplicate_protocol() {
         let mut manager = TransportManagerBuilder::new().build();
 
-        manager.register_protocol(
+        let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
@@ -1755,7 +1820,7 @@ mod tests {
             SubstreamKeepAlive::Yes,
             InboundProtocol::Accept,
         );
-        manager.register_protocol(
+        let _ = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
@@ -1771,7 +1836,7 @@ mod tests {
     fn fallback_protocol_as_duplicate_main_protocol() {
         let mut manager = TransportManagerBuilder::new().build();
 
-        manager.register_protocol(
+        let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
@@ -1779,7 +1844,7 @@ mod tests {
             SubstreamKeepAlive::Yes,
             InboundProtocol::Accept,
         );
-        manager.register_protocol(
+        let _ = manager.register_protocol(
             ProtocolName::from("/notif/2"),
             vec![
                 ProtocolName::from("/notif/2/new"),
@@ -1798,7 +1863,7 @@ mod tests {
     fn duplicate_fallback_protocol() {
         let mut manager = TransportManagerBuilder::new().build();
 
-        manager.register_protocol(
+        let _service = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             vec![
                 ProtocolName::from("/notif/1/new"),
@@ -1809,7 +1874,7 @@ mod tests {
             SubstreamKeepAlive::Yes,
             InboundProtocol::Accept,
         );
-        manager.register_protocol(
+        let _ = manager.register_protocol(
             ProtocolName::from("/notif/2"),
             vec![
                 ProtocolName::from("/notif/2/new"),

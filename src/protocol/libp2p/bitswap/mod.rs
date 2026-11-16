@@ -831,6 +831,7 @@ mod tests {
             HashSet::new(),
             Default::default(),
             PublicAddresses::new(local_peer),
+            Default::default(),
         );
 
         let (service, _) = TransportService::new(

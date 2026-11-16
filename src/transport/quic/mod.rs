@@ -671,7 +671,8 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )])
+            .into(),
         };
         let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
 
@@ -700,7 +701,8 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )])
+            .into(),
         };
 
         let (mut transport2, _) =

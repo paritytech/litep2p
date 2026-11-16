@@ -20,10 +20,7 @@
 
 use crate::{
     codec::ProtocolCodec,
-    error::{Error, NegotiationError, SubstreamError},
-    multistream_select::{
-        NegotiationError as MultiStreamNegotiationError, ProtocolError as MultiStreamProtocolError,
-    },
+    error::SubstreamError,
     protocol::{
         connection::{ConnectionHandle, Permit},
         transport_service::SubstreamKeepAlive,
@@ -31,14 +28,14 @@ use crate::{
     },
     substream::Substream,
     transport::{
-        manager::{InboundProtocol, ProtocolContext, TransportManagerEvent},
+        manager::{ProtocolRegistry, TransportManagerEvent},
         Endpoint,
     },
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
     PeerId,
 };
 
-use futures::{stream::FuturesUnordered, Stream, StreamExt};
+use futures::Stream;
 use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
@@ -226,17 +223,12 @@ pub enum ProtocolCommand {
 /// Each connection gets a copy of [`ProtocolSet`] which allows it to interact
 /// directly with installed protocols.
 pub struct ProtocolSet {
-    /// Installed protocols, indexed by main protocol name.
-    pub(crate) protocols: HashMap<ProtocolName, ProtocolContext>,
+    protocols: ProtocolRegistry,
     mgr_tx: Sender<TransportManagerEvent>,
     connection: ConnectionHandle,
     rx: Receiver<ProtocolCommand>,
     #[allow(unused)]
     next_substream_id: Arc<AtomicUsize>,
-    /// Mapping `fallback_name` -> `main_name`.
-    fallback_names: HashMap<ProtocolName, ProtocolName>,
-    /// Connection keep-alive settings for both main & fallback protocol names.
-    keep_alives: HashMap<ProtocolName, SubstreamKeepAlive>,
 }
 
 impl ProtocolSet {
@@ -244,65 +236,17 @@ impl ProtocolSet {
         connection_id: ConnectionId,
         mgr_tx: Sender<TransportManagerEvent>,
         next_substream_id: Arc<AtomicUsize>,
-        mut protocols: HashMap<ProtocolName, ProtocolContext>,
+        protocols: ProtocolRegistry,
     ) -> Self {
         let (tx, rx) = channel(256);
-        protocols.retain(|_, context| !context.tx.is_closed());
-
-        let fallback_names = protocols
-            .iter()
-            .flat_map(|(protocol, context)| {
-                context
-                    .fallback_names
-                    .iter()
-                    .map(|fallback| (fallback.clone(), protocol.clone()))
-                    .collect::<HashMap<_, _>>()
-            })
-            .collect::<HashMap<_, _>>();
-
-        // Protocols that don't serve inbound substreams are omitted, which makes the negotiation
-        // of their names fail on inbound substreams.
-        let main_keep_alives = protocols
-            .iter()
-            .filter(|(_, context)| context.inbound == InboundProtocol::Accept)
-            .map(|(name, context)| (name.clone(), context.keep_alive))
-            .collect::<Vec<_>>();
-        let fallback_keep_alives = fallback_names
-            .iter()
-            .filter_map(|(fallback, main)| {
-                let context = protocols
-                    .get(main)
-                    .expect("all main protocols are present due to construction above; qed");
-
-                (context.inbound == InboundProtocol::Accept)
-                    .then(|| (fallback.clone(), context.keep_alive))
-            })
-            .collect::<Vec<_>>();
-        let keep_alives = main_keep_alives.into_iter().chain(fallback_keep_alives).collect();
 
         ProtocolSet {
             rx,
             mgr_tx,
             protocols,
             next_substream_id,
-            fallback_names,
-            keep_alives,
             connection: ConnectionHandle::new(connection_id, tx),
         }
-    }
-
-    /// Stop advertising a protocol that has exited.
-    fn on_protocol_closed(&mut self, protocol: ProtocolName) {
-        tracing::debug!(
-            target: LOG_TARGET,
-            %protocol,
-            connection_id = ?self.connection.connection_id(),
-            "protocol has exited, dropping its events",
-        );
-
-        let fallback_names = &self.fallback_names;
-        self.keep_alives
-            .retain(|name, _| name != &protocol && fallback_names.get(name) != Some(&protocol));
     }
 
     /// Try to acquire permit to keep the connection open.
@@ -316,19 +260,9 @@ impl ProtocolSet {
         SubstreamId::from(self.next_substream_id.fetch_add(1usize, Ordering::Relaxed))
     }
 
-    /// Get the list of all supported protocols.
-    #[cfg(test)]
-    pub fn protocols(&self) -> Vec<ProtocolName> {
-        self.protocols
-            .keys()
-            .cloned()
-            .chain(self.fallback_names.keys().cloned())
-            .collect()
-    }
-
     /// Get the list of all supported protocols with corresponding keep-alive settings.
-    pub fn protocols_with_keep_alives(&self) -> HashMap<ProtocolName, SubstreamKeepAlive> {
-        self.keep_alives.clone()
+    pub fn protocols_with_keep_alives(&self) -> Arc<HashMap<ProtocolName, SubstreamKeepAlive>> {
+        self.protocols.keep_alives()
     }
 
     /// Report to `protocol` that substream was opened for `peer`.
@@ -342,45 +276,34 @@ impl ProtocolSet {
     ) -> Result<(), SubstreamError> {
         tracing::debug!(target: LOG_TARGET, %protocol, ?peer, ?direction, "substream opened");
 
-        let (protocol, fallback) = match self.fallback_names.get(&protocol) {
-            Some(main_protocol) => (main_protocol.clone(), Some(protocol)),
-            None => (protocol, None),
-        };
-
-        let Some(protocol_context) = self.protocols.get(&protocol) else {
-            return Err(NegotiationError::MultistreamSelectError(
-                MultiStreamNegotiationError::ProtocolError(
-                    MultiStreamProtocolError::ProtocolNotSupported,
-                ),
-            )
-            .into());
+        let Some((main_protocol, protocol_context)) = self.protocols.get(&protocol) else {
+            tracing::debug!(target: LOG_TARGET, %protocol, ?peer, "protocol unregistered, dropping substream");
+            return Ok(());
         };
 
         let event = InnerTransportEvent::SubstreamOpened {
             peer,
-            protocol: protocol.clone(),
-            fallback,
+            fallback: (main_protocol != protocol).then_some(protocol),
+            protocol: main_protocol,
             direction,
             substream,
             connection_id: *self.connection.connection_id(),
             opening_permit,
         };
 
-        if protocol_context.tx.send(event).await.is_err() {
-            self.on_protocol_closed(protocol);
-        }
+        let _ = protocol_context.tx.send(event).await;
 
         Ok(())
     }
 
     /// Get codec used by the protocol.
+    ///
+    /// Substreams of unregistered protocols are dropped by [`ProtocolSet::report_substream_open`],
+    /// so their codec doesn't matter.
     pub fn protocol_codec(&self, protocol: &ProtocolName) -> ProtocolCodec {
-        // NOTE: `protocol` must exist in `self.protocol` as it was negotiated
-        // using the protocols from this set
         self.protocols
-            .get(self.fallback_names.get(protocol).map_or(protocol, |protocol| protocol))
-            .expect("protocol to exist")
-            .codec
+            .get(protocol)
+            .map_or(ProtocolCodec::Unspecified, |(_, context)| context.codec)
     }
 
     /// Report to `protocol` that connection failed to open substream for `peer`.
@@ -398,40 +321,25 @@ impl ProtocolSet {
             "failed to open substream",
         );
 
-        let protocol_context = self
-            .protocols
-            .get(&protocol)
-            .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?;
-
-        if protocol_context
-            .tx
-            .send(InnerTransportEvent::SubstreamOpenFailure { substream, error })
-            .await
-            .is_err()
-        {
-            self.on_protocol_closed(protocol);
+        if let Some((_, context)) = self.protocols.get(&protocol) {
+            let _ = context
+                .tx
+                .send(InnerTransportEvent::SubstreamOpenFailure { substream, error })
+                .await;
         }
 
         Ok(())
     }
 
-    /// Report `event` to all protocols, skipping the ones that have exited.
-    async fn report_to_protocols(&mut self, event: impl Fn() -> InnerTransportEvent) {
-        let closed = self
-            .protocols
-            .iter()
-            .map(|(protocol, context)| {
-                let event = event();
-                async move { context.tx.send(event).await.is_err().then(|| protocol.clone()) }
-            })
-            .collect::<FuturesUnordered<_>>()
-            .filter_map(futures::future::ready)
-            .collect::<Vec<_>>()
-            .await;
+    async fn report_to_protocols(&self, event: impl Fn() -> InnerTransportEvent) {
+        let futures = self.protocols.senders().into_iter().map(|(_, tx)| {
+            let event = event();
+            async move {
+                let _ = tx.send(event).await;
+            }
+        });
 
-        for protocol in closed {
-            self.on_protocol_closed(protocol);
-        }
+        futures::future::join_all(futures).await;
     }
 
     /// Report to protocols that a connection was established.
@@ -482,7 +390,10 @@ impl Stream for ProtocolSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{mock::substream::MockSubstream, transport::manager::InboundProtocol};
+    use crate::{
+        mock::substream::MockSubstream,
+        transport::manager::{InboundProtocol, ProtocolContext},
+    };
     use std::collections::HashSet;
 
     #[tokio::test]
@@ -506,18 +417,22 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )])
+            .into(),
         );
 
-        let expected_protocols = HashSet::from([
-            ProtocolName::from("/notif/1"),
-            ProtocolName::from("/notif/1/fallback/1"),
-            ProtocolName::from("/notif/1/fallback/2"),
-        ]);
-
-        for protocol in protocol_set.protocols().iter() {
-            assert!(expected_protocols.contains(protocol));
-        }
+        assert_eq!(
+            protocol_set
+                .protocols_with_keep_alives()
+                .keys()
+                .cloned()
+                .collect::<HashSet<_>>(),
+            HashSet::from([
+                ProtocolName::from("/notif/1"),
+                ProtocolName::from("/notif/1/fallback/1"),
+                ProtocolName::from("/notif/1/fallback/2"),
+            ]),
+        );
 
         let permit = protocol_set.try_get_permit().unwrap();
         protocol_set
@@ -567,13 +482,18 @@ mod tests {
                         inbound: InboundProtocol::Accept,
                     },
                 ),
-            ]),
+            ])
+            .into(),
         );
 
         // the denied protocol and its fallback are not offered to remote peers, which makes
         // `multistream-select` reject them on inbound substreams
         assert_eq!(
-            protocol_set.protocols_with_keep_alives().into_keys().collect::<HashSet<_>>(),
+            protocol_set
+                .protocols_with_keep_alives()
+                .keys()
+                .cloned()
+                .collect::<HashSet<_>>(),
             HashSet::from([
                 ProtocolName::from("/notif/1"),
                 ProtocolName::from("/notif/1/fallback"),
@@ -581,15 +501,10 @@ mod tests {
         );
 
         // the protocol is still installed so that it can open outbound substreams
-        assert_eq!(
-            protocol_set.protocols().into_iter().collect::<HashSet<_>>(),
-            HashSet::from([
-                ProtocolName::from("/kad/1"),
-                ProtocolName::from("/kad/1/fallback"),
-                ProtocolName::from("/notif/1"),
-                ProtocolName::from("/notif/1/fallback"),
-            ]),
-        );
+        assert!(std::matches!(
+            protocol_set.protocol_codec(&ProtocolName::from("/kad/1/fallback")),
+            ProtocolCodec::UnsignedVarint(None)
+        ));
     }
 
     #[tokio::test]
@@ -613,7 +528,8 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )])
+            .into(),
         );
 
         let permit = protocol_set.try_get_permit().unwrap();
@@ -664,7 +580,8 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )])
+            .into(),
         );
 
         let permit = protocol_set.try_get_permit().unwrap();
@@ -725,7 +642,8 @@ mod tests {
                         inbound: InboundProtocol::Accept,
                     },
                 ),
-            ]),
+            ])
+            .into(),
         );
         drop(rx1);
 
@@ -764,7 +682,8 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )])
+            .into(),
         );
         drop(rx1);
 
@@ -788,7 +707,6 @@ mod tests {
             .unwrap();
 
         assert!(protocol_set.try_get_permit().is_none());
-        assert!(protocol_set.protocols_with_keep_alives().is_empty());
     }
 
     #[tokio::test]
@@ -809,7 +727,8 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )])
+            .into(),
         );
         drop(rx1);
 
@@ -841,7 +760,8 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )])
+            .into(),
         );
         drop(rx1);
 
@@ -857,27 +777,85 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn closed_protocol_is_not_advertised() {
+    async fn unregistered_protocol_is_dropped() {
         let (tx, _rx) = channel(64);
-        let (tx1, rx1) = channel(64);
-        drop(rx1);
+        let (tx1, mut rx1) = channel(64);
+        let protocol = ProtocolName::from("/notif/1");
+        let registry = ProtocolRegistry::from(HashMap::from_iter([(
+            protocol.clone(),
+            ProtocolContext {
+                tx: tx1.clone(),
+                codec: ProtocolCodec::Identity(32),
+                fallback_names: Vec::new(),
+                keep_alive: SubstreamKeepAlive::Yes,
+                inbound: InboundProtocol::Accept,
+            },
+        )]));
 
-        let protocol_set = ProtocolSet::new(
+        let mut protocol_set = ProtocolSet::new(
             ConnectionId::from(0usize),
             tx,
             Default::default(),
-            HashMap::from_iter([(
-                ProtocolName::from("/notif/1"),
-                ProtocolContext {
-                    tx: tx1,
-                    codec: ProtocolCodec::Identity(32),
-                    fallback_names: vec![ProtocolName::from("/notif/1/fallback")],
-                    keep_alive: SubstreamKeepAlive::Yes,
-                    inbound: InboundProtocol::Accept,
-                },
-            )]),
+            registry.clone(),
         );
+        assert!(registry.remove(&protocol, &tx1));
 
         assert!(protocol_set.protocols_with_keep_alives().is_empty());
+        assert!(std::matches!(
+            protocol_set.protocol_codec(&protocol),
+            ProtocolCodec::Unspecified
+        ));
+
+        let permit = protocol_set.try_get_permit().unwrap();
+        protocol_set
+            .report_substream_open(
+                PeerId::random(),
+                protocol,
+                Direction::Inbound,
+                Substream::new_mock(
+                    PeerId::random(),
+                    SubstreamId::from(0usize),
+                    Box::new(MockSubstream::new()),
+                ),
+                permit,
+            )
+            .await
+            .unwrap();
+        assert!(rx1.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn open_failure_of_unregistered_protocol_is_dropped() {
+        let (tx, _rx) = channel(64);
+        let (tx1, mut rx1) = channel(64);
+        let protocol = ProtocolName::from("/notif/1");
+        let registry = ProtocolRegistry::from(HashMap::from_iter([(
+            protocol.clone(),
+            ProtocolContext {
+                tx: tx1.clone(),
+                codec: ProtocolCodec::Identity(32),
+                fallback_names: Vec::new(),
+                keep_alive: SubstreamKeepAlive::Yes,
+                inbound: InboundProtocol::Accept,
+            },
+        )]));
+
+        let mut protocol_set = ProtocolSet::new(
+            ConnectionId::from(0usize),
+            tx,
+            Default::default(),
+            registry.clone(),
+        );
+        assert!(registry.remove(&protocol, &tx1));
+
+        protocol_set
+            .report_substream_open_failure(
+                protocol,
+                SubstreamId::from(0usize),
+                SubstreamError::ConnectionClosed,
+            )
+            .await
+            .unwrap();
+        assert!(rx1.try_recv().is_err());
     }
 }
