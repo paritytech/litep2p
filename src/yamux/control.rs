@@ -13,6 +13,7 @@ use crate::yamux::{Connection, ConnectionError, Result, Stream, MAX_ACK_BACKLOG}
 use futures::{
     channel::{mpsc, oneshot},
     prelude::*,
+    stream::FusedStream,
 };
 use std::{
     pin::Pin,
@@ -25,23 +26,36 @@ const LOG_TARGET: &str = "litep2p::yamux::control";
 ///
 /// This presents an alternative API for using a yamux [`Connection`].
 ///
-/// A [`Control`] communicates with a [`ControlledConnection`] via a channel. This allows
+/// A [`Control`] communicates with a [`ControlledConnection`] via channels. This allows
 /// a [`Control`] to be cloned and shared between tasks and threads.
 #[derive(Clone, Debug)]
 pub struct Control {
-    /// Command channel to [`ControlledConnection`].
-    sender: mpsc::Sender<ControlCommand>,
+    open_sender: mpsc::Sender<oneshot::Sender<Result<Stream>>>,
+    /// Close requests bypass opens queued behind a pending open.
+    close_sender: mpsc::Sender<oneshot::Sender<()>>,
 }
 
 impl Control {
     pub fn new<T>(connection: Connection<T>) -> (Self, ControlledConnection<T>) {
-        let (sender, receiver) = mpsc::channel(MAX_ACK_BACKLOG);
+        Self::with_open_buffer(connection, MAX_ACK_BACKLOG)
+    }
 
-        let control = Control { sender };
+    fn with_open_buffer<T>(
+        connection: Connection<T>,
+        open_buffer: usize,
+    ) -> (Self, ControlledConnection<T>) {
+        let (open_sender, open_receiver) = mpsc::channel(open_buffer);
+        let (close_sender, close_receiver) = mpsc::channel(0);
+
+        let control = Control {
+            open_sender,
+            close_sender,
+        };
         let connection = ControlledConnection {
             connection,
             state: State::Idle,
-            commands: receiver,
+            open_requests: open_receiver,
+            close_requests: close_receiver,
             opening: None,
             close_reply: None,
             error: None,
@@ -53,15 +67,15 @@ impl Control {
     /// Open a new stream to the remote.
     pub async fn open_stream(&mut self) -> Result<Stream> {
         let (tx, rx) = oneshot::channel();
-        self.sender.send(ControlCommand::OpenStream(tx)).await?;
+        self.open_sender.send(tx).await?;
         rx.await?
     }
 
     /// Close the connection.
     pub async fn close(&mut self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
-        if self.sender.send(ControlCommand::CloseConnection(tx)).await.is_err() {
-            // The receiver is closed which means the connection is already closed.
+        if self.close_sender.send(tx).await.is_err() {
+            // The receiver is closed which means the connection is closing or closed.
             return Ok(());
         }
         // A dropped `oneshot::Sender` means the `Connection` is gone,
@@ -75,7 +89,8 @@ impl Control {
 pub struct ControlledConnection<T> {
     connection: Connection<T>,
     state: State,
-    commands: mpsc::Receiver<ControlCommand>,
+    open_requests: mpsc::Receiver<oneshot::Sender<Result<Stream>>>,
+    close_requests: mpsc::Receiver<oneshot::Sender<()>>,
     opening: Option<oneshot::Sender<Result<Stream>>>,
     /// Answered once the connection is closed if the close was requested by a [`Control`].
     close_reply: Option<oneshot::Sender<()>>,
@@ -113,7 +128,8 @@ where
         if let Some(opening) = self.opening.take() {
             let _ = opening.send(Err(ConnectionError::Closed));
         }
-        self.commands.close();
+        self.open_requests.close();
+        self.close_requests.close();
         self.close_reply = reply;
         self.state = State::Draining;
     }
@@ -122,6 +138,11 @@ where
         loop {
             match self.state {
                 State::Idle => {
+                    if let Poll::Ready(Some(reply)) = self.close_requests.poll_next_unpin(cx) {
+                        self.start_closing(Some(reply));
+                        continue;
+                    }
+
                     // Retry before `poll_next_inbound`, which returns early for every inbound
                     // stream and would otherwise starve the open.
                     self.poll_opening(cx);
@@ -146,31 +167,34 @@ where
                         continue;
                     }
 
-                    // Queued commands wait until the pending open is answered or canceled.
+                    // Queued opens wait until the pending open is answered or canceled.
                     if self.opening.is_some() {
                         return Poll::Pending;
                     }
 
-                    match self.commands.poll_next_unpin(cx) {
-                        Poll::Ready(Some(ControlCommand::OpenStream(reply))) =>
-                            self.opening = Some(reply),
-                        Poll::Ready(Some(ControlCommand::CloseConnection(reply))) =>
-                            self.start_closing(Some(reply)),
+                    match self.open_requests.poll_next_unpin(cx) {
+                        Poll::Ready(Some(reply)) => self.opening = Some(reply),
                         // Last `Control` sender was dropped, close the connection.
                         Poll::Ready(None) => self.state = State::Closing,
                         Poll::Pending => return Poll::Pending,
                     }
                 }
-                State::Draining => match self.commands.poll_next_unpin(cx) {
-                    Poll::Ready(Some(ControlCommand::OpenStream(reply))) => {
-                        let _ = reply.send(Err(ConnectionError::Closed));
-                    }
-                    Poll::Ready(Some(ControlCommand::CloseConnection(reply))) => {
+                State::Draining => {
+                    while let Poll::Ready(Some(reply)) = self.close_requests.poll_next_unpin(cx) {
                         let _ = reply.send(());
                     }
-                    Poll::Ready(None) => self.state = State::Closing,
-                    Poll::Pending => return Poll::Pending,
-                },
+
+                    match self.open_requests.poll_next_unpin(cx) {
+                        Poll::Ready(Some(reply)) => {
+                            let _ = reply.send(Err(ConnectionError::Closed));
+                        }
+                        // A close racing `start_closing` may be counted but not yet queued.
+                        Poll::Ready(None) if self.close_requests.is_terminated() => {
+                            self.state = State::Closing;
+                        }
+                        Poll::Ready(None) | Poll::Pending => return Poll::Pending,
+                    }
+                }
                 State::Closing => {
                     let result = futures::ready!(self.connection.poll_close(cx));
                     let result = self.error.take().map_or(result, Err);
@@ -190,17 +214,9 @@ where
     }
 }
 
-#[derive(Debug)]
-enum ControlCommand {
-    /// Open a new stream to the remote end.
-    OpenStream(oneshot::Sender<Result<Stream>>),
-    /// Close the whole connection.
-    CloseConnection(oneshot::Sender<()>),
-}
-
 enum State {
     Idle,
-    /// Answering queued requests before closing.
+    /// Answering queued requests, including ones racing `start_closing`, before closing.
     Draining,
     Closing,
     Closed,
@@ -228,9 +244,15 @@ mod tests {
     type Socket = Compat<tokio::io::DuplexStream>;
 
     fn controlled() -> (Control, ControlledConnection<Socket>, Socket) {
+        controlled_with_open_buffer(MAX_ACK_BACKLOG)
+    }
+
+    fn controlled_with_open_buffer(
+        open_buffer: usize,
+    ) -> (Control, ControlledConnection<Socket>, Socket) {
         let (local, remote) = tokio::io::duplex(1 << 20);
         let connection = Connection::new(local.compat(), Config::default(), Mode::Client);
-        let (control, connection) = Control::new(connection);
+        let (control, connection) = Control::with_open_buffer(connection, open_buffer);
         (control, connection, remote.compat())
     }
 
@@ -349,6 +371,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn close_does_not_wait_for_pending_open() {
+        let (mut control, _outbound, _inbound) = saturate_ack_backlog().await;
+        let open = pending_open(&control).await;
+        let queued = pending_open(&control).await;
+
+        timeout(control.close()).await.unwrap();
+        assert!(timeout(open).await.unwrap().is_err());
+        assert!(timeout(queued).await.unwrap().is_err());
+    }
+
+    #[tokio::test]
     async fn close_waits_for_connection_to_close() {
         // A one-byte pipe the remote does not read yet keeps `poll_close` pending.
         let (local, mut remote) = tokio::io::duplex(1);
@@ -372,6 +405,29 @@ mod tests {
         assert!(connection.next().now_or_never().unwrap().is_none());
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn racing_closes_are_all_answered() {
+        for _ in 0..2000 {
+            let (control, mut connection, _remote) = controlled();
+
+            // Keep the connection alive after it ends so only draining can answer a close.
+            let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+            let driver = tokio::spawn(async move {
+                while connection.next().await.is_some() {}
+                let _ = done_rx.await;
+            });
+
+            let closes = (0..8).map(|_| {
+                let mut control = control.clone();
+                tokio::spawn(async move { control.close().await })
+            });
+            timeout(future::join_all(closes)).await;
+
+            let _ = done_tx.send(());
+            timeout(driver).await.unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn inbound_error_closes_connection_with_live_control() {
         let (mut control, mut connection, mut remote) = controlled();
@@ -389,6 +445,34 @@ mod tests {
         timeout(control.close()).await.unwrap();
 
         assert!(timeout(connection.next()).await.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn opens_racing_inbound_error_are_all_answered() {
+        for _ in 0..2000 {
+            // Senders park when the buffer is full, which widens the window in which an open is
+            // counted but not yet queued.
+            let (control, mut connection, mut remote) = controlled_with_open_buffer(0);
+
+            // Stop polling at the first terminal item but keep the connection alive.
+            let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+            let driver = tokio::spawn(async move {
+                while let Some(Ok(_)) = connection.next().await {}
+                let _ = done_rx.await;
+            });
+
+            let opens: Vec<_> = (0..8)
+                .map(|_| {
+                    let mut control = control.clone();
+                    tokio::spawn(async move { control.open_stream().await })
+                })
+                .collect();
+            remote.write_all(&[0xff; 12]).await.unwrap();
+            timeout(future::join_all(opens)).await;
+
+            let _ = done_tx.send(());
+            timeout(driver).await.unwrap();
+        }
     }
 
     #[tokio::test]
