@@ -230,7 +230,7 @@ impl Litep2p {
                 litep2p_config.keep_alive_timeout,
                 SubstreamKeepAlive::Yes,
                 InboundProtocol::Accept,
-            );
+            )?;
             let executor = Arc::clone(&litep2p_config.executor);
             litep2p_config.executor.run(Box::pin(async move {
                 NotificationProtocol::new(service, config, executor).run().await
@@ -252,7 +252,7 @@ impl Litep2p {
                 litep2p_config.keep_alive_timeout,
                 SubstreamKeepAlive::Yes,
                 InboundProtocol::Accept,
-            );
+            )?;
             litep2p_config.executor.run(Box::pin(async move {
                 RequestResponseProtocol::new(service, config).run().await
             }));
@@ -270,7 +270,7 @@ impl Litep2p {
                 // TODO: make configurable by user.
                 SubstreamKeepAlive::Yes,
                 InboundProtocol::Accept,
-            );
+            )?;
             litep2p_config.executor.run(Box::pin(async move {
                 if let Err(error) = protocol.run(service).await {
                     tracing::error!(
@@ -298,7 +298,7 @@ impl Litep2p {
                 litep2p_config.keep_alive_timeout,
                 SubstreamKeepAlive::No,
                 InboundProtocol::Accept,
-            );
+            )?;
             litep2p_config.executor.run(Box::pin(async move {
                 Ping::new(service, ping_config).run().await
             }));
@@ -311,7 +311,7 @@ impl Litep2p {
                 &litep2p_config.executor,
                 litep2p_config.keep_alive_timeout,
                 kademlia_config,
-            );
+            )?;
         }
 
         // start identify protocol event loop if enabled
@@ -331,7 +331,7 @@ impl Litep2p {
                     litep2p_config.keep_alive_timeout,
                     SubstreamKeepAlive::No,
                     InboundProtocol::Accept,
-                );
+                )?;
                 identify_config.public = Some(litep2p_config.keypair.public().into());
 
                 Some((service, identify_config))
@@ -353,7 +353,7 @@ impl Litep2p {
                 litep2p_config.keep_alive_timeout,
                 SubstreamKeepAlive::Yes,
                 InboundProtocol::Accept,
-            );
+            )?;
             litep2p_config.executor.run(Box::pin(async move {
                 Bitswap::new(service, bitswap_config).run().await
             }));
@@ -475,7 +475,7 @@ impl Litep2p {
         executor: &Arc<dyn Executor>,
         keep_alive_timeout: Duration,
         kademlia_config: kademlia::Config,
-    ) {
+    ) -> crate::Result<()> {
         tracing::debug!(
             target: LOG_TARGET,
             protocol_names = ?kademlia_config.protocol_names,
@@ -500,10 +500,11 @@ impl Litep2p {
             keep_alive_timeout,
             SubstreamKeepAlive::Yes,
             inbound,
-        );
+        )?;
         executor.run(Box::pin(async move {
             let _ = Kademlia::new(service, kademlia_config).run().await;
         }));
+        Ok(())
     }
 
     /// Add a Kademlia instance to the running node.
@@ -517,20 +518,12 @@ impl Litep2p {
     /// Fails with [`Error::ProtocolAlreadyExists`] if one of the instance's protocol names is
     /// already in use.
     pub fn register_kademlia(&mut self, kademlia_config: kademlia::Config) -> crate::Result<()> {
-        if let Some(name) = kademlia_config
-            .protocol_names
-            .iter()
-            .find(|name| self.transport_manager.is_protocol_registered(name))
-        {
-            return Err(Error::ProtocolAlreadyExists(name.clone()));
-        }
-
         Self::start_kademlia(
             &mut self.transport_manager,
             &self.executor,
             self.keep_alive_timeout,
             kademlia_config,
-        );
+        )?;
         Ok(())
     }
 

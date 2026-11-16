@@ -1416,3 +1416,38 @@ async fn server_kademlia_registered_at_runtime_serves_established_connections() 
     let connections = find_node_through(&mut node1, &mut node2, &mut kad_handle2, 0).await;
     assert_eq!(connections, 0);
 }
+
+#[tokio::test]
+async fn node_with_clashing_protocol_names_fails_to_start() {
+    let new_node = |config: ConfigBuilder| {
+        Litep2p::new(
+            config
+                .with_tcp(TcpConfig {
+                    listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+                    ..Default::default()
+                })
+                .build(),
+        )
+        .err()
+    };
+    let kad_protocol = ProtocolName::from("/ipfs/kad/1.0.0");
+
+    let (kad_config1, _kad_handle1) = KademliaConfigBuilder::new().build();
+    let (kad_config2, _kad_handle2) = KademliaConfigBuilder::new().build();
+    assert!(matches!(
+        new_node(ConfigBuilder::new().with_libp2p_kademlia(kad_config1).with_libp2p_kademlia(kad_config2)),
+        Some(litep2p::Error::ProtocolAlreadyExists(name)) if name == kad_protocol,
+    ));
+
+    let (notif_config, _notif_handle) =
+        litep2p::protocol::notification::ConfigBuilder::new(ProtocolName::from("/notif/1"))
+            .with_max_size(1024)
+            .with_handshake(vec![1])
+            .with_fallback_names(vec![kad_protocol.clone()])
+            .build();
+    let (kad_config, _kad_handle) = KademliaConfigBuilder::new().build();
+    assert!(matches!(
+        new_node(ConfigBuilder::new().with_notification_protocol(notif_config).with_libp2p_kademlia(kad_config)),
+        Some(litep2p::Error::ProtocolAlreadyExists(name)) if name == kad_protocol,
+    ));
+}
