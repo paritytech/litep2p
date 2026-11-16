@@ -20,6 +20,8 @@
 // DEALINGS IN THE SOFTWARE.
 
 #![allow(clippy::large_enum_variant)]
+// `NetworkBehaviour` derive expands to unreachable code since Rust 1.100.
+#![allow(unreachable_code)]
 
 use futures::{Stream, StreamExt};
 use libp2p::{

@@ -139,5 +139,7 @@ pub trait UserProtocol: Send {
     fn codec(&self) -> ProtocolCodec;
 
     /// Start the the user protocol event loop.
+    ///
+    /// The protocol is unregistered when `service` is dropped.
     async fn run(self: Box<Self>, service: TransportService) -> crate::Result<()>;
 }
