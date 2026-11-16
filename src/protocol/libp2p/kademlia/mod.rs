@@ -43,7 +43,7 @@ use crate::{
 use bytes::{Bytes, BytesMut};
 use futures::StreamExt;
 use multiaddr::Multiaddr;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
 
 use std::{
     collections::{hash_map::Entry, HashMap},
@@ -440,7 +440,7 @@ impl Kademlia {
     ///
     /// Discovered peers are not inserted into the routing table as they haven't proven
     /// they operate in server mode; they remain usable as query candidates.
-    async fn register_discovered_peers(&mut self, peers: &[KademliaPeer]) {
+    fn register_discovered_peers(&mut self, peers: &[KademliaPeer]) {
         let local_peer_id = self.service.local_peer_id();
         let mut discovered = Vec::with_capacity(peers.len());
 
@@ -450,21 +450,20 @@ impl Kademlia {
         }
 
         if !discovered.is_empty() {
-            let _ = self.event_tx.send(KademliaEvent::PeersDiscovered { peers: discovered }).await;
+            self.report_remote_triggered_event(KademliaEvent::PeersDiscovered {
+                peers: discovered,
+            });
         }
     }
 
     /// Insert a peer that answered one of our queries, proving it operates in server mode,
     /// into the routing table if the update mode is automatic.
-    async fn insert_proven_server(&mut self, proven: &KademliaPeer) {
+    fn insert_proven_server(&mut self, proven: &KademliaPeer) {
         // inform user about the routing table update, regardless of what the routing table update
         // mode is
-        let _ = self
-            .event_tx
-            .send(KademliaEvent::RoutingTableUpdate {
-                peers: vec![proven.peer],
-            })
-            .await;
+        self.report_remote_triggered_event(KademliaEvent::RoutingTableUpdate {
+            peers: vec![proven.peer],
+        });
 
         if !std::matches!(self.update_mode, RoutingTableUpdateMode::Automatic) {
             return;
@@ -477,6 +476,14 @@ impl Kademlia {
                 .get(&proven.peer)
                 .map_or(ConnectionType::NotConnected, |_| ConnectionType::Connected),
         );
+    }
+
+    // Dropped if the user lags behind, so remote peers can't stall Kademlia (and with it every
+    // connection delivering to its `TransportService`) on a slow consumer.
+    fn report_remote_triggered_event(&self, event: KademliaEvent) {
+        if let Err(TrySendError::Full(_)) = self.event_tx.try_send(event) {
+            tracing::debug!(target: LOG_TARGET, "event channel clogged, dropping remote-triggered event");
+        }
     }
 
     /// Handle received message.
@@ -509,13 +516,13 @@ impl Kademlia {
 
                         // register the discovered peers and update routing table with the
                         // proven responder
-                        self.register_discovered_peers(&peers).await;
+                        self.register_discovered_peers(&peers);
                         if let Some(proven) = self.engine.register_response(
                             query_id,
                             peer,
                             KademliaMessage::FindNode { target, peers },
                         ) {
-                            self.insert_proven_server(&proven).await;
+                            self.insert_proven_server(&proven);
                         }
                         substream.close().await;
                     }
@@ -552,7 +559,7 @@ impl Kademlia {
                         peer,
                         KademliaMessage::PutValue { record },
                     ) {
-                        self.insert_proven_server(&proven).await;
+                        self.insert_proven_server(&proven);
                     }
                     substream.close().await;
                 }
@@ -578,7 +585,7 @@ impl Kademlia {
                     // TODO: replace this with `send_message` as part of
                     // https://github.com/paritytech/litep2p/issues/429.
 
-                    let _ = self.event_tx.send(KademliaEvent::IncomingRecord { record }).await;
+                    self.report_remote_triggered_event(KademliaEvent::IncomingRecord { record });
                 }
             },
             KademliaMessage::GetRecord { key, record, peers } => {
@@ -595,13 +602,13 @@ impl Kademlia {
 
                         // register the discovered peers and update routing table with the
                         // proven responder
-                        self.register_discovered_peers(&peers).await;
+                        self.register_discovered_peers(&peers);
                         if let Some(proven) = self.engine.register_response(
                             query_id,
                             peer,
                             KademliaMessage::GetRecord { key, record, peers },
                         ) {
-                            self.insert_proven_server(&proven).await;
+                            self.insert_proven_server(&proven);
                         }
 
                         substream.close().await;
@@ -654,16 +661,13 @@ impl Kademlia {
                                 },
                             );
 
-                            let _ = self
-                                .event_tx
-                                .send(KademliaEvent::IncomingProvider {
-                                    provided_key: key,
-                                    provider: ContentProvider {
-                                        peer: provider.peer,
-                                        addresses,
-                                    },
-                                })
-                                .await;
+                            self.report_remote_triggered_event(KademliaEvent::IncomingProvider {
+                                provided_key: key,
+                                provider: ContentProvider {
+                                    peer: provider.peer,
+                                    addresses,
+                                },
+                            });
                         } else {
                             tracing::trace!(
                                 target: LOG_TARGET,
@@ -703,7 +707,7 @@ impl Kademlia {
 
                         // register the discovered peers and update routing table with the
                         // proven responder
-                        self.register_discovered_peers(&peers).await;
+                        self.register_discovered_peers(&peers);
                         if let Some(proven) = self.engine.register_response(
                             query_id,
                             peer,
@@ -713,7 +717,7 @@ impl Kademlia {
                                 providers,
                             },
                         ) {
-                            self.insert_proven_server(&proven).await;
+                            self.insert_proven_server(&proven);
                         }
 
                         substream.close().await;
@@ -1766,7 +1770,7 @@ mod tests {
 
         // simulate handling a `FIND_NODE` response from the responder listing `discovered`
         let peers = vec![discovered.clone()];
-        kademlia.register_discovered_peers(&peers).await;
+        kademlia.register_discovered_peers(&peers);
         let proven = kademlia
             .engine
             .register_response(
@@ -1778,7 +1782,7 @@ mod tests {
                 },
             )
             .expect("responder to be returned as proven server");
-        kademlia.insert_proven_server(&proven).await;
+        kademlia.insert_proven_server(&proven);
 
         // only the responder was inserted into the routing table
         assert!(std::matches!(
@@ -1965,6 +1969,64 @@ mod tests {
                 assert_eq!(p.addresses, global);
             }
             event => panic!("unexpected event: {event:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_triggered_events_dont_block_on_clogged_event_channel() {
+        let (mut kademlia, _context, _manager) = make_kademlia();
+        while kademlia
+            .event_tx
+            .try_send(KademliaEvent::QueryFailed {
+                query_id: QueryId(0),
+            })
+            .is_ok()
+        {}
+
+        let peer = PeerId::random();
+        let address = Multiaddr::from_str("/ip4/8.8.8.8/tcp/30333").unwrap();
+        let record = Record::new(RecordKey::from(vec![1, 2, 3]), vec![4, 5, 6]);
+        let messages = [
+            (None, KademliaMessage::put_value(record).to_vec()),
+            (
+                None,
+                KademliaMessage::add_provider(
+                    RecordKey::from(vec![1]),
+                    ContentProvider {
+                        peer,
+                        addresses: vec![address.clone()],
+                    },
+                )
+                .to_vec(),
+            ),
+            (
+                Some(QueryId(0)),
+                KademliaMessage::find_node_response(
+                    PeerId::random().to_bytes(),
+                    vec![KademliaPeer::new(
+                        PeerId::random(),
+                        vec![address],
+                        ConnectionType::NotConnected,
+                    )],
+                )
+                .to_vec(),
+            ),
+        ];
+
+        for (query_id, message) in messages {
+            let mut substream = MockSubstream::new();
+            substream.expect_poll_close().returning(|_| Poll::Ready(Ok(())));
+            let received = kademlia.on_message_received(
+                peer,
+                query_id,
+                BytesMut::from(&message[..]),
+                Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream)),
+            );
+
+            tokio::time::timeout(Duration::from_secs(5), received)
+                .await
+                .expect("remote-triggered event must not block kademlia")
+                .unwrap();
         }
     }
 }
