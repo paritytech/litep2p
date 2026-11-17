@@ -965,7 +965,8 @@ mod tests {
                     keep_alive: SubstreamKeepAlive::Yes,
                     inbound: InboundProtocol::Accept,
                 },
-            )]),
+            )])
+            .into(),
         );
         protocol_set.report_connection_established(peer, local.endpoint.clone()).await;
         let mut handle = match protocol_rx.recv().await.unwrap() {
