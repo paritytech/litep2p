@@ -740,8 +740,12 @@ mod tests {
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
         protocol::SubstreamKeepAlive,
-        transport::manager::{
-            InboundProtocol, ProtocolContext, SupportedTransport, TransportManagerBuilder,
+        transport::{
+            common::inbound_socket,
+            manager::{
+                limits::DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS, InboundProtocol, ProtocolContext,
+                SupportedTransport, TransportManagerBuilder,
+            },
         },
         types::protocol::ProtocolName,
         BandwidthSink, PeerId,
@@ -749,16 +753,6 @@ mod tests {
     use multiaddr::Protocol;
     use std::sync::Arc;
     use tokio::sync::mpsc::channel;
-
-    async fn inbound_socket() -> (TcpStream, TcpStream, SocketAddr) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let (client, server) = tokio::join!(
-            TcpStream::connect(listener.local_addr().unwrap()),
-            listener.accept()
-        );
-        let (server, address) = server.unwrap();
-        (client.unwrap(), server, address)
-    }
 
     #[tokio::test]
     async fn inbound_opening_capacity_and_failure_cleanup() {
@@ -831,7 +825,10 @@ mod tests {
             Some(TransportEvent::PendingInboundConnection { .. })
         ));
         assert!(transport.pending_connections.is_empty());
-        assert_eq!(capacity.available_permits(), 256);
+        assert_eq!(
+            capacity.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS
+        );
     }
 
     #[tokio::test]
@@ -855,7 +852,9 @@ mod tests {
         let bandwidth_sink = BandwidthSink::new();
 
         let handle1 = crate::transport::manager::TransportHandle {
-            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(256)),
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            )),
             dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
@@ -892,7 +891,9 @@ mod tests {
         let (event_tx2, _event_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
-            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(256)),
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            )),
             dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
@@ -939,7 +940,10 @@ mod tests {
         else {
             panic!("connection did not establish");
         };
-        assert_eq!(capacity.available_permits(), 255);
+        assert_eq!(
+            capacity.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS - 1
+        );
 
         let event = from_transport2.recv().await.unwrap();
         assert!(std::matches!(
@@ -951,7 +955,10 @@ mod tests {
         } else {
             transport1.reject(endpoint.connection_id()).unwrap();
         }
-        assert_eq!(capacity.available_permits(), 256);
+        assert_eq!(
+            capacity.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS
+        );
     }
 
     #[tokio::test]
@@ -966,7 +973,9 @@ mod tests {
         let bandwidth_sink = BandwidthSink::new();
 
         let handle1 = crate::transport::manager::TransportHandle {
-            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(256)),
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            )),
             dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
@@ -1002,7 +1011,9 @@ mod tests {
         let (event_tx2, _event_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
-            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(256)),
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            )),
             dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
@@ -1065,7 +1076,9 @@ mod tests {
         let bandwidth_sink = BandwidthSink::new();
 
         let handle1 = crate::transport::manager::TransportHandle {
-            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(256)),
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            )),
             dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
@@ -1108,7 +1121,9 @@ mod tests {
         let (event_tx2, _event_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
-            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(256)),
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            )),
             dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),

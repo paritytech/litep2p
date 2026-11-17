@@ -418,6 +418,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::transport::manager::limits::DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS;
     use parking_lot::lock_api::RwLock;
     use tokio::sync::mpsc::{channel, Receiver};
 
@@ -425,12 +426,15 @@ mod tests {
     fn default_inbound_opening_capacity() {
         let manager = crate::transport::manager::TransportManagerBuilder::new().build();
         let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
-        let permits: Vec<_> = (0..256)
+        let permits: Vec<_> = (0..DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS)
             .map(|_| handle.try_acquire_inbound_permit(Duration::from_secs(10)).unwrap())
             .collect();
         assert!(handle.try_acquire_inbound_permit(Duration::from_secs(10)).is_none());
         drop(permits);
-        assert_eq!(handle.pending_incoming_connections.available_permits(), 256);
+        assert_eq!(
+            handle.pending_incoming_connections.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS
+        );
     }
 
     #[test]

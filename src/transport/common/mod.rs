@@ -21,3 +21,19 @@
 //! Shared transport protocol implementation
 
 pub mod listener;
+
+/// Connected loopback TCP pair: `(client, server, client address)`.
+#[cfg(test)]
+pub(crate) async fn inbound_socket() -> (
+    tokio::net::TcpStream,
+    tokio::net::TcpStream,
+    std::net::SocketAddr,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (client, server) = tokio::join!(
+        tokio::net::TcpStream::connect(listener.local_addr().unwrap()),
+        listener.accept()
+    );
+    let (server, address) = server.unwrap();
+    (client.unwrap(), server, address)
+}

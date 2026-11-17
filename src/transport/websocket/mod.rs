@@ -776,16 +776,9 @@ impl Stream for WebSocketTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    async fn inbound_socket() -> (TcpStream, TcpStream, SocketAddr) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let (client, server) = tokio::join!(
-            TcpStream::connect(listener.local_addr().unwrap()),
-            listener.accept()
-        );
-        let (server, address) = server.unwrap();
-        (client.unwrap(), server, address)
-    }
+    use crate::transport::{
+        common::inbound_socket, manager::limits::DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+    };
 
     #[tokio::test]
     async fn inbound_opening_capacity_and_failure_cleanup() {
@@ -858,6 +851,9 @@ mod tests {
             Some(TransportEvent::PendingInboundConnection { .. })
         ));
         assert!(transport.pending_connections.is_empty());
-        assert_eq!(capacity.available_permits(), 256);
+        assert_eq!(
+            capacity.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS
+        );
     }
 }

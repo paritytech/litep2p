@@ -28,6 +28,9 @@ use std::{
 };
 use tokio::sync::OwnedSemaphorePermit;
 
+/// Default limit of concurrent incoming openings, per transport.
+pub(crate) const DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS: usize = 256;
+
 /// Configuration for the connection limits.
 #[derive(Debug, Clone)]
 pub struct ConnectionLimitsConfig {
@@ -42,7 +45,7 @@ pub struct ConnectionLimitsConfig {
 impl Default for ConnectionLimitsConfig {
     fn default() -> Self {
         Self {
-            max_pending_incoming_connections: 256,
+            max_pending_incoming_connections: DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
             max_incoming_connections: None,
             max_outgoing_connections: None,
         }

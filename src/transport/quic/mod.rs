@@ -677,7 +677,10 @@ mod tests {
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
         protocol::SubstreamKeepAlive,
-        transport::manager::{InboundProtocol, ProtocolContext, TransportHandle},
+        transport::manager::{
+            limits::DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS, InboundProtocol, ProtocolContext,
+            TransportHandle,
+        },
         types::protocol::ProtocolName,
         BandwidthSink,
     };
@@ -694,7 +697,9 @@ mod tests {
         let (event_tx1, _event_rx1) = channel(64);
 
         let handle1 = TransportHandle {
-            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(256)),
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            )),
             dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
@@ -727,7 +732,9 @@ mod tests {
         let (event_tx2, _event_rx2) = channel(64);
 
         let handle2 = TransportHandle {
-            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(256)),
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            )),
             dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
@@ -779,7 +786,10 @@ mod tests {
         else {
             panic!("connection did not establish");
         };
-        assert_eq!(capacity.available_permits(), 255);
+        assert_eq!(
+            capacity.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS - 1
+        );
 
         let res2 = from_transport2.recv().await.unwrap();
         assert!(std::matches!(
@@ -788,7 +798,10 @@ mod tests {
         ));
 
         drop(transport1.accept(endpoint.connection_id()).unwrap());
-        assert_eq!(capacity.available_permits(), 256);
+        assert_eq!(
+            capacity.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS
+        );
     }
 
     #[tokio::test]

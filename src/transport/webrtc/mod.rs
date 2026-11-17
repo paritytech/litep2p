@@ -445,13 +445,11 @@ impl WebRtcTransport {
             return Ok(false);
         }
 
-        // if the peer doesn't exist, decode the message and expect to receive `Stun`
-        // so that a new connection can be initialized
-        let contents: DatagramRecv =
-            buffer.as_slice().try_into().map_err(|_| Error::InvalidData)?;
-
         // If an opening connection already exists for this source, route all packets to it
         if let Some(opening_conn) = self.opening.get_mut(&addrs) {
+            let contents: DatagramRecv =
+                buffer.as_slice().try_into().map_err(|_| Error::InvalidData)?;
+
             tracing::trace!(
                 target: LOG_TARGET,
                 ?addrs,
@@ -480,6 +478,21 @@ impl WebRtcTransport {
             return Ok(false);
         }
 
+        // Reserve capacity before decoding, so that datagrams dropped at capacity stay cheap.
+        let Some(permit) = self.context.try_acquire_inbound_permit(self.connection_open_timeout)
+        else {
+            if let Some(dropped) = self.context.dropped_openings.record() {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    dropped,
+                    "inbound connections dropped: `max_pending_incoming_connections` reached",
+                );
+            }
+            return Ok(false);
+        };
+
+        let contents: DatagramRecv =
+            buffer.as_slice().try_into().map_err(|_| Error::InvalidData)?;
         let stun_message =
             str0m::ice::StunMessage::parse(&buffer).map_err(|_| Error::InvalidData)?;
         let Some((ufrag, pass)) = stun_message.split_username() else {
@@ -499,17 +512,6 @@ impl WebRtcTransport {
         );
 
         // create new `Rtc` object for the peer and give it the received STUN message
-        let Some(permit) = self.context.try_acquire_inbound_permit(self.connection_open_timeout)
-        else {
-            if let Some(dropped) = self.context.dropped_openings.record() {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    dropped,
-                    "inbound connections dropped: `max_pending_incoming_connections` reached",
-                );
-            }
-            return Ok(false);
-        };
         let (rtc, noise_channel_id) = self.make_rtc(ufrag, pass, &addrs)?;
 
         let connection_id = self.context.next_connection_id();
@@ -897,7 +899,10 @@ mod tests {
     use super::*;
     use crate::{
         executor::DefaultExecutor,
-        transport::{manager::TransportManagerBuilder, CONNECTION_OPEN_TIMEOUT},
+        transport::{
+            manager::{limits::DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS, TransportManagerBuilder},
+            ConnectionLimitsConfig, CONNECTION_OPEN_TIMEOUT,
+        },
     };
     use futures::{future::poll_fn, task::noop_waker};
     use multiaddr::Protocol;
@@ -905,7 +910,15 @@ mod tests {
     use tokio::net::UdpSocket;
 
     async fn transport() -> (WebRtcTransport, SocketAddr) {
-        let manager = TransportManagerBuilder::new().build();
+        transport_with_limit(DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS).await
+    }
+
+    async fn transport_with_limit(limit: usize) -> (WebRtcTransport, SocketAddr) {
+        let manager = TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                ConnectionLimitsConfig::default().max_pending_incoming_connections(limit),
+            )
+            .build();
         let (transport, addresses) = WebRtcTransport::new(
             manager.transport_handle(Arc::new(DefaultExecutor)),
             Config {
@@ -1148,24 +1161,8 @@ mod tests {
     }
 
     async fn opening_transport(limit: usize) -> (WebRtcTransport, Arc<WebRtcSocket>, AddressPair) {
-        let manager = crate::transport::manager::TransportManagerBuilder::new()
-            .with_connection_limits_config(
-                crate::transport::ConnectionLimitsConfig::default()
-                    .max_pending_incoming_connections(limit),
-            )
-            .build();
-        let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
-        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
-        let (transport, _) = WebRtcTransport::new(
-            handle,
-            Config {
-                listen_addresses: vec!["/ip4/127.0.0.1/udp/0/webrtc-direct".parse().unwrap()],
-                ..Default::default()
-            },
-            resolver,
-        )
-        .unwrap();
-        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (transport, _) = transport_with_limit(limit).await;
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let addrs = AddressPair {
             local: socket.local_addr().unwrap(),
             remote: "127.0.0.1:40000".parse().unwrap(),
@@ -1175,22 +1172,6 @@ mod tests {
             Arc::new(WebRtcSocket::new(socket).unwrap()),
             addrs,
         )
-    }
-
-    fn opening_datagram() -> Vec<u8> {
-        let message = str0m::ice::StunMessage::binding_request(
-            "user:password",
-            str0m::ice::TransId::new(),
-            true,
-            1,
-            1,
-            false,
-        );
-        let mut buffer = vec![0; 256];
-        // Admission precedes ICE authentication.
-        let len = message.to_bytes(Some(b"password"), &mut buffer, |_, _| [0; 20]).unwrap();
-        buffer.truncate(len);
-        buffer
     }
 
     fn queue_established_event(
@@ -1214,12 +1195,28 @@ mod tests {
             .context
             .try_acquire_inbound_permit(transport.connection_open_timeout)
             .unwrap();
-        assert!(!transport.on_socket_input(addrs, &socket, opening_datagram()).unwrap());
+        assert!(!transport
+            .on_socket_input(addrs, &socket, stun_request("user:password"))
+            .unwrap());
         assert!(transport.opening.is_empty());
+
+        // Admission is checked before decoding: at capacity a malformed datagram is dropped,
+        // otherwise it is an error and its capacity is released.
+        let mut malformed = vec![0u8; 20];
+        malformed[4..8].copy_from_slice(&[0x21, 0x12, 0xA4, 0x42]);
+        assert!(!transport.on_socket_input(addrs, &socket, malformed.clone()).unwrap());
         drop(other);
+        assert!(transport.on_socket_input(addrs, &socket, malformed).is_err());
+        assert_eq!(
+            transport.context.pending_incoming_connections.available_permits(),
+            1
+        );
+        assert!(transport.opening.is_empty());
 
         let before = Instant::now();
-        assert!(transport.on_socket_input(addrs, &socket, opening_datagram()).unwrap());
+        assert!(transport
+            .on_socket_input(addrs, &socket, stun_request("user:password"))
+            .unwrap());
         let deadline = transport.opening[&addrs].permit.deadline;
         assert!(deadline >= before + Duration::from_secs(10));
         assert!(deadline <= Instant::now() + Duration::from_secs(10));
@@ -1232,8 +1229,12 @@ mod tests {
             remote: "127.0.0.1:40001".parse().unwrap(),
             ..addrs
         };
-        assert!(!transport.on_socket_input(another, &socket, opening_datagram()).unwrap());
-        assert!(transport.on_socket_input(addrs, &socket, opening_datagram()).unwrap());
+        assert!(!transport
+            .on_socket_input(another, &socket, stun_request("user:password"))
+            .unwrap());
+        assert!(transport
+            .on_socket_input(addrs, &socket, stun_request("user:password"))
+            .unwrap());
         assert_eq!(transport.opening.len(), 1);
         assert_eq!(transport.opening[&addrs].permit.deadline, deadline);
     }
@@ -1241,17 +1242,23 @@ mod tests {
     #[tokio::test]
     async fn openings_share_a_global_budget_without_a_per_ip_limit() {
         let (mut transport, socket, addrs) = opening_transport(2).await;
-        assert!(transport.on_socket_input(addrs, &socket, opening_datagram()).unwrap());
+        assert!(transport
+            .on_socket_input(addrs, &socket, stun_request("user:password"))
+            .unwrap());
         let another = AddressPair {
             remote: "127.0.0.1:40001".parse().unwrap(),
             ..addrs
         };
-        assert!(transport.on_socket_input(another, &socket, opening_datagram()).unwrap());
+        assert!(transport
+            .on_socket_input(another, &socket, stun_request("user:password"))
+            .unwrap());
         let third = AddressPair {
             remote: "127.0.0.2:40000".parse().unwrap(),
             ..addrs
         };
-        assert!(!transport.on_socket_input(third, &socket, opening_datagram()).unwrap());
+        assert!(!transport
+            .on_socket_input(third, &socket, stun_request("user:password"))
+            .unwrap());
         let capacity = transport.context.pending_incoming_connections.clone();
         assert_eq!(capacity.available_permits(), 0);
         drop(transport);
@@ -1261,7 +1268,9 @@ mod tests {
     #[tokio::test]
     async fn opening_expiry_removes_timers_and_stale_events() {
         let (mut transport, socket, addrs) = opening_transport(1).await;
-        assert!(transport.on_socket_input(addrs, &socket, opening_datagram()).unwrap());
+        assert!(transport
+            .on_socket_input(addrs, &socket, stun_request("user:password"))
+            .unwrap());
         queue_established_event(&mut transport, addrs);
         transport.timeouts.insert(addrs, Delay::new(Duration::from_secs(60)));
         transport.opening.get_mut(&addrs).unwrap().permit.deadline = Instant::now();
@@ -1275,13 +1284,17 @@ mod tests {
             transport.context.pending_incoming_connections.available_permits(),
             1
         );
-        assert!(transport.on_socket_input(addrs, &socket, opening_datagram()).unwrap());
+        assert!(transport
+            .on_socket_input(addrs, &socket, stun_request("user:password"))
+            .unwrap());
     }
 
     #[tokio::test]
     async fn opening_timeout_is_capped_by_absolute_deadline() {
         let (mut transport, socket, addrs) = opening_transport(1).await;
-        assert!(transport.on_socket_input(addrs, &socket, opening_datagram()).unwrap());
+        assert!(transport
+            .on_socket_input(addrs, &socket, stun_request("user:password"))
+            .unwrap());
         transport.opening.get_mut(&addrs).unwrap().permit.deadline =
             Instant::now() + Duration::from_millis(20);
         let ConnectionEvent::Timeout { timeout } = transport.poll_connection(&addrs) else {
@@ -1316,7 +1329,9 @@ mod tests {
     async fn opening_rejection_and_failed_acceptance_release_capacity() {
         let (mut transport, socket, addrs) = opening_transport(1).await;
         for accept in [false, true] {
-            assert!(transport.on_socket_input(addrs, &socket, opening_datagram()).unwrap());
+            assert!(transport
+                .on_socket_input(addrs, &socket, stun_request("user:password"))
+                .unwrap());
             let connection_id = queue_established_event(&mut transport, addrs);
             transport.timeouts.insert(addrs, Delay::new(Duration::from_secs(60)));
             if accept {
