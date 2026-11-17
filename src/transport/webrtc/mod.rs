@@ -990,8 +990,8 @@ mod tests {
         let connection = &transport.opening[&addrs];
         let deadline = connection.deadline();
         let connection_id = *connection.connection_id();
-        assert!(deadline >= before + Duration::from_secs(10));
-        assert!(deadline <= after + Duration::from_secs(10));
+        assert!(deadline >= before + CONNECTION_OPEN_TIMEOUT);
+        assert!(deadline <= after + CONNECTION_OPEN_TIMEOUT);
 
         let waker = noop_waker();
         let mut cx = Context::from_waker(&waker);
