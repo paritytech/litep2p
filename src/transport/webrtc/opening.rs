@@ -203,12 +203,13 @@ impl OpeningWebRtcConnection {
     }
 
     /// Absolute opening deadline.
+    #[cfg(test)]
     pub fn deadline(&self) -> Instant {
         self.deadline
     }
 
     /// Whether the opening deadline has elapsed.
-    fn is_expired(&self) -> bool {
+    pub fn is_expired(&self) -> bool {
         Instant::now() >= self.deadline
     }
 

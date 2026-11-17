@@ -28,7 +28,7 @@ use crate::{
             config::Config, connection::WebRtcConnection, listener::WebRtcListener,
             opening::OpeningWebRtcConnection, socket::WebRtcSocket,
         },
-        Endpoint, Transport, TransportBuilder, TransportEvent, CONNECTION_OPEN_TIMEOUT,
+        Endpoint, Transport, TransportBuilder, TransportEvent,
     },
     types::ConnectionId,
     PeerId,
@@ -54,7 +54,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 pub(crate) use substream::Substream;
@@ -180,6 +180,9 @@ pub(crate) struct WebRtcTransport {
     /// Datagram buffer size.
     datagram_buffer_size: usize,
 
+    /// Connection open timeout.
+    connection_open_timeout: Duration,
+
     /// Connected peers.
     open: HashMap<AddressPair, ConnectionContext>,
 
@@ -193,7 +196,7 @@ pub(crate) struct WebRtcTransport {
     connections: HashMap<ConnectionId, (PeerId, AddressPair, Endpoint)>,
 
     /// Pending timeouts.
-    timeouts: HashMap<AddressPair, BoxFuture<'static, ()>>,
+    timeouts: HashMap<AddressPair, Delay>,
 
     /// Pending events.
     pending_events: VecDeque<TransportEvent>,
@@ -263,23 +266,19 @@ impl WebRtcTransport {
         loop {
             match connection.poll_process() {
                 opening::WebRtcEvent::Timeout { timeout } => {
-                    let duration = timeout.saturating_duration_since(Instant::now());
+                    if timeout > Instant::now() {
+                        return ConnectionEvent::Timeout { timeout };
+                    }
 
-                    match duration.is_zero() {
-                        true => match connection.on_timeout() {
-                            Ok(()) => continue,
-                            Err(error) => {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?addrs,
-                                    ?error,
-                                    "failed to handle timeout",
-                                );
+                    if let Err(error) = connection.on_timeout() {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?addrs,
+                            ?error,
+                            "failed to handle timeout",
+                        );
 
-                                return ConnectionEvent::ConnectionClosed;
-                            }
-                        },
-                        false => return ConnectionEvent::Timeout { timeout },
+                        return ConnectionEvent::ConnectionClosed;
                     }
                 }
                 opening::WebRtcEvent::Transmit {
@@ -325,18 +324,28 @@ impl WebRtcTransport {
         Some(connection)
     }
 
-    /// Expire openings before delivering queued events.
-    fn expire_openings(&mut self) {
-        let now = Instant::now();
-        let expired: Vec<_> = self
-            .opening
-            .iter()
-            .filter_map(|(addrs, connection)| (now >= connection.deadline()).then_some(*addrs))
-            .collect();
+    /// Pop the next event, dropping establishments of expired openings.
+    ///
+    /// Other expired openings are removed by their timers, capped to the deadline.
+    fn pop_event(&mut self) -> Option<TransportEvent> {
+        while let Some(event) = self.pending_events.pop_front() {
+            if let TransportEvent::ConnectionEstablished { endpoint, .. } = &event {
+                let expired = self
+                    .connections
+                    .get(&endpoint.connection_id())
+                    .map(|(_, addrs, _)| *addrs)
+                    .filter(|addrs| self.opening.get(addrs).is_some_and(|c| c.is_expired()));
 
-        for addrs in expired {
-            self.remove_opening(&addrs);
+                if let Some(addrs) = expired {
+                    self.remove_opening(&addrs);
+                    continue;
+                }
+            }
+
+            return Some(event);
         }
+
+        None
     }
 
     /// Drain opening output and register its next wakeup.
@@ -358,7 +367,7 @@ impl WebRtcTransport {
                     if Pin::new(&mut delay).poll(cx).is_ready() {
                         cx.waker().wake_by_ref();
                     }
-                    self.timeouts.insert(*addrs, Box::pin(delay));
+                    self.timeouts.insert(*addrs, delay);
                     return;
                 }
             }
@@ -431,11 +440,7 @@ impl WebRtcTransport {
             }
         }
 
-        if self
-            .opening
-            .get(&addrs)
-            .is_some_and(|connection| Instant::now() >= connection.deadline())
-        {
+        if self.opening.get(&addrs).is_some_and(|connection| connection.is_expired()) {
             self.remove_opening(&addrs);
             return Ok(false);
         }
@@ -494,7 +499,7 @@ impl WebRtcTransport {
         );
 
         // create new `Rtc` object for the peer and give it the received STUN message
-        let deadline = Instant::now() + CONNECTION_OPEN_TIMEOUT;
+        let deadline = Instant::now() + self.connection_open_timeout;
         let (rtc, noise_channel_id) = self.make_rtc(ufrag, pass, &addrs)?;
 
         let connection_id = self.context.next_connection_id();
@@ -564,6 +569,7 @@ impl TransportBuilder for WebRtcTransport {
                 timeouts: HashMap::new(),
                 pending_events: VecDeque::new(),
                 datagram_buffer_size: config.datagram_buffer_size,
+                connection_open_timeout: config.connection_open_timeout,
                 read_buffer,
             },
             listen_multi_addresses,
@@ -731,9 +737,7 @@ impl Stream for WebRtcTransport {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = Pin::into_inner(self);
 
-        this.expire_openings();
-
-        if let Some(event) = this.pending_events.pop_front() {
+        if let Some(event) = this.pop_event() {
             return Poll::Ready(Some(event));
         }
 
@@ -824,10 +828,7 @@ impl Stream for WebRtcTransport {
             this.process_connection(&addrs, cx);
         }
 
-        this.expire_openings();
-        this.pending_events
-            .pop_front()
-            .map_or(Poll::Pending, |event| Poll::Ready(Some(event)))
+        this.pop_event().map_or(Poll::Pending, |event| Poll::Ready(Some(event)))
     }
 }
 
@@ -884,10 +885,12 @@ fn is_forwardable(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{executor::DefaultExecutor, transport::manager::TransportManagerBuilder};
+    use crate::{
+        executor::DefaultExecutor,
+        transport::{manager::TransportManagerBuilder, CONNECTION_OPEN_TIMEOUT},
+    };
     use futures::{future::poll_fn, task::noop_waker};
     use multiaddr::Protocol;
-    use std::time::Duration;
     use str0m::ice::{StunMessage, TransId};
     use tokio::net::UdpSocket;
 
@@ -1017,7 +1020,7 @@ mod tests {
         transport.process_connection(&addrs, &mut Context::from_waker(&waker));
 
         // Force a protocol wakeup, so poll_next must register the replacement timer.
-        transport.timeouts.insert(addrs, Box::pin(Delay::new(Duration::ZERO)));
+        transport.timeouts.insert(addrs, Delay::new(Duration::ZERO));
         let task = tokio::spawn(async move {
             poll_fn(|cx| {
                 assert!(Pin::new(&mut transport).poll_next(cx).is_pending());
@@ -1041,7 +1044,7 @@ mod tests {
         let (addrs, socket, _) = receive_stun(&mut transport, address).await;
         let connection_id = insert_opening(&mut transport, addrs, socket, Instant::now());
         queue_established(&mut transport, addrs, connection_id);
-        transport.timeouts.insert(addrs, Box::pin(Delay::new(Duration::from_secs(60))));
+        transport.timeouts.insert(addrs, Delay::new(Duration::from_secs(60)));
 
         let buffer = stun_request("user:password");
         let connection = transport.opening.get_mut(&addrs).unwrap();
@@ -1068,7 +1071,7 @@ mod tests {
         let (addrs, socket, _) = receive_stun(&mut transport, address).await;
         let connection_id = insert_opening(&mut transport, addrs, socket, Instant::now());
         queue_established(&mut transport, addrs, connection_id);
-        transport.timeouts.insert(addrs, Box::pin(Delay::new(Duration::from_secs(60))));
+        transport.timeouts.insert(addrs, Delay::new(Duration::from_secs(60)));
 
         assert!(matches!(
             transport.accept(connection_id),
@@ -1089,7 +1092,7 @@ mod tests {
             Instant::now() + CONNECTION_OPEN_TIMEOUT,
         );
         queue_established(&mut transport, addrs, connection_id);
-        transport.timeouts.insert(addrs, Box::pin(Delay::new(CONNECTION_OPEN_TIMEOUT)));
+        transport.timeouts.insert(addrs, Delay::new(CONNECTION_OPEN_TIMEOUT));
 
         transport.reject(connection_id).unwrap();
         assert_no_openings(&transport);
@@ -1098,7 +1101,7 @@ mod tests {
     #[tokio::test]
     async fn receive_budget_preserves_timer_progress_with_queued_datagrams() {
         use futures::task::{waker, ArcWake};
-        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         struct WakeCounter(AtomicUsize);
         impl ArcWake for WakeCounter {
@@ -1109,21 +1112,9 @@ mod tests {
 
         let (mut transport, address) = transport().await;
         let (addrs, socket, _) = receive_stun(&mut transport, address).await;
-        insert_opening(
-            &mut transport,
-            addrs,
-            socket,
-            Instant::now() + CONNECTION_OPEN_TIMEOUT,
-        );
-        let timer_polled = Arc::new(AtomicBool::new(false));
-        let timer_polled_clone = timer_polled.clone();
-        transport.timeouts.insert(
-            addrs,
-            Box::pin(poll_fn(move |_| {
-                timer_polled_clone.store(true, Ordering::Relaxed);
-                Poll::Pending
-            })),
-        );
+        // Only the fired timer can remove this expired opening.
+        insert_opening(&mut transport, addrs, socket, Instant::now());
+        transport.timeouts.insert(addrs, Delay::new(Duration::ZERO));
         let sender = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         for _ in 0..=MAX_SOCKET_READS_PER_POLL {
             sender.send_to(&[0xff; 20], address).unwrap();
@@ -1133,7 +1124,7 @@ mod tests {
         let waker = waker(counter.clone());
         let mut cx = Context::from_waker(&waker);
         assert!(Pin::new(&mut transport).poll_next(&mut cx).is_pending());
-        assert!(timer_polled.load(Ordering::Relaxed));
+        assert!(transport.opening.is_empty());
         assert!(counter.0.load(Ordering::Relaxed) > 0);
         assert!(matches!(
             transport.listener.poll_recv_from(&mut cx, &mut transport.read_buffer),
