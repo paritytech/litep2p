@@ -916,7 +916,7 @@ mod tests {
     async fn transport_with_limit(limit: usize) -> (WebRtcTransport, SocketAddr) {
         let manager = TransportManagerBuilder::new()
             .with_connection_limits_config(
-                ConnectionLimitsConfig::default().max_pending_incoming_connections(limit),
+                ConnectionLimitsConfig::default().max_pending_incoming_connections(Some(limit)),
             )
             .build();
         let (transport, addresses) = WebRtcTransport::new(

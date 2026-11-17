@@ -35,7 +35,7 @@ pub(crate) const DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS: usize = 256;
 #[derive(Debug, Clone)]
 pub struct ConnectionLimitsConfig {
     /// Maximum number of incoming connections being opened concurrently, per transport.
-    max_pending_incoming_connections: usize,
+    max_pending_incoming_connections: Option<usize>,
     /// Maximum number of incoming connections that can be established.
     max_incoming_connections: Option<usize>,
     /// Maximum number of outgoing connections that can be established.
@@ -45,7 +45,7 @@ pub struct ConnectionLimitsConfig {
 impl Default for ConnectionLimitsConfig {
     fn default() -> Self {
         Self {
-            max_pending_incoming_connections: DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            max_pending_incoming_connections: Some(DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS),
             max_incoming_connections: None,
             max_outgoing_connections: None,
         }
@@ -53,11 +53,11 @@ impl Default for ConnectionLimitsConfig {
 }
 
 impl ConnectionLimitsConfig {
-    /// Limit concurrent incoming openings. Defaults to 256.
+    /// Limit concurrent incoming openings. Defaults to `Some(256)`.
     ///
-    /// Applies separately to each transport, so one transport can't starve the others. Zero
-    /// disables incoming connections.
-    pub fn max_pending_incoming_connections(mut self, limit: usize) -> Self {
+    /// Applies separately to each transport, so one transport can't starve the others. `None`
+    /// removes the limit, `Some(0)` disables incoming connections.
+    pub fn max_pending_incoming_connections(mut self, limit: Option<usize>) -> Self {
         self.max_pending_incoming_connections = limit;
         self
     }
@@ -164,7 +164,7 @@ impl ConnectionLimits {
     }
 
     /// Per-transport capacity for incoming openings.
-    pub(super) fn max_pending_incoming_connections(&self) -> usize {
+    pub(super) fn max_pending_incoming_connections(&self) -> Option<usize> {
         self.config.max_pending_incoming_connections
     }
 

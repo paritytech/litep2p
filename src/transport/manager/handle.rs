@@ -447,7 +447,7 @@ mod tests {
         let manager = crate::transport::manager::TransportManagerBuilder::new()
             .with_connection_limits_config(
                 crate::transport::ConnectionLimitsConfig::default()
-                    .max_pending_incoming_connections(1),
+                    .max_pending_incoming_connections(Some(1)),
             )
             .build();
         let first = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
@@ -466,7 +466,7 @@ mod tests {
         let manager = crate::transport::manager::TransportManagerBuilder::new()
             .with_connection_limits_config(
                 crate::transport::ConnectionLimitsConfig::default()
-                    .max_pending_incoming_connections(usize::MAX),
+                    .max_pending_incoming_connections(Some(usize::MAX)),
             )
             .build();
         let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
@@ -475,11 +475,26 @@ mod tests {
     }
 
     #[test]
+    fn unlimited_inbound_opening_capacity() {
+        let manager = crate::transport::manager::TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                crate::transport::ConnectionLimitsConfig::default()
+                    .max_pending_incoming_connections(None),
+            )
+            .build();
+        let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        assert_eq!(
+            handle.pending_incoming_connections.available_permits(),
+            Semaphore::MAX_PERMITS
+        );
+    }
+
+    #[test]
     fn zero_inbound_opening_capacity() {
         let manager = crate::transport::manager::TransportManagerBuilder::new()
             .with_connection_limits_config(
                 crate::transport::ConnectionLimitsConfig::default()
-                    .max_pending_incoming_connections(0),
+                    .max_pending_incoming_connections(Some(0)),
             )
             .build();
         let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));

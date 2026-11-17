@@ -822,7 +822,7 @@ mod tests {
         let manager1 = crate::transport::manager::TransportManagerBuilder::new()
             .with_connection_limits_config(
                 crate::transport::ConnectionLimitsConfig::default()
-                    .max_pending_incoming_connections(1),
+                    .max_pending_incoming_connections(Some(1)),
             )
             .build();
         let handle1 = manager1.transport_handle(Arc::new(DefaultExecutor {}));

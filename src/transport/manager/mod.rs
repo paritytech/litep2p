@@ -453,7 +453,9 @@ impl TransportManager {
             pending_incoming_connections: Arc::new(Semaphore::new(
                 self.connection_limits
                     .max_pending_incoming_connections()
-                    .min(Semaphore::MAX_PERMITS),
+                    .map_or(Semaphore::MAX_PERMITS, |limit| {
+                        limit.min(Semaphore::MAX_PERMITS)
+                    }),
             )),
             dropped_openings: Default::default(),
             tx: self.event_tx.clone(),
