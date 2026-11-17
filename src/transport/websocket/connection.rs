@@ -70,9 +70,6 @@ pub struct NegotiatedSubstream {
 
     /// Permit.
     permit: Permit,
-
-    /// Whether this substream keeps connection alive while it exists.
-    keep_alive: SubstreamKeepAlive,
 }
 
 /// WebSocket connection error.
@@ -395,7 +392,6 @@ impl WebSocketConnection {
             substream_open_timeout,
         )
         .await?;
-        let keep_alive = *protocols.get(&protocol).expect("protocol to be one of the keys");
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -409,7 +405,6 @@ impl WebSocketConnection {
             substream_id,
             protocol,
             permit,
-            keep_alive,
         })
     }
 
@@ -421,7 +416,6 @@ impl WebSocketConnection {
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
         substream_open_timeout: Duration,
-        keep_alive: SubstreamKeepAlive,
     ) -> Result<NegotiatedSubstream, SubstreamError> {
         tracing::debug!(target: LOG_TARGET, ?protocol, ?substream_id, "open substream");
 
@@ -460,7 +454,6 @@ impl WebSocketConnection {
             direction: Direction::Outbound(substream_id),
             protocol,
             permit,
-            keep_alive,
         })
     }
 
@@ -560,15 +553,15 @@ impl WebSocketConnection {
                             let socket = FuturesAsyncReadCompatExt::compat(substream.io);
                             let bandwidth_sink = self.bandwidth_sink.clone();
                             let opening_permit = substream.permit;
-                            let lifetime_permit =
-                                substream.keep_alive.then(|| opening_permit.clone());
 
-                            let substream = substream::Substream::new_websocket(
-                                self.peer,
-                                substream_id,
-                                Substream::new(socket, bandwidth_sink, lifetime_permit),
-                                self.protocol_set.protocol_codec(&protocol)
-                            );
+                            let substream = |codec, lifetime_permit| {
+                                substream::Substream::new_websocket(
+                                    self.peer,
+                                    substream_id,
+                                    Substream::new(socket, bandwidth_sink, lifetime_permit),
+                                    codec,
+                                )
+                            };
 
                             if let Err(error) = self.protocol_set.report_substream_open(
                                 self.peer,
@@ -595,7 +588,7 @@ impl WebSocketConnection {
                         fallback_names,
                         substream_id,
                         permit,
-                        keep_alive,
+                        keep_alive: _,
                         connection_id: _,
                     }) => {
                         let control = self.control.clone();
@@ -618,7 +611,6 @@ impl WebSocketConnection {
                                     protocol.clone(),
                                     fallback_names,
                                     substream_open_timeout,
-                                    keep_alive,
                                 ),
                             )
                             .await

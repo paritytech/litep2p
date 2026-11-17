@@ -83,10 +83,6 @@ struct ChannelContext {
     /// to [`TransportService`](crate::protocol::TransportService), where it can be safely dropped
     /// after upgrading the connection.
     opening_permit: Permit,
-
-    /// Whether this substream should keep the connection alive while it exists, i.e., whether it
-    /// should store the permit entioned above for the lifetime of the substream.
-    keep_alive: SubstreamKeepAlive,
 }
 
 /// Set of [`SubstreamHandle`]s.
@@ -648,14 +644,13 @@ impl WebRtcConnection {
         };
 
         let substream_id = self.protocol_set.next_substream_id();
-        let codec = self.protocol_set.protocol_codec(&protocol);
         let opening_permit = self.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
         let (substream, handle) = WebRtcSubstream::new();
-        let substream = Substream::new_webrtc(self.peer, substream_id, substream, codec);
-        let keep_alive = protocols
-            .get(&protocol)
-            .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?;
-        let lifetime_permit = keep_alive.then(|| opening_permit.clone());
+        let mut lifetime_permit = None;
+        let substream = |codec, permit| {
+            lifetime_permit = permit;
+            Substream::new_webrtc(self.peer, substream_id, substream, codec)
+        };
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -700,7 +695,7 @@ impl WebRtcConnection {
         data: Bytes,
         mut dialer_state: WebRtcDialerState,
         context: ChannelContext,
-    ) -> Result<Option<(SubstreamId, SubstreamHandle)>, SubstreamError> {
+    ) -> Result<Option<(SubstreamId, SubstreamHandle, Option<Permit>)>, SubstreamError> {
         tracing::trace!(
             target: LOG_TARGET,
             peer = ?self.peer,
@@ -803,9 +798,12 @@ impl WebRtcConnection {
             opening_permit,
             ..
         } = context;
-        let codec = self.protocol_set.protocol_codec(&protocol);
         let (substream, handle) = WebRtcSubstream::new();
-        let substream = Substream::new_webrtc(self.peer, substream_id, substream, codec);
+        let mut lifetime_permit = None;
+        let substream = |codec, permit| {
+            lifetime_permit = permit;
+            Substream::new_webrtc(self.peer, substream_id, substream, codec)
+        };
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -825,7 +823,7 @@ impl WebRtcConnection {
                 opening_permit,
             )
             .await
-            .map(|_| Some((substream_id, handle)))
+            .map(|_| Some((substream_id, handle, lifetime_permit)))
     }
 
     /// Handle data received from an open channel.
@@ -1022,13 +1020,12 @@ impl WebRtcConnection {
             } => {
                 let protocol = context.protocol.clone();
                 let substream_id = context.substream_id;
-                let lifetime_permit = context.keep_alive.then(|| context.opening_permit.clone());
 
                 match self
                     .on_outbound_opening_channel_data(channel_id, data, dialer_state, context)
                     .await
                 {
-                    Ok(Some((substream_id, handle))) => {
+                    Ok(Some((substream_id, handle, lifetime_permit))) => {
                         self.handles.insert(channel_id, handle);
                         self.channels.insert(
                             channel_id,
@@ -1172,7 +1169,6 @@ impl WebRtcConnection {
         fallback_names: Vec<ProtocolName>,
         substream_id: SubstreamId,
         opening_permit: Permit,
-        keep_alive: SubstreamKeepAlive,
     ) {
         let channel_id = self.rtc.direct_api().create_data_channel(ChannelConfig {
             label: "".to_string(),
@@ -1200,7 +1196,6 @@ impl WebRtcConnection {
                 fallback_names,
                 substream_id,
                 opening_permit,
-                keep_alive,
             },
         );
     }
@@ -1479,7 +1474,7 @@ impl WebRtcConnection {
                         fallback_names,
                         substream_id,
                         permit,
-                        keep_alive,
+                        keep_alive: _,
                         connection_id: _,
                     }) => {
                         // Check if the connection is still healthy before opening new substreams.
@@ -1512,7 +1507,6 @@ impl WebRtcConnection {
                             fallback_names,
                             substream_id,
                             permit,
-                            keep_alive,
                         );
                     }
                 },

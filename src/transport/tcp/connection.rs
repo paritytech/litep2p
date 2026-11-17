@@ -80,9 +80,6 @@ pub struct NegotiatedSubstream {
     /// Permit held until the negotiated substream is reported back to
     /// [`TransportService`](crate::protocol::TransportService) and connection upgraded.
     permit: Permit,
-
-    /// Whether to store the permit as long as substream exists.
-    keep_alive: SubstreamKeepAlive,
 }
 
 /// TCP connection error.
@@ -274,7 +271,6 @@ impl TcpConnection {
         mut control: crate::yamux::Control,
         substream_id: SubstreamId,
         permit: Permit,
-        keep_alive: SubstreamKeepAlive,
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
         open_timeout: Duration,
@@ -315,7 +311,6 @@ impl TcpConnection {
             direction: Direction::Outbound(substream_id),
             protocol,
             permit,
-            keep_alive,
         })
     }
 
@@ -372,7 +367,6 @@ impl TcpConnection {
         let protocol_names = protocols.keys().map(|protocol| &**protocol).collect::<Vec<&str>>();
         let (io, protocol) =
             Self::negotiate_protocol(stream, &Role::Listener, protocol_names, open_timeout).await?;
-        let keep_alive = *protocols.get(&protocol).expect("protocol to be one of the keys");
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -386,7 +380,6 @@ impl TcpConnection {
             direction: Direction::Inbound,
             protocol,
             permit,
-            keep_alive,
         })
     }
 
@@ -639,14 +632,15 @@ impl TcpConnection {
                 let socket = FuturesAsyncReadCompatExt::compat(substream.io);
                 let bandwidth_sink = self.bandwidth_sink.clone();
                 let opening_permit = substream.permit;
-                let lifetime_permit = substream.keep_alive.then(|| opening_permit.clone());
 
-                let substream = substream::Substream::new_tcp(
-                    self.peer,
-                    substream_id,
-                    Substream::new(socket, bandwidth_sink, lifetime_permit),
-                    self.protocol_set.protocol_codec(&protocol),
-                );
+                let substream = |codec, lifetime_permit| {
+                    substream::Substream::new_tcp(
+                        self.peer,
+                        substream_id,
+                        Substream::new(socket, bandwidth_sink, lifetime_permit),
+                        codec,
+                    )
+                };
 
                 if let Err(error) = self
                     .protocol_set
@@ -686,7 +680,7 @@ impl TcpConnection {
                 substream_id,
                 connection_id,
                 permit,
-                keep_alive,
+                keep_alive: _,
             }) => {
                 let control = self.control.clone();
                 let open_timeout = self.substream_open_timeout;
@@ -706,7 +700,6 @@ impl TcpConnection {
                             control,
                             substream_id,
                             permit,
-                            keep_alive,
                             protocol.clone(),
                             fallback_names,
                             open_timeout,
@@ -792,7 +785,7 @@ mod tests {
         codec::ProtocolCodec,
         protocol::InnerTransportEvent,
         transport::{
-            manager::{InboundProtocol, ProtocolContext, TransportManagerEvent},
+            manager::{InboundProtocol, ProtocolContext, ProtocolRegistry, TransportManagerEvent},
             tcp::TcpTransport,
         },
     };
@@ -938,6 +931,112 @@ mod tests {
             }
             event => panic!("protocol was not notified about the closed connection: {event:?}"),
         }
+    }
+
+    // Service A is dropped and service B registers the same name while the connection negotiates
+    // an inbound substream. Returns whether B's substream keeps the connection open.
+    async fn reregistered_substream_keeps_connection_alive(
+        keep_alive_a: SubstreamKeepAlive,
+        keep_alive_b: SubstreamKeepAlive,
+    ) -> bool {
+        let (local, remote) = negotiated_pair().await;
+        let protocol = ProtocolName::from("/notif/1");
+        let context = |tx, keep_alive| ProtocolContext {
+            tx,
+            codec: ProtocolCodec::Identity(32),
+            fallback_names: Vec::new(),
+            keep_alive,
+            inbound: InboundProtocol::Accept,
+        };
+
+        let (tx_a, mut rx_a) = channel(64);
+        let registry = ProtocolRegistry::from(HashMap::from_iter([(
+            protocol.clone(),
+            context(tx_a.clone(), keep_alive_a),
+        )]));
+        let mut protocol_set = ProtocolSet::new(
+            local.endpoint.connection_id(),
+            channel(64).0,
+            Default::default(),
+            registry.clone(),
+        );
+        protocol_set
+            .report_connection_established(local.peer, local.endpoint.clone())
+            .await;
+        let Some(InnerTransportEvent::ConnectionEstablished {
+            sender: handle_a, ..
+        }) = rx_a.recv().await
+        else {
+            panic!("service A wasn't told about the connection");
+        };
+        let mut connection = TcpConnection::new(
+            local,
+            protocol_set,
+            BandwidthSink::new(),
+            Default::default(),
+        );
+
+        let NegotiatedConnection {
+            connection: mut remote_connection,
+            control: mut remote_control,
+            ..
+        } = remote;
+        tokio::spawn(async move { while remote_connection.next().await.is_some() {} });
+        let remote_stream = remote_control.open_stream().await.unwrap();
+        // The listener's confirmation is flushed on first write, so the dialer never completes.
+        tokio::spawn(TcpConnection::negotiate_protocol(
+            remote_stream,
+            &Role::Dialer,
+            vec!["/notif/1"],
+            Duration::from_secs(10),
+        ));
+        let substream = connection.connection.next().await;
+        assert!(!connection.handle_yamux_substream(substream).await);
+
+        assert!(registry.remove(&protocol, &tx_a));
+        let (tx_b, mut rx_b) = channel(64);
+        registry.insert(protocol.clone(), context(tx_b, keep_alive_b));
+
+        let negotiated = loop {
+            tokio::select! {
+                negotiated = connection.pending_substreams.next() => break negotiated.unwrap(),
+                _ = connection.connection.next() => {}
+            }
+        };
+        assert!(!connection.handle_negotiated_substream(negotiated).await);
+
+        let Ok(InnerTransportEvent::SubstreamOpened {
+            substream: _substream,
+            ..
+        }) = rx_b.try_recv()
+        else {
+            panic!("service B didn't receive the substream");
+        };
+        drop(handle_a);
+
+        connection.protocol_set.try_get_permit().is_some()
+    }
+
+    #[tokio::test]
+    async fn reregistered_substream_without_keep_alive_does_not_keep_connection_alive() {
+        assert!(
+            !reregistered_substream_keeps_connection_alive(
+                SubstreamKeepAlive::Yes,
+                SubstreamKeepAlive::No
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn reregistered_substream_with_keep_alive_keeps_connection_alive() {
+        assert!(
+            reregistered_substream_keeps_connection_alive(
+                SubstreamKeepAlive::No,
+                SubstreamKeepAlive::Yes
+            )
+            .await
+        );
     }
 
     #[tokio::test]

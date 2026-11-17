@@ -28,7 +28,7 @@ use crate::{
     },
     substream::Substream,
     transport::{
-        manager::{ProtocolRegistry, TransportManagerEvent},
+        manager::{InboundProtocol, ProtocolRegistry, TransportManagerEvent},
         Endpoint,
     },
     types::{protocol::ProtocolName, ConnectionId, SubstreamId},
@@ -266,12 +266,15 @@ impl ProtocolSet {
     }
 
     /// Report to `protocol` that substream was opened for `peer`.
+    ///
+    /// `substream` builds the substream with the codec of the protocol it's reported to and, if
+    /// that protocol keeps connections alive, the permit to hold for the substream's lifetime.
     pub async fn report_substream_open(
         &mut self,
         peer: PeerId,
         protocol: ProtocolName,
         direction: Direction,
-        substream: Substream,
+        substream: impl FnOnce(ProtocolCodec, Option<Permit>) -> Substream,
         opening_permit: Permit,
     ) -> Result<(), SubstreamError> {
         tracing::debug!(target: LOG_TARGET, %protocol, ?peer, ?direction, "substream opened");
@@ -281,12 +284,19 @@ impl ProtocolSet {
             return Ok(());
         };
 
+        // The holder of the name may have changed to a client-mode protocol during negotiation.
+        if direction == Direction::Inbound && protocol_context.inbound == InboundProtocol::Deny {
+            tracing::debug!(target: LOG_TARGET, %protocol, ?peer, "inbound denied, dropping substream");
+            return Ok(());
+        }
+
+        let lifetime_permit = protocol_context.keep_alive.then(|| opening_permit.clone());
         let event = InnerTransportEvent::SubstreamOpened {
             peer,
             fallback: (main_protocol != protocol).then_some(protocol),
             protocol: main_protocol,
             direction,
-            substream,
+            substream: substream(protocol_context.codec, lifetime_permit),
             connection_id: *self.connection.connection_id(),
             opening_permit,
         };
@@ -296,14 +306,10 @@ impl ProtocolSet {
         Ok(())
     }
 
-    /// Get codec used by the protocol.
-    ///
-    /// Substreams of unregistered protocols are dropped by [`ProtocolSet::report_substream_open`],
-    /// so their codec doesn't matter.
-    pub fn protocol_codec(&self, protocol: &ProtocolName) -> ProtocolCodec {
-        self.protocols
-            .get(protocol)
-            .map_or(ProtocolCodec::Unspecified, |(_, context)| context.codec)
+    /// Get codec used by the protocol, if it's registered.
+    #[cfg(any(test, feature = "fuzz"))]
+    pub fn protocol_codec(&self, protocol: &ProtocolName) -> Option<ProtocolCodec> {
+        self.protocols.get(protocol).map(|(_, context)| context.codec)
     }
 
     /// Report to `protocol` that connection failed to open substream for `peer`.
@@ -331,8 +337,11 @@ impl ProtocolSet {
         Ok(())
     }
 
-    async fn report_to_protocols(&self, event: impl Fn() -> InnerTransportEvent) {
-        let futures = self.protocols.senders().into_iter().map(|(_, tx)| {
+    async fn report_to(
+        senders: Vec<(ProtocolName, Sender<InnerTransportEvent>)>,
+        event: impl Fn() -> InnerTransportEvent,
+    ) {
+        let futures = senders.into_iter().map(|(_, tx)| {
             let event = event();
             async move {
                 let _ = tx.send(event).await;
@@ -345,7 +354,12 @@ impl ProtocolSet {
     /// Report to protocols that a connection was established.
     pub(crate) async fn report_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) {
         let connection_handle = self.connection.downgrade();
-        self.report_to_protocols(|| InnerTransportEvent::ConnectionEstablished {
+        // protocols registered later get the downgraded handle, so it doesn't keep the connection
+        // open
+        let senders =
+            self.protocols.add_connection(peer, endpoint.clone(), self.connection.clone());
+
+        Self::report_to(senders, || InnerTransportEvent::ConnectionEstablished {
             peer,
             connection: endpoint.connection_id(),
             endpoint: endpoint.clone(),
@@ -360,9 +374,11 @@ impl ProtocolSet {
         peer: PeerId,
         connection_id: ConnectionId,
     ) -> crate::Result<()> {
-        self.report_to_protocols(|| InnerTransportEvent::ConnectionClosed {
-            peer,
-            connection: connection_id,
+        Self::report_to(self.protocols.remove_connection(connection_id), || {
+            InnerTransportEvent::ConnectionClosed {
+                peer,
+                connection: connection_id,
+            }
         })
         .await;
 
@@ -390,10 +406,7 @@ impl Stream for ProtocolSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        mock::substream::MockSubstream,
-        transport::manager::{InboundProtocol, ProtocolContext},
-    };
+    use crate::{mock::substream::MockSubstream, transport::manager::ProtocolContext};
     use std::collections::HashSet;
 
     #[tokio::test]
@@ -440,11 +453,13 @@ mod tests {
                 PeerId::random(),
                 ProtocolName::from("/notif/1/fallback/2"),
                 Direction::Inbound,
-                Substream::new_mock(
-                    PeerId::random(),
-                    SubstreamId::from(0usize),
-                    Box::new(MockSubstream::new()),
-                ),
+                |_, _| {
+                    Substream::new_mock(
+                        PeerId::random(),
+                        SubstreamId::from(0usize),
+                        Box::new(MockSubstream::new()),
+                    )
+                },
                 permit,
             )
             .await
@@ -503,7 +518,7 @@ mod tests {
         // the protocol is still installed so that it can open outbound substreams
         assert!(std::matches!(
             protocol_set.protocol_codec(&ProtocolName::from("/kad/1/fallback")),
-            ProtocolCodec::UnsignedVarint(None)
+            Some(ProtocolCodec::UnsignedVarint(None))
         ));
     }
 
@@ -538,11 +553,13 @@ mod tests {
                 PeerId::random(),
                 ProtocolName::from("/notif/1"),
                 Direction::Inbound,
-                Substream::new_mock(
-                    PeerId::random(),
-                    SubstreamId::from(0usize),
-                    Box::new(MockSubstream::new()),
-                ),
+                |_, _| {
+                    Substream::new_mock(
+                        PeerId::random(),
+                        SubstreamId::from(0usize),
+                        Box::new(MockSubstream::new()),
+                    )
+                },
                 permit,
             )
             .await
@@ -590,11 +607,13 @@ mod tests {
                 PeerId::random(),
                 ProtocolName::from("/notif/1/fallback/2"),
                 Direction::Inbound,
-                Substream::new_mock(
-                    PeerId::random(),
-                    SubstreamId::from(0usize),
-                    Box::new(MockSubstream::new()),
-                ),
+                |_, _| {
+                    Substream::new_mock(
+                        PeerId::random(),
+                        SubstreamId::from(0usize),
+                        Box::new(MockSubstream::new()),
+                    )
+                },
                 permit,
             )
             .await
@@ -696,11 +715,13 @@ mod tests {
                 PeerId::random(),
                 ProtocolName::from("/notif/1"),
                 Direction::Inbound,
-                Substream::new_mock(
-                    PeerId::random(),
-                    SubstreamId::from(0usize),
-                    Box::new(MockSubstream::new()),
-                ),
+                |_, _| {
+                    Substream::new_mock(
+                        PeerId::random(),
+                        SubstreamId::from(0usize),
+                        Box::new(MockSubstream::new()),
+                    )
+                },
                 permit,
             )
             .await
@@ -801,10 +822,7 @@ mod tests {
         assert!(registry.remove(&protocol, &tx1));
 
         assert!(protocol_set.protocols_with_keep_alives().is_empty());
-        assert!(std::matches!(
-            protocol_set.protocol_codec(&protocol),
-            ProtocolCodec::Unspecified
-        ));
+        assert!(protocol_set.protocol_codec(&protocol).is_none());
 
         let permit = protocol_set.try_get_permit().unwrap();
         protocol_set
@@ -812,11 +830,13 @@ mod tests {
                 PeerId::random(),
                 protocol,
                 Direction::Inbound,
-                Substream::new_mock(
-                    PeerId::random(),
-                    SubstreamId::from(0usize),
-                    Box::new(MockSubstream::new()),
-                ),
+                |_, _| {
+                    Substream::new_mock(
+                        PeerId::random(),
+                        SubstreamId::from(0usize),
+                        Box::new(MockSubstream::new()),
+                    )
+                },
                 permit,
             )
             .await
@@ -857,5 +877,171 @@ mod tests {
             .await
             .unwrap();
         assert!(rx1.try_recv().is_err());
+    }
+
+    async fn yamux_pair() -> (crate::yamux::Stream, crate::yamux::Stream) {
+        use futures::future::poll_fn;
+
+        let (client_io, server_io) = futures_ringbuf::Endpoint::pair(1 << 16, 1 << 16);
+        let mut client = crate::yamux::Connection::new(
+            client_io,
+            crate::yamux::Config::default(),
+            crate::yamux::Mode::Client,
+        );
+        let mut server = crate::yamux::Connection::new(
+            server_io,
+            crate::yamux::Config::default(),
+            crate::yamux::Mode::Server,
+        );
+        let outbound = poll_fn(|cx| client.poll_new_outbound(cx)).await.unwrap();
+        tokio::spawn(
+            async move { while poll_fn(|cx| client.poll_next_inbound(cx)).await.is_some() {} },
+        );
+        let (inbound_tx, inbound_rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let _ = inbound_tx.send(poll_fn(|cx| server.poll_next_inbound(cx)).await);
+            while poll_fn(|cx| server.poll_next_inbound(cx)).await.is_some() {}
+        });
+
+        let mut outbound = outbound;
+        futures::AsyncWriteExt::write_all(&mut outbound, b"x").await.unwrap();
+        let mut inbound = inbound_rx.await.unwrap().unwrap().unwrap();
+        let mut byte = [0u8; 1];
+        futures::AsyncReadExt::read_exact(&mut inbound, &mut byte).await.unwrap();
+
+        (outbound, inbound)
+    }
+
+    fn tcp_substream(stream: crate::yamux::Stream, codec: ProtocolCodec) -> Substream {
+        Substream::new_tcp(
+            PeerId::random(),
+            SubstreamId::from(0usize),
+            crate::transport::tcp::Substream::new(
+                tokio_util::compat::FuturesAsyncReadCompatExt::compat(stream),
+                crate::BandwidthSink::new(),
+                None,
+            ),
+            codec,
+        )
+    }
+
+    fn protocol_context(tx: Sender<InnerTransportEvent>, codec: ProtocolCodec) -> ProtocolContext {
+        ProtocolContext {
+            tx,
+            codec,
+            fallback_names: Vec::new(),
+            keep_alive: SubstreamKeepAlive::Yes,
+            inbound: InboundProtocol::Accept,
+        }
+    }
+
+    // Service A is dropped and service B registers the same name while the connection reports a
+    // substream negotiated for A.
+    #[tokio::test]
+    async fn reregistered_protocol_gets_substream_with_its_codec() {
+        use futures::StreamExt;
+
+        let (tx, _rx) = channel(64);
+        let (tx_a, _rx_a) = channel(64);
+        let (tx_b, mut rx_b) = channel(64);
+        let protocol = ProtocolName::from("/notif/1");
+        let registry = ProtocolRegistry::from(HashMap::from_iter([(
+            protocol.clone(),
+            protocol_context(tx_a.clone(), ProtocolCodec::Identity(32)),
+        )]));
+        let mut protocol_set = ProtocolSet::new(
+            ConnectionId::from(0usize),
+            tx,
+            Default::default(),
+            registry.clone(),
+        );
+        let (outbound, inbound) = yamux_pair().await;
+
+        assert!(registry.remove(&protocol, &tx_a));
+        registry.insert(
+            protocol.clone(),
+            protocol_context(tx_b, ProtocolCodec::UnsignedVarint(Some(64))),
+        );
+
+        let permit = protocol_set.try_get_permit().unwrap();
+        protocol_set
+            .report_substream_open(
+                PeerId::random(),
+                protocol,
+                Direction::Inbound,
+                |codec, _| tcp_substream(outbound, codec),
+                permit,
+            )
+            .await
+            .unwrap();
+
+        let Ok(InnerTransportEvent::SubstreamOpened { mut substream, .. }) = rx_b.try_recv() else {
+            panic!("service B didn't receive the substream");
+        };
+        futures::SinkExt::send(&mut substream, bytes::Bytes::from_static(b"hello"))
+            .await
+            .unwrap();
+
+        let mut remote = tcp_substream(inbound, ProtocolCodec::UnsignedVarint(Some(64)));
+        assert_eq!(remote.next().await.unwrap().unwrap(), &b"hello"[..]);
+    }
+
+    #[tokio::test]
+    async fn inbound_substream_not_delivered_to_reregistered_deny_protocol() {
+        let (tx, _rx) = channel(64);
+        let (tx_a, _rx_a) = channel(64);
+        let (tx_b, mut rx_b) = channel(64);
+        let protocol = ProtocolName::from("/kad/1");
+        let registry = ProtocolRegistry::from(HashMap::from_iter([(
+            protocol.clone(),
+            protocol_context(tx_a.clone(), ProtocolCodec::UnsignedVarint(None)),
+        )]));
+        let mut protocol_set = ProtocolSet::new(
+            ConnectionId::from(0usize),
+            tx,
+            Default::default(),
+            registry.clone(),
+        );
+
+        assert!(registry.remove(&protocol, &tx_a));
+        registry.insert(
+            protocol.clone(),
+            ProtocolContext {
+                inbound: InboundProtocol::Deny,
+                ..protocol_context(tx_b, ProtocolCodec::UnsignedVarint(None))
+            },
+        );
+
+        for direction in [
+            Direction::Inbound,
+            Direction::Outbound(SubstreamId::from(1usize)),
+        ] {
+            let permit = protocol_set.try_get_permit().unwrap();
+            protocol_set
+                .report_substream_open(
+                    PeerId::random(),
+                    protocol.clone(),
+                    direction,
+                    |_, _| {
+                        Substream::new_mock(
+                            PeerId::random(),
+                            SubstreamId::from(0usize),
+                            Box::new(MockSubstream::new()),
+                        )
+                    },
+                    permit,
+                )
+                .await
+                .unwrap();
+        }
+
+        assert!(std::matches!(
+            rx_b.try_recv(),
+            Ok(InnerTransportEvent::SubstreamOpened {
+                direction: Direction::Outbound(_),
+                ..
+            })
+        ));
+        assert!(rx_b.try_recv().is_err());
     }
 }

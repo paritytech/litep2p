@@ -407,7 +407,8 @@ impl TransportManager {
     /// and whether the protocol name is exposed to them via the identify protocol.
     ///
     /// The protocol is unregistered when the returned [`TransportService`] is dropped.
-    #[must_use]
+    ///
+    /// Fails with [`Error::ProtocolAlreadyExists`] if one of the names is already in use.
     pub fn register_protocol(
         &mut self,
         protocol: ProtocolName,
@@ -416,16 +417,15 @@ impl TransportManager {
         keep_alive_timeout: Duration,
         substream_keep_alive: SubstreamKeepAlive,
         inbound: InboundProtocol,
-    ) -> TransportService {
-        assert!(!self.protocols.contains(&protocol));
-
-        for fallback in &fallback_names {
-            if self.protocols.contains(fallback) {
-                panic!("duplicate fallback protocol given: {fallback:?}");
-            }
+    ) -> crate::Result<TransportService> {
+        if let Some(name) = std::iter::once(&protocol)
+            .chain(&fallback_names)
+            .find(|name| self.protocols.contains(name))
+        {
+            return Err(Error::ProtocolAlreadyExists(name.clone()));
         }
 
-        let (service, sender) = TransportService::new(
+        let (mut service, sender) = TransportService::new(
             self.local_peer_id,
             protocol.clone(),
             fallback_names.clone(),
@@ -435,12 +435,15 @@ impl TransportManager {
             substream_keep_alive,
         );
 
-        self.protocols.insert(
+        let connections = self.protocols.insert(
             protocol,
             ProtocolContext::new(codec, sender, fallback_names, substream_keep_alive, inbound),
         );
+        for (peer, endpoint, handle) in connections {
+            service.on_existing_connection(peer, endpoint, handle);
+        }
 
-        service
+        Ok(service)
     }
 
     /// Acquire `TransportHandle`.
@@ -1681,22 +1684,26 @@ mod tests {
     fn only_advertised_protocols_are_reported() {
         let mut manager = TransportManagerBuilder::new().build();
 
-        let _service1 = manager.register_protocol(
-            ProtocolName::from("/advertised/1"),
-            vec![ProtocolName::from("/advertised/1/fallback")],
-            ProtocolCodec::UnsignedVarint(None),
-            KEEP_ALIVE_TIMEOUT,
-            SubstreamKeepAlive::Yes,
-            InboundProtocol::Accept,
-        );
-        let _service2 = manager.register_protocol(
-            ProtocolName::from("/local/1"),
-            Vec::new(),
-            ProtocolCodec::UnsignedVarint(None),
-            KEEP_ALIVE_TIMEOUT,
-            SubstreamKeepAlive::Yes,
-            InboundProtocol::Deny,
-        );
+        let _service1 = manager
+            .register_protocol(
+                ProtocolName::from("/advertised/1"),
+                vec![ProtocolName::from("/advertised/1/fallback")],
+                ProtocolCodec::UnsignedVarint(None),
+                KEEP_ALIVE_TIMEOUT,
+                SubstreamKeepAlive::Yes,
+                InboundProtocol::Accept,
+            )
+            .unwrap();
+        let _service2 = manager
+            .register_protocol(
+                ProtocolName::from("/local/1"),
+                Vec::new(),
+                ProtocolCodec::UnsignedVarint(None),
+                KEEP_ALIVE_TIMEOUT,
+                SubstreamKeepAlive::Yes,
+                InboundProtocol::Deny,
+            )
+            .unwrap();
 
         assert_eq!(
             manager.protocols.advertised().into_iter().collect::<HashSet<_>>(),
@@ -1710,14 +1717,16 @@ mod tests {
         let protocol = ProtocolName::from("/notif/1");
         let fallback = ProtocolName::from("/notif/1/fallback");
         let register = |manager: &mut TransportManager| {
-            manager.register_protocol(
-                protocol.clone(),
-                vec![fallback.clone()],
-                ProtocolCodec::UnsignedVarint(None),
-                KEEP_ALIVE_TIMEOUT,
-                SubstreamKeepAlive::Yes,
-                InboundProtocol::Accept,
-            )
+            manager
+                .register_protocol(
+                    protocol.clone(),
+                    vec![fallback.clone()],
+                    ProtocolCodec::UnsignedVarint(None),
+                    KEEP_ALIVE_TIMEOUT,
+                    SubstreamKeepAlive::Yes,
+                    InboundProtocol::Accept,
+                )
+                .unwrap()
         };
 
         let old = register(&mut manager);
@@ -1738,14 +1747,16 @@ mod tests {
         let mut manager = TransportManagerBuilder::new().build();
         let protocol = ProtocolName::from("/notif/1");
 
-        let service = manager.register_protocol(
-            protocol.clone(),
-            Vec::new(),
-            ProtocolCodec::UnsignedVarint(None),
-            KEEP_ALIVE_TIMEOUT,
-            SubstreamKeepAlive::Yes,
-            InboundProtocol::Accept,
-        );
+        let service = manager
+            .register_protocol(
+                protocol.clone(),
+                Vec::new(),
+                ProtocolCodec::UnsignedVarint(None),
+                KEEP_ALIVE_TIMEOUT,
+                SubstreamKeepAlive::Yes,
+                InboundProtocol::Accept,
+            )
+            .unwrap();
         assert!(manager.protocols.contains(&protocol));
 
         drop(service);
@@ -1757,14 +1768,16 @@ mod tests {
     #[tokio::test]
     async fn service_closes_when_manager_is_dropped() {
         let mut manager = TransportManagerBuilder::new().build();
-        let mut service = manager.register_protocol(
-            ProtocolName::from("/notif/1"),
-            Vec::new(),
-            ProtocolCodec::UnsignedVarint(None),
-            KEEP_ALIVE_TIMEOUT,
-            SubstreamKeepAlive::Yes,
-            InboundProtocol::Accept,
-        );
+        let mut service = manager
+            .register_protocol(
+                ProtocolName::from("/notif/1"),
+                Vec::new(),
+                ProtocolCodec::UnsignedVarint(None),
+                KEEP_ALIVE_TIMEOUT,
+                SubstreamKeepAlive::Yes,
+                InboundProtocol::Accept,
+            )
+            .unwrap();
 
         drop(manager);
         assert!(std::matches!(
@@ -1779,14 +1792,16 @@ mod tests {
         let protocol = ProtocolName::from("/notif/1");
         let fallback = ProtocolName::from("/notif/1/fallback");
 
-        let service = manager.register_protocol(
-            protocol.clone(),
-            vec![fallback.clone()],
-            ProtocolCodec::UnsignedVarint(None),
-            KEEP_ALIVE_TIMEOUT,
-            SubstreamKeepAlive::Yes,
-            InboundProtocol::Accept,
-        );
+        let service = manager
+            .register_protocol(
+                protocol.clone(),
+                vec![fallback.clone()],
+                ProtocolCodec::UnsignedVarint(None),
+                KEEP_ALIVE_TIMEOUT,
+                SubstreamKeepAlive::Yes,
+                InboundProtocol::Accept,
+            )
+            .unwrap();
         let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
         let protocol_set = handle.protocol_set(ConnectionId::from(0usize));
         assert_eq!(
@@ -1807,12 +1822,20 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    #[cfg(debug_assertions)]
     fn duplicate_protocol() {
         let mut manager = TransportManagerBuilder::new().build();
 
-        let _service = manager.register_protocol(
+        let _service = manager
+            .register_protocol(
+                ProtocolName::from("/notif/1"),
+                Vec::new(),
+                ProtocolCodec::UnsignedVarint(None),
+                KEEP_ALIVE_TIMEOUT,
+                SubstreamKeepAlive::Yes,
+                InboundProtocol::Accept,
+            )
+            .unwrap();
+        let result = manager.register_protocol(
             ProtocolName::from("/notif/1"),
             Vec::new(),
             ProtocolCodec::UnsignedVarint(None),
@@ -1820,31 +1843,27 @@ mod tests {
             SubstreamKeepAlive::Yes,
             InboundProtocol::Accept,
         );
-        let _ = manager.register_protocol(
-            ProtocolName::from("/notif/1"),
-            Vec::new(),
-            ProtocolCodec::UnsignedVarint(None),
-            KEEP_ALIVE_TIMEOUT,
-            SubstreamKeepAlive::Yes,
-            InboundProtocol::Accept,
-        );
+        assert!(matches!(
+            result,
+            Err(Error::ProtocolAlreadyExists(name)) if name == ProtocolName::from("/notif/1"),
+        ));
     }
 
     #[test]
-    #[should_panic]
-    #[cfg(debug_assertions)]
     fn fallback_protocol_as_duplicate_main_protocol() {
         let mut manager = TransportManagerBuilder::new().build();
 
-        let _service = manager.register_protocol(
-            ProtocolName::from("/notif/1"),
-            Vec::new(),
-            ProtocolCodec::UnsignedVarint(None),
-            KEEP_ALIVE_TIMEOUT,
-            SubstreamKeepAlive::Yes,
-            InboundProtocol::Accept,
-        );
-        let _ = manager.register_protocol(
+        let _service = manager
+            .register_protocol(
+                ProtocolName::from("/notif/1"),
+                Vec::new(),
+                ProtocolCodec::UnsignedVarint(None),
+                KEEP_ALIVE_TIMEOUT,
+                SubstreamKeepAlive::Yes,
+                InboundProtocol::Accept,
+            )
+            .unwrap();
+        let result = manager.register_protocol(
             ProtocolName::from("/notif/2"),
             vec![
                 ProtocolName::from("/notif/2/new"),
@@ -1855,26 +1874,30 @@ mod tests {
             SubstreamKeepAlive::Yes,
             InboundProtocol::Accept,
         );
+        assert!(matches!(
+            result,
+            Err(Error::ProtocolAlreadyExists(name)) if name == ProtocolName::from("/notif/1"),
+        ));
     }
 
     #[test]
-    #[should_panic]
-    #[cfg(debug_assertions)]
     fn duplicate_fallback_protocol() {
         let mut manager = TransportManagerBuilder::new().build();
 
-        let _service = manager.register_protocol(
-            ProtocolName::from("/notif/1"),
-            vec![
-                ProtocolName::from("/notif/1/new"),
+        let _service = manager
+            .register_protocol(
                 ProtocolName::from("/notif/1"),
-            ],
-            ProtocolCodec::UnsignedVarint(None),
-            KEEP_ALIVE_TIMEOUT,
-            SubstreamKeepAlive::Yes,
-            InboundProtocol::Accept,
-        );
-        let _ = manager.register_protocol(
+                vec![
+                    ProtocolName::from("/notif/1/new"),
+                    ProtocolName::from("/notif/1"),
+                ],
+                ProtocolCodec::UnsignedVarint(None),
+                KEEP_ALIVE_TIMEOUT,
+                SubstreamKeepAlive::Yes,
+                InboundProtocol::Accept,
+            )
+            .unwrap();
+        let result = manager.register_protocol(
             ProtocolName::from("/notif/2"),
             vec![
                 ProtocolName::from("/notif/2/new"),
@@ -1885,6 +1908,68 @@ mod tests {
             SubstreamKeepAlive::Yes,
             InboundProtocol::Accept,
         );
+        assert!(matches!(
+            result,
+            Err(Error::ProtocolAlreadyExists(name)) if name == ProtocolName::from("/notif/1/new"),
+        ));
+    }
+
+    #[tokio::test]
+    async fn protocols_registered_later_are_told_about_open_connections() {
+        use crate::protocol::TransportEvent as ProtocolEvent;
+        use futures::FutureExt;
+
+        let mut manager = TransportManagerBuilder::new().build();
+        let register = |manager: &mut TransportManager, name: &'static str| {
+            manager
+                .register_protocol(
+                    ProtocolName::from(name),
+                    Vec::new(),
+                    ProtocolCodec::UnsignedVarint(None),
+                    KEEP_ALIVE_TIMEOUT,
+                    SubstreamKeepAlive::Yes,
+                    InboundProtocol::Deny,
+                )
+                .unwrap()
+        };
+        let next_event = |service: &mut TransportService| service.next().now_or_never().flatten();
+
+        let mut service1 = register(&mut manager, "/proto/1");
+        let handle = manager.transport_handle(Arc::new(DefaultExecutor {}));
+        let mut protocol_set = handle.protocol_set(ConnectionId::from(0usize));
+        let mut never_established = handle.protocol_set(ConnectionId::from(1usize));
+        let peer = PeerId::random();
+        let endpoint = Endpoint::listener(Multiaddr::empty(), ConnectionId::from(0usize));
+        protocol_set.report_connection_established(peer, endpoint).await;
+
+        let mut service2 = register(&mut manager, "/proto/2");
+        drop(register(&mut manager, "/proto/3"));
+
+        for service in [&mut service1, &mut service2] {
+            assert!(std::matches!(
+                next_event(service),
+                Some(ProtocolEvent::ConnectionEstablished { peer: connected, .. }) if connected == peer
+            ));
+        }
+
+        never_established
+            .report_connection_closed(peer, ConnectionId::from(1usize))
+            .await
+            .unwrap();
+        protocol_set
+            .report_connection_closed(peer, ConnectionId::from(0usize))
+            .await
+            .unwrap();
+        let mut service4 = register(&mut manager, "/proto/4");
+
+        for service in [&mut service1, &mut service2] {
+            assert!(std::matches!(
+                next_event(service),
+                Some(ProtocolEvent::ConnectionClosed { peer: disconnected }) if disconnected == peer
+            ));
+            assert!(next_event(service).is_none());
+        }
+        assert!(next_event(&mut service4).is_none());
     }
 
     #[test]

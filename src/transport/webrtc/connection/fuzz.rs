@@ -237,7 +237,11 @@ impl FuzzConnection {
         });
 
         let substream_id = self.connection.protocol_set.next_substream_id();
-        let codec = self.connection.protocol_set.protocol_codec(&protocol);
+        let codec = self
+            .connection
+            .protocol_set
+            .protocol_codec(&protocol)
+            .ok_or(Error::ProtocolNotSupported(protocol.to_string()))?;
         let _permit =
             self.connection.protocol_set.try_get_permit().ok_or(Error::ConnectionClosed)?;
         let (substream, handle) = WebRtcSubstream::new();
