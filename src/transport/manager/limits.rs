@@ -22,7 +22,10 @@
 
 use crate::types::ConnectionId;
 
-use std::{collections::HashSet, time::Instant};
+use std::{
+    collections::HashSet,
+    time::{Duration, Instant},
+};
 use tokio::sync::OwnedSemaphorePermit;
 
 /// Configuration for the connection limits.
@@ -79,6 +82,41 @@ pub(crate) struct InboundConnectionPermit {
 impl InboundConnectionPermit {
     pub(crate) fn is_expired(&self) -> bool {
         Instant::now() >= self.deadline
+    }
+}
+
+/// Minimum interval between reports of dropped inbound openings.
+const DROPPED_OPENINGS_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
+/// Rate-limits reports of inbound openings dropped at capacity.
+#[derive(Debug, Default)]
+pub(crate) struct DroppedOpenings {
+    /// Drops since the last report.
+    count: usize,
+    /// Time of the last report.
+    last_report: Option<Instant>,
+}
+
+impl DroppedOpenings {
+    /// Record a drop.
+    ///
+    /// Returns the number of drops since the last report if a report is due: on the first
+    /// drop, then at most once per interval.
+    pub(crate) fn record(&mut self) -> Option<usize> {
+        self.record_at(Instant::now())
+    }
+
+    fn record_at(&mut self, now: Instant) -> Option<usize> {
+        self.count += 1;
+
+        if self.last_report.is_some_and(|last_report| {
+            now.saturating_duration_since(last_report) < DROPPED_OPENINGS_REPORT_INTERVAL
+        }) {
+            return None;
+        }
+
+        self.last_report = Some(now);
+        Some(std::mem::take(&mut self.count))
     }
 }
 
@@ -206,6 +244,27 @@ impl ConnectionLimits {
 mod tests {
     use super::*;
     use crate::types::ConnectionId;
+
+    #[test]
+    fn dropped_openings_reports_are_rate_limited() {
+        let mut dropped = DroppedOpenings::default();
+        let start = Instant::now();
+
+        assert_eq!(dropped.record_at(start), Some(1));
+        assert_eq!(dropped.record_at(start), None);
+        assert_eq!(
+            dropped.record_at(start + DROPPED_OPENINGS_REPORT_INTERVAL / 2),
+            None
+        );
+        assert_eq!(
+            dropped.record_at(start + DROPPED_OPENINGS_REPORT_INTERVAL),
+            Some(3)
+        );
+        assert_eq!(
+            dropped.record_at(start + DROPPED_OPENINGS_REPORT_INTERVAL),
+            None
+        );
+    }
 
     #[test]
     fn connection_limits() {

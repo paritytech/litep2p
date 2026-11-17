@@ -143,6 +143,13 @@ impl WebSocketTransport {
         let Some(permit) =
             self.context.try_acquire_inbound_permit(self.config.connection_open_timeout)
         else {
+            if let Some(dropped) = self.context.dropped_openings.record() {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    dropped,
+                    "inbound connections dropped: `max_pending_incoming_connections` reached",
+                );
+            }
             return;
         };
         let deadline = tokio::time::Instant::from_std(permit.deadline);

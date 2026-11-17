@@ -455,6 +455,7 @@ impl TransportManager {
                     .max_pending_incoming_connections()
                     .min(Semaphore::MAX_PERMITS),
             )),
+            dropped_openings: Default::default(),
             tx: self.event_tx.clone(),
             executor,
             keypair: self.keypair.clone(),

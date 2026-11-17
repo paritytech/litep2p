@@ -26,7 +26,7 @@ use crate::{
     protocol::{InnerTransportEvent, ProtocolSet},
     transport::manager::{
         address::AddressRecord,
-        limits::InboundConnectionPermit,
+        limits::{DroppedOpenings, InboundConnectionPermit},
         peer_state::StateDialResult,
         protocols::WeakProtocolRegistry,
         types::{PeerContext, SupportedTransport},
@@ -365,6 +365,7 @@ impl TransportManagerHandle {
 
 pub struct TransportHandle {
     pub(crate) pending_incoming_connections: Arc<Semaphore>,
+    pub(crate) dropped_openings: DroppedOpenings,
     pub keypair: Keypair,
     pub tx: Sender<TransportManagerEvent>,
     pub protocols: ProtocolRegistry,

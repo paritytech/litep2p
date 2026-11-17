@@ -145,6 +145,13 @@ impl TcpTransport {
         let Some(permit) =
             self.context.try_acquire_inbound_permit(self.config.connection_open_timeout)
         else {
+            if let Some(dropped) = self.context.dropped_openings.record() {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    dropped,
+                    "inbound connections dropped: `max_pending_incoming_connections` reached",
+                );
+            }
             return;
         };
         let deadline = tokio::time::Instant::from_std(permit.deadline);
@@ -851,6 +858,7 @@ mod tests {
 
         let handle1 = crate::transport::manager::TransportHandle {
             pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(256)),
+            dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -887,6 +895,7 @@ mod tests {
 
         let handle2 = crate::transport::manager::TransportHandle {
             pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(256)),
+            dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -960,6 +969,7 @@ mod tests {
 
         let handle1 = crate::transport::manager::TransportHandle {
             pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(256)),
+            dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -995,6 +1005,7 @@ mod tests {
 
         let handle2 = crate::transport::manager::TransportHandle {
             pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(256)),
+            dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -1057,6 +1068,7 @@ mod tests {
 
         let handle1 = crate::transport::manager::TransportHandle {
             pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(256)),
+            dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -1099,6 +1111,7 @@ mod tests {
 
         let handle2 = crate::transport::manager::TransportHandle {
             pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(256)),
+            dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),

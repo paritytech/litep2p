@@ -501,6 +501,13 @@ impl WebRtcTransport {
         // create new `Rtc` object for the peer and give it the received STUN message
         let Some(permit) = self.context.try_acquire_inbound_permit(self.connection_open_timeout)
         else {
+            if let Some(dropped) = self.context.dropped_openings.record() {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    dropped,
+                    "inbound connections dropped: `max_pending_incoming_connections` reached",
+                );
+            }
             return Ok(false);
         };
         let (rtc, noise_channel_id) = self.make_rtc(ufrag, pass, &addrs)?;
