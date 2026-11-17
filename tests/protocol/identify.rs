@@ -20,14 +20,21 @@
 
 use futures::{FutureExt, StreamExt};
 use litep2p::{
+    codec::ProtocolCodec,
     config::ConfigBuilder,
     crypto::ed25519::Keypair,
-    protocol::libp2p::{
-        identify::{Config, IdentifyEvent},
-        ping::Config as PingConfig,
+    protocol::{
+        libp2p::{
+            identify::{Config, IdentifyEvent},
+            ping::Config as PingConfig,
+        },
+        TransportService, UserProtocol,
     },
+    types::protocol::ProtocolName,
     Litep2p, Litep2pEvent,
 };
+
+use std::time::Duration;
 
 use crate::common::{add_transport, Transport};
 
@@ -226,4 +233,69 @@ async fn identify_not_supported(transport1: Transport, transport2: Transport) {
     }
 
     assert!(identify_event_stream2.next().now_or_never().is_none());
+}
+
+struct ExitingProtocol;
+
+#[async_trait::async_trait]
+impl UserProtocol for ExitingProtocol {
+    fn protocol(&self) -> ProtocolName {
+        ProtocolName::from("/exiting/1")
+    }
+
+    fn codec(&self) -> ProtocolCodec {
+        ProtocolCodec::Identity(32)
+    }
+
+    async fn run(self: Box<Self>, _service: TransportService) -> litep2p::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn identify_does_not_advertise_unregistered_protocols() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let (identify_config1, _identify_event_stream1) = Config::new("litep2p".to_string(), None);
+    let (ping_config1, _ping_event_stream1) = PingConfig::default();
+    let config_builder1 = ConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_libp2p_identify(identify_config1)
+        .with_libp2p_ping(ping_config1)
+        .with_user_protocol(Box::new(ExitingProtocol));
+    let config1 = add_transport(config_builder1, Transport::Tcp(Default::default())).build();
+
+    let (identify_config2, mut identify_event_stream2) = Config::new("litep2p".to_string(), None);
+    let config_builder2 = ConfigBuilder::new()
+        .with_keypair(Keypair::generate())
+        .with_libp2p_identify(identify_config2);
+    let config2 = add_transport(config_builder2, Transport::Tcp(Default::default())).build();
+
+    let mut litep2p1 = Litep2p::new(config1).unwrap();
+    let mut litep2p2 = Litep2p::new(config2).unwrap();
+    let address = litep2p1.listen_addresses().next().unwrap().clone();
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    litep2p2.dial_address(address).await.unwrap();
+
+    let supported_protocols = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {}
+                _ = litep2p2.next_event() => {}
+                event = identify_event_stream2.next() => {
+                    let IdentifyEvent::PeerIdentified { supported_protocols, .. } = event.unwrap();
+                    break supported_protocols;
+                }
+            }
+        }
+    })
+    .await
+    .unwrap();
+
+    assert!(supported_protocols.contains(&ProtocolName::from("/ipfs/id/1.0.0")));
+    assert!(supported_protocols.contains(&ProtocolName::from("/ipfs/ping/1.0.0")));
+    assert!(!supported_protocols.contains(&ProtocolName::from("/exiting/1")));
 }
