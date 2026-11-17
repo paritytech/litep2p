@@ -158,7 +158,6 @@ impl TcpTransport {
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
-        let connection_open_timeout = self.config.connection_open_timeout;
         let substream_open_timeout = self.config.substream_open_timeout;
         let keypair = self.context.keypair.clone();
 
@@ -180,7 +179,6 @@ impl TcpTransport {
                     yamux_config,
                     max_read_ahead_factor,
                     max_write_buffer_size,
-                    connection_open_timeout,
                     substream_open_timeout,
                 ),
             )
