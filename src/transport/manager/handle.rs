@@ -428,7 +428,7 @@ mod tests {
     }
 
     #[test]
-    fn inbound_opening_capacity_is_shared_and_released_on_drop() {
+    fn inbound_opening_capacity_is_per_transport_and_released_on_drop() {
         let manager = crate::transport::manager::TransportManagerBuilder::new()
             .with_connection_limits_config(
                 crate::transport::ConnectionLimitsConfig::default()
@@ -439,10 +439,11 @@ mod tests {
         let second = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
         let permit = first.try_acquire_inbound_permit(Duration::from_secs(10)).unwrap();
         assert!(!permit.is_expired());
-        assert!(second.try_acquire_inbound_permit(Duration::from_secs(10)).is_none());
+        assert!(first.try_acquire_inbound_permit(Duration::from_secs(10)).is_none());
+        let other = second.try_acquire_inbound_permit(Duration::ZERO).unwrap();
+        assert!(other.is_expired());
         drop(permit);
-        let permit = second.try_acquire_inbound_permit(Duration::ZERO).unwrap();
-        assert!(permit.is_expired());
+        assert!(first.try_acquire_inbound_permit(Duration::from_secs(10)).is_some());
     }
 
     #[test]

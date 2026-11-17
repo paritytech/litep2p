@@ -22,13 +22,13 @@
 
 use crate::types::ConnectionId;
 
-use std::{collections::HashSet, sync::Arc, time::Instant};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use std::{collections::HashSet, time::Instant};
+use tokio::sync::OwnedSemaphorePermit;
 
 /// Configuration for the connection limits.
 #[derive(Debug, Clone)]
 pub struct ConnectionLimitsConfig {
-    /// Maximum number of incoming connections being opened concurrently.
+    /// Maximum number of incoming connections being opened concurrently, per transport.
     max_pending_incoming_connections: usize,
     /// Maximum number of incoming connections that can be established.
     max_incoming_connections: Option<usize>,
@@ -47,9 +47,10 @@ impl Default for ConnectionLimitsConfig {
 }
 
 impl ConnectionLimitsConfig {
-    /// Limit concurrent incoming openings across TCP, WebSocket and WebRTC. Defaults to 256.
+    /// Limit concurrent incoming openings. Defaults to 256.
     ///
-    /// Zero disables incoming connections on these transports.
+    /// Applies separately to each of TCP, WebSocket and WebRTC, so one transport can't starve
+    /// the others. Zero disables incoming connections on these transports.
     pub fn max_pending_incoming_connections(mut self, limit: usize) -> Self {
         self.max_pending_incoming_connections = limit;
         self
@@ -93,8 +94,6 @@ pub enum ConnectionLimitsError {
 /// Connection limits.
 #[derive(Debug, Clone)]
 pub struct ConnectionLimits {
-    /// Shared capacity for incoming openings.
-    pub(super) pending_incoming_connections: Arc<Semaphore>,
     /// Configuration for the connection limits.
     config: ConnectionLimitsConfig,
 
@@ -111,13 +110,15 @@ impl ConnectionLimits {
         let max_outgoing_connections = config.max_outgoing_connections.unwrap_or(0);
 
         Self {
-            pending_incoming_connections: Arc::new(Semaphore::new(
-                config.max_pending_incoming_connections,
-            )),
             config,
             incoming_connections: HashSet::with_capacity(max_incoming_connections),
             outgoing_connections: HashSet::with_capacity(max_outgoing_connections),
         }
+    }
+
+    /// Per-transport capacity for incoming openings.
+    pub(super) fn max_pending_incoming_connections(&self) -> usize {
+        self.config.max_pending_incoming_connections
     }
 
     /// Called when dialing an address.

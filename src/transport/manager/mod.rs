@@ -43,7 +43,10 @@ use futures::{future::BoxFuture, stream::FuturesUnordered, Stream, StreamExt};
 use indexmap::IndexMap;
 use multiaddr::{Multiaddr, Protocol};
 use parking_lot::RwLock;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::{
+    mpsc::{channel, Receiver, Sender},
+    Semaphore,
+};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -446,10 +449,10 @@ impl TransportManager {
     /// Acquire `TransportHandle`.
     pub fn transport_handle(&self, executor: Arc<dyn Executor>) -> TransportHandle {
         TransportHandle {
-            pending_incoming_connections: self
-                .connection_limits
-                .pending_incoming_connections
-                .clone(),
+            // Per-transport, so that one transport can't starve the others.
+            pending_incoming_connections: Arc::new(Semaphore::new(
+                self.connection_limits.max_pending_incoming_connections(),
+            )),
             tx: self.event_tx.clone(),
             executor,
             keypair: self.keypair.clone(),
