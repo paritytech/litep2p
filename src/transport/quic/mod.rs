@@ -369,6 +369,7 @@ impl Transport for QuicTransport {
             .pending_open
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
+        // Opening is over, release the capacity.
         connection.opening_permit.take();
         let bandwidth_sink = self.context.bandwidth_sink.clone();
         let mut protocol_set = self.context.protocol_set(connection_id);

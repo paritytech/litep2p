@@ -414,7 +414,7 @@ impl Transport for TcpTransport {
             .pending_open
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
-        // Negotiation already met the deadline; don't fail the connection on a slow manager.
+        // Opening is over, release the capacity.
         context.opening_permit.take();
         let mut protocol_set = self.context.protocol_set(connection_id);
         let bandwidth_sink = self.context.bandwidth_sink.clone();
