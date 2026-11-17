@@ -42,8 +42,8 @@ use str0m::{
     channel::{ChannelConfig, ChannelId},
     config::DtlsCert,
     ice::IceCreds,
-    net::{DatagramRecv, Protocol as Str0mProtocol, Receive},
-    Candidate, Input, Rtc, RtcError,
+    net::{DatagramRecv, Protocol as Str0mProtocol},
+    Candidate, Rtc, RtcError,
 };
 
 use tokio::sync::mpsc::{channel, error::TrySendError, Sender};
@@ -118,6 +118,9 @@ const REMOTE_FINGERPRINT: &str =
 /// A maximum single UDP payload size that we forward to `str0m`.
 const MAX_UDP_PAYLOAD_SIZE: usize = 2000;
 
+/// Bound receive work so that timers run under sustained traffic.
+const MAX_SOCKET_READS_PER_POLL: usize = 64;
+
 /// Connection context.
 struct ConnectionContext {
     /// Remote peer ID.
@@ -147,8 +150,8 @@ enum ConnectionEvent {
 
     /// Timeout.
     Timeout {
-        /// Timeout duration.
-        duration: Duration,
+        /// Absolute timeout.
+        timeout: Instant,
     },
 }
 
@@ -177,6 +180,9 @@ pub(crate) struct WebRtcTransport {
     /// Datagram buffer size.
     datagram_buffer_size: usize,
 
+    /// Connection open timeout.
+    connection_open_timeout: Duration,
+
     /// Connected peers.
     open: HashMap<AddressPair, ConnectionContext>,
 
@@ -190,7 +196,7 @@ pub(crate) struct WebRtcTransport {
     connections: HashMap<ConnectionId, (PeerId, AddressPair, Endpoint)>,
 
     /// Pending timeouts.
-    timeouts: HashMap<AddressPair, BoxFuture<'static, ()>>,
+    timeouts: HashMap<AddressPair, Delay>,
 
     /// Pending events.
     pending_events: VecDeque<TransportEvent>,
@@ -260,23 +266,19 @@ impl WebRtcTransport {
         loop {
             match connection.poll_process() {
                 opening::WebRtcEvent::Timeout { timeout } => {
-                    let duration = timeout - Instant::now();
+                    if timeout > Instant::now() {
+                        return ConnectionEvent::Timeout { timeout };
+                    }
 
-                    match duration.is_zero() {
-                        true => match connection.on_timeout() {
-                            Ok(()) => continue,
-                            Err(error) => {
-                                tracing::debug!(
-                                    target: LOG_TARGET,
-                                    ?addrs,
-                                    ?error,
-                                    "failed to handle timeout",
-                                );
+                    if let Err(error) = connection.on_timeout() {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?addrs,
+                            ?error,
+                            "failed to handle timeout",
+                        );
 
-                                return ConnectionEvent::ConnectionClosed;
-                            }
-                        },
-                        false => return ConnectionEvent::Timeout { duration },
+                        return ConnectionEvent::ConnectionClosed;
                     }
                 }
                 opening::WebRtcEvent::Transmit {
@@ -304,6 +306,69 @@ impl WebRtcTransport {
                 opening::WebRtcEvent::ConnectionClosed => return ConnectionEvent::ConnectionClosed,
                 opening::WebRtcEvent::ConnectionOpened { peer, endpoint } => {
                     return ConnectionEvent::ConnectionEstablished { peer, endpoint };
+                }
+            }
+        }
+    }
+
+    /// Remove all state for an opening connection.
+    fn remove_opening(&mut self, addrs: &AddressPair) -> Option<OpeningWebRtcConnection> {
+        self.timeouts.remove(addrs);
+        let connection = self.opening.remove(addrs)?;
+        let connection_id = connection.connection_id();
+        self.connections.remove(connection_id);
+        self.pending_events.retain(|event| {
+            !matches!(event, TransportEvent::ConnectionEstablished { endpoint, .. }
+                if endpoint.connection_id() == *connection_id)
+        });
+        Some(connection)
+    }
+
+    /// Pop the next event, dropping establishments of expired openings.
+    ///
+    /// Other expired openings are removed by their timers, capped to the deadline.
+    fn pop_event(&mut self) -> Option<TransportEvent> {
+        while let Some(event) = self.pending_events.pop_front() {
+            if let TransportEvent::ConnectionEstablished { endpoint, .. } = &event {
+                let expired = self
+                    .connections
+                    .get(&endpoint.connection_id())
+                    .map(|(_, addrs, _)| *addrs)
+                    .filter(|addrs| self.opening.get(addrs).is_some_and(|c| c.is_expired()));
+
+                if let Some(addrs) = expired {
+                    self.remove_opening(&addrs);
+                    continue;
+                }
+            }
+
+            return Some(event);
+        }
+
+        None
+    }
+
+    /// Drain opening output and register its next wakeup.
+    fn process_connection(&mut self, addrs: &AddressPair, cx: &mut Context<'_>) {
+        loop {
+            match self.poll_connection(addrs) {
+                ConnectionEvent::ConnectionEstablished { peer, endpoint } => {
+                    self.connections
+                        .insert(endpoint.connection_id(), (peer, *addrs, endpoint.clone()));
+                    self.pending_events
+                        .push_back(TransportEvent::ConnectionEstablished { peer, endpoint });
+                }
+                ConnectionEvent::ConnectionClosed => {
+                    self.remove_opening(addrs);
+                    return;
+                }
+                ConnectionEvent::Timeout { timeout } => {
+                    let mut delay = Delay::new(timeout.saturating_duration_since(Instant::now()));
+                    if Pin::new(&mut delay).poll(cx).is_ready() {
+                        cx.waker().wake_by_ref();
+                    }
+                    self.timeouts.insert(*addrs, delay);
+                    return;
                 }
             }
         }
@@ -375,6 +440,11 @@ impl WebRtcTransport {
             }
         }
 
+        if self.opening.get(&addrs).is_some_and(|connection| connection.is_expired()) {
+            self.remove_opening(&addrs);
+            return Ok(false);
+        }
+
         // if the peer doesn't exist, decode the message and expect to receive `Stun`
         // so that a new connection can be initialized
         let contents: DatagramRecv =
@@ -429,27 +499,20 @@ impl WebRtcTransport {
         );
 
         // create new `Rtc` object for the peer and give it the received STUN message
-        let (mut rtc, noise_channel_id) = self.make_rtc(ufrag, pass, &addrs)?;
-
-        rtc.handle_input(Input::Receive(
-            Instant::now(),
-            Receive {
-                source: addrs.remote,
-                proto: Str0mProtocol::Udp,
-                destination: addrs.local,
-                contents,
-            },
-        ))?;
+        let deadline = Instant::now() + self.connection_open_timeout;
+        let (rtc, noise_channel_id) = self.make_rtc(ufrag, pass, &addrs)?;
 
         let connection_id = self.context.next_connection_id();
-        let connection = OpeningWebRtcConnection::new(
+        let mut connection = OpeningWebRtcConnection::new(
             rtc,
             connection_id,
             noise_channel_id,
             self.context.keypair.clone(),
             addrs,
             socket.clone(),
+            deadline,
         );
+        connection.on_input(contents)?;
         self.opening.insert(addrs, connection);
 
         Ok(true)
@@ -506,6 +569,7 @@ impl TransportBuilder for WebRtcTransport {
                 timeouts: HashMap::new(),
                 pending_events: VecDeque::new(),
                 datagram_buffer_size: config.datagram_buffer_size,
+                connection_open_timeout: config.connection_open_timeout,
                 read_buffer,
             },
             listen_multi_addresses,
@@ -572,7 +636,7 @@ impl Transport for WebRtcTransport {
             Error::InvalidState
         })?;
 
-        let connection = self.opening.remove(&addrs).ok_or_else(|| {
+        let connection = self.remove_opening(&addrs).ok_or_else(|| {
             tracing::warn!(
                 target: LOG_TARGET,
                 ?connection_id,
@@ -639,8 +703,7 @@ impl Transport for WebRtcTransport {
             Error::InvalidState
         })?;
 
-        self.opening
-            .remove(&addrs)
+        self.remove_opening(&addrs)
             .ok_or_else(|| {
                 tracing::warn!(
                     target: LOG_TARGET,
@@ -674,7 +737,7 @@ impl Stream for WebRtcTransport {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = Pin::into_inner(self);
 
-        if let Some(event) = this.pending_events.pop_front() {
+        if let Some(event) = this.pop_event() {
             return Poll::Ready(Some(event));
         }
 
@@ -688,7 +751,7 @@ impl Stream for WebRtcTransport {
             }
         }
 
-        loop {
+        for read in 0..MAX_SOCKET_READS_PER_POLL {
             let (addrs, meta, socket) =
                 match this.listener.poll_recv_from(cx, &mut this.read_buffer) {
                     // No error is expected to be returned by the listener.
@@ -703,6 +766,10 @@ impl Stream for WebRtcTransport {
                     Poll::Pending => break,
                     Poll::Ready(Ok(res)) => res,
                 };
+
+            if read + 1 == MAX_SOCKET_READS_PER_POLL {
+                cx.waker().wake_by_ref();
+            }
 
             // `stride == 0` is only possible with `len == 0`
             // (`quinn-udp` sets `stride = len` when GRO info is absent),
@@ -742,35 +809,7 @@ impl Stream for WebRtcTransport {
             }
 
             if should_poll {
-                loop {
-                    match this.poll_connection(&addrs) {
-                        ConnectionEvent::ConnectionEstablished { peer, endpoint } => {
-                            this.connections
-                                .insert(endpoint.connection_id(), (peer, addrs, endpoint.clone()));
-
-                            // keep polling the connection until it registers a timeout
-                            this.pending_events.push_back(TransportEvent::ConnectionEstablished {
-                                peer,
-                                endpoint,
-                            });
-                        }
-                        ConnectionEvent::ConnectionClosed => {
-                            // Connection closed before it was accepted/rejected, drop all
-                            // per-connection state held for this address pair.
-                            this.timeouts.remove(&addrs);
-                            if let Some(opening) = this.opening.remove(&addrs) {
-                                this.connections.remove(opening.connection_id());
-                            }
-                            break;
-                        }
-                        ConnectionEvent::Timeout { duration } => {
-                            this.timeouts
-                                .insert(addrs, Box::pin(async move { Delay::new(duration).await }));
-
-                            break;
-                        }
-                    }
-                }
+                this.process_connection(&addrs, cx);
             }
         }
 
@@ -786,34 +825,10 @@ impl Stream for WebRtcTransport {
             .collect();
 
         for addrs in filtered_timeouts {
-            loop {
-                match this.poll_connection(&addrs) {
-                    ConnectionEvent::ConnectionEstablished { peer, endpoint } => {
-                        this.connections
-                            .insert(endpoint.connection_id(), (peer, addrs, endpoint.clone()));
-                        this.pending_events
-                            .push_back(TransportEvent::ConnectionEstablished { peer, endpoint });
-                        // keep polling the connection until it registers a timeout
-                    }
-                    ConnectionEvent::ConnectionClosed => {
-                        // Same teardown as above, timeouts entry is pruned  after this loop.
-                        if let Some(opening) = this.opening.remove(&addrs) {
-                            this.connections.remove(opening.connection_id());
-                        }
-                        break;
-                    }
-                    ConnectionEvent::Timeout { duration } => {
-                        this.timeouts.insert(addrs, Box::pin(Delay::new(duration)));
-                        break;
-                    }
-                }
-            }
+            this.process_connection(&addrs, cx);
         }
 
-        this.timeouts.retain(|addrs, _| this.opening.contains_key(addrs));
-        this.pending_events
-            .pop_front()
-            .map_or(Poll::Pending, |event| Poll::Ready(Some(event)))
+        this.pop_event().map_or(Poll::Pending, |event| Poll::Ready(Some(event)))
     }
 }
 
@@ -870,6 +885,252 @@ fn is_forwardable(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        executor::DefaultExecutor,
+        transport::{manager::TransportManagerBuilder, CONNECTION_OPEN_TIMEOUT},
+    };
+    use futures::{future::poll_fn, task::noop_waker};
+    use multiaddr::Protocol;
+    use str0m::ice::{StunMessage, TransId};
+    use tokio::net::UdpSocket;
+
+    async fn transport() -> (WebRtcTransport, SocketAddr) {
+        let manager = TransportManagerBuilder::new().build();
+        let (transport, addresses) = WebRtcTransport::new(
+            manager.transport_handle(Arc::new(DefaultExecutor)),
+            Config {
+                listen_addresses: vec!["/ip4/127.0.0.1/udp/0/webrtc-direct".parse().unwrap()],
+                ..Default::default()
+            },
+            Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap()),
+        )
+        .unwrap();
+        let port = addresses[0]
+            .iter()
+            .find_map(|protocol| match protocol {
+                Protocol::Udp(port) => Some(port),
+                _ => None,
+            })
+            .unwrap();
+        (transport, SocketAddr::from(([127, 0, 0, 1], port)))
+    }
+
+    fn stun_request(username: &str) -> Vec<u8> {
+        let message = StunMessage::binding_request(username, TransId::new(), true, 1, 1, false);
+        let mut buffer = vec![0; 512];
+        // Invalid integrity still reaches RTC allocation, before ICE authentication.
+        let len = message.to_bytes(Some(b"password"), &mut buffer, |_, _| [0; 20]).unwrap();
+        buffer.truncate(len);
+        buffer
+    }
+
+    async fn receive_stun(
+        transport: &mut WebRtcTransport,
+        address: SocketAddr,
+    ) -> (AddressPair, Arc<WebRtcSocket>, Vec<u8>) {
+        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        sender.send_to(&stun_request("user:password"), address).await.unwrap();
+        let (addrs, meta, socket) =
+            poll_fn(|cx| transport.listener.poll_recv_from(cx, &mut transport.read_buffer))
+                .await
+                .unwrap();
+        (addrs, socket, transport.read_buffer[..meta.len].to_vec())
+    }
+
+    fn insert_opening(
+        transport: &mut WebRtcTransport,
+        addrs: AddressPair,
+        socket: Arc<WebRtcSocket>,
+        deadline: Instant,
+    ) -> ConnectionId {
+        let (rtc, channel_id) = transport.make_rtc("user", "password", &addrs).unwrap();
+        let connection_id = transport.context.next_connection_id();
+        transport.opening.insert(
+            addrs,
+            OpeningWebRtcConnection::new(
+                rtc,
+                connection_id,
+                channel_id,
+                transport.context.keypair.clone(),
+                addrs,
+                socket,
+                deadline,
+            ),
+        );
+        connection_id
+    }
+
+    fn queue_established(
+        transport: &mut WebRtcTransport,
+        addrs: AddressPair,
+        connection_id: ConnectionId,
+    ) {
+        let peer = PeerId::random();
+        let endpoint = Endpoint::listener(Multiaddr::empty(), connection_id);
+        transport.connections.insert(connection_id, (peer, addrs, endpoint.clone()));
+        transport
+            .pending_events
+            .push_back(TransportEvent::ConnectionEstablished { peer, endpoint });
+    }
+
+    fn assert_no_openings(transport: &WebRtcTransport) {
+        assert!(transport.opening.is_empty());
+        assert!(transport.timeouts.is_empty());
+        assert!(transport.connections.is_empty());
+        assert!(transport.pending_events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn repeated_stun_does_not_extend_opening_deadline() {
+        let (mut transport, address) = transport().await;
+        let (addrs, socket, buffer) = receive_stun(&mut transport, address).await;
+        let before = Instant::now();
+        assert!(transport.on_socket_input(addrs, &socket, buffer).unwrap());
+        let after = Instant::now();
+        let connection = &transport.opening[&addrs];
+        let deadline = connection.deadline();
+        let connection_id = *connection.connection_id();
+        assert!(deadline >= before + CONNECTION_OPEN_TIMEOUT);
+        assert!(deadline <= after + CONNECTION_OPEN_TIMEOUT);
+
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        transport.process_connection(&addrs, &mut cx);
+        for username in ["user:password", "other:credentials", "user:password"] {
+            assert!(transport.on_socket_input(addrs, &socket, stun_request(username)).unwrap());
+            transport.process_connection(&addrs, &mut cx);
+            let connection = &transport.opening[&addrs];
+            assert_eq!(connection.deadline(), deadline);
+            assert_eq!(*connection.connection_id(), connection_id);
+            assert_eq!(transport.opening.len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn idle_opening_expires_after_timer_replacement() {
+        let (mut transport, address) = transport().await;
+        let (addrs, socket, _) = receive_stun(&mut transport, address).await;
+        insert_opening(
+            &mut transport,
+            addrs,
+            socket,
+            Instant::now() + Duration::from_millis(200),
+        );
+        let waker = noop_waker();
+        transport.process_connection(&addrs, &mut Context::from_waker(&waker));
+
+        // Force a protocol wakeup, so poll_next must register the replacement timer.
+        transport.timeouts.insert(addrs, Delay::new(Duration::ZERO));
+        let task = tokio::spawn(async move {
+            poll_fn(|cx| {
+                assert!(Pin::new(&mut transport).poll_next(cx).is_pending());
+                if transport.opening.is_empty() {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await;
+            assert_no_openings(&transport);
+        });
+
+        // The guard wakes the join handle, never the transport task.
+        tokio::time::timeout(Duration::from_secs(2), task).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn expiry_removes_queued_establishment_and_connection_state() {
+        let (mut transport, address) = transport().await;
+        let (addrs, socket, _) = receive_stun(&mut transport, address).await;
+        let connection_id = insert_opening(&mut transport, addrs, socket, Instant::now());
+        queue_established(&mut transport, addrs, connection_id);
+        transport.timeouts.insert(addrs, Delay::new(Duration::from_secs(60)));
+
+        let buffer = stun_request("user:password");
+        let connection = transport.opening.get_mut(&addrs).unwrap();
+        assert!(matches!(
+            connection.on_input(buffer.as_slice().try_into().unwrap()),
+            Err(Error::Timeout)
+        ));
+        assert!(matches!(connection.on_timeout(), Err(Error::Timeout)));
+        assert!(matches!(
+            connection.poll_process(),
+            opening::WebRtcEvent::ConnectionClosed
+        ));
+
+        let waker = noop_waker();
+        assert!(Pin::new(&mut transport)
+            .poll_next(&mut Context::from_waker(&waker))
+            .is_pending());
+        assert_no_openings(&transport);
+    }
+
+    #[tokio::test]
+    async fn acceptance_after_deadline_fails_and_cleans_up() {
+        let (mut transport, address) = transport().await;
+        let (addrs, socket, _) = receive_stun(&mut transport, address).await;
+        let connection_id = insert_opening(&mut transport, addrs, socket, Instant::now());
+        queue_established(&mut transport, addrs, connection_id);
+        transport.timeouts.insert(addrs, Delay::new(Duration::from_secs(60)));
+
+        assert!(matches!(
+            transport.accept(connection_id),
+            Err(Error::Timeout)
+        ));
+        assert_no_openings(&transport);
+        assert!(transport.open.is_empty());
+    }
+
+    #[tokio::test]
+    async fn rejection_removes_timer_and_queued_establishment() {
+        let (mut transport, address) = transport().await;
+        let (addrs, socket, _) = receive_stun(&mut transport, address).await;
+        let connection_id = insert_opening(
+            &mut transport,
+            addrs,
+            socket,
+            Instant::now() + CONNECTION_OPEN_TIMEOUT,
+        );
+        queue_established(&mut transport, addrs, connection_id);
+        transport.timeouts.insert(addrs, Delay::new(CONNECTION_OPEN_TIMEOUT));
+
+        transport.reject(connection_id).unwrap();
+        assert_no_openings(&transport);
+    }
+
+    #[tokio::test]
+    async fn receive_budget_preserves_timer_progress_with_queued_datagrams() {
+        use futures::task::{waker, ArcWake};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct WakeCounter(AtomicUsize);
+        impl ArcWake for WakeCounter {
+            fn wake_by_ref(this: &Arc<Self>) {
+                this.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        let (mut transport, address) = transport().await;
+        let (addrs, socket, _) = receive_stun(&mut transport, address).await;
+        // Only the fired timer can remove this expired opening.
+        insert_opening(&mut transport, addrs, socket, Instant::now());
+        transport.timeouts.insert(addrs, Delay::new(Duration::ZERO));
+        let sender = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        for _ in 0..=MAX_SOCKET_READS_PER_POLL {
+            sender.send_to(&[0xff; 20], address).unwrap();
+        }
+
+        let counter = Arc::new(WakeCounter(AtomicUsize::new(0)));
+        let waker = waker(counter.clone());
+        let mut cx = Context::from_waker(&waker);
+        assert!(Pin::new(&mut transport).poll_next(&mut cx).is_pending());
+        assert!(transport.opening.is_empty());
+        assert!(counter.0.load(Ordering::Relaxed) > 0);
+        assert!(matches!(
+            transport.listener.poll_recv_from(&mut cx, &mut transport.read_buffer),
+            Poll::Ready(Ok(_))
+        ));
+    }
 
     /// A STUN-shaped datagram of `len` bytes, carrying the magic cookie.
     fn stun_datagram(len: usize) -> Vec<u8> {
