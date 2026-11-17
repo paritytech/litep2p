@@ -474,7 +474,9 @@ mod tests {
                 let mut control = control.clone();
                 tokio::spawn(async move { control.close().await })
             });
-            timeout(future::join_all(closes)).await;
+            for close in timeout(future::try_join_all(closes)).await.unwrap() {
+                close.unwrap();
+            }
 
             let _ = done_tx.send(());
             timeout(driver).await.unwrap();
