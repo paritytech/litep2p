@@ -1218,8 +1218,8 @@ mod tests {
             .on_socket_input(addrs, &socket, stun_request("user:password"))
             .unwrap());
         let deadline = transport.opening[&addrs].permit.deadline;
-        assert!(deadline >= before + Duration::from_secs(10));
-        assert!(deadline <= Instant::now() + Duration::from_secs(10));
+        assert!(deadline >= before + transport.connection_open_timeout);
+        assert!(deadline <= Instant::now() + transport.connection_open_timeout);
         assert!(matches!(
             transport.poll_connection(&addrs),
             ConnectionEvent::Timeout { .. }
