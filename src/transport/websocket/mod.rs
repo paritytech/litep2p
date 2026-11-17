@@ -410,9 +410,8 @@ impl Transport for WebSocketTransport {
             .pending_open
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
-        if context.opening_permit.take().is_some_and(|permit| permit.is_expired()) {
-            return Err(Error::Timeout);
-        }
+        // Negotiation already met the deadline; don't fail the connection on a slow manager.
+        context.opening_permit.take();
         let mut protocol_set = self.context.protocol_set(connection_id);
         let bandwidth_sink = self.context.bandwidth_sink.clone();
         let substream_open_timeout = self.config.substream_open_timeout;
