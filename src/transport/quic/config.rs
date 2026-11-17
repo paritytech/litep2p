@@ -36,8 +36,8 @@ pub struct Config {
 
     /// Connection open timeout.
     ///
-    /// How long should litep2p wait for a connection to be opend before the host
-    /// is deemed unreachable.
+    /// How long should litep2p wait for a connection to be opened before the host
+    /// is deemed unreachable. Also bounds the handshake of incoming connections.
     pub connection_open_timeout: Duration,
 
     /// Substream open timeout.
