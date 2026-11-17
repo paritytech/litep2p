@@ -523,7 +523,7 @@ mod tests {
                 })
                 .collect();
             remote.write_all(&[0xff; 12]).await.unwrap();
-            timeout(future::join_all(opens)).await;
+            timeout(future::try_join_all(opens)).await.unwrap();
 
             let _ = done_tx.send(());
             timeout(driver).await.unwrap();
