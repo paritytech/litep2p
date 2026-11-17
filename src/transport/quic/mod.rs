@@ -574,8 +574,6 @@ impl Stream for QuicTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // Polled before the listener so that a busy listener can't keep expired openings
-        // from releasing their capacity.
         while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
             let (connection_id, result) = connection;
 
@@ -583,22 +581,6 @@ impl Stream for QuicTransport {
                 Some(event) => return Poll::Ready(Some(event)),
                 None => {}
             }
-        }
-
-        if let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
-            let connection_id = self.context.next_connection_id();
-
-            tracing::trace!(
-                target: LOG_TARGET,
-                ?connection_id,
-                "pending inbound connection",
-            );
-
-            self.pending_inbound_connections.insert(connection_id, connection);
-
-            return Poll::Ready(Some(TransportEvent::PendingInboundConnection {
-                connection_id,
-            }));
         }
 
         while let Poll::Ready(Some(result)) = self.pending_raw_connections.poll_next_unpin(cx) {
@@ -664,6 +646,23 @@ impl Stream for QuicTransport {
                     }
                 }
             }
+        }
+
+        // Polled last, so a busy listener can't starve pending connections and their timeouts.
+        if let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
+            let connection_id = self.context.next_connection_id();
+
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?connection_id,
+                "pending inbound connection",
+            );
+
+            self.pending_inbound_connections.insert(connection_id, connection);
+
+            return Poll::Ready(Some(TransportEvent::PendingInboundConnection {
+                connection_id,
+            }));
         }
 
         Poll::Pending

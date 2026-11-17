@@ -662,49 +662,6 @@ impl Stream for WebSocketTransport {
             }
         }
 
-        if let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
-            return match event {
-                None => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        "Websocket listener terminated, ignore if the node is stopping",
-                    );
-
-                    Poll::Ready(None)
-                }
-                Some(Err(error)) => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?error,
-                        "Websocket listener terminated with error",
-                    );
-
-                    Poll::Ready(None)
-                }
-                Some(Ok((connection, address))) => {
-                    let connection_id = self.context.next_connection_id();
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        ?connection_id,
-                        ?address,
-                        "pending inbound Websocket connection",
-                    );
-
-                    self.pending_inbound_connections.insert(
-                        connection_id,
-                        PendingInboundConnection {
-                            connection,
-                            address,
-                        },
-                    );
-
-                    Poll::Ready(Some(TransportEvent::PendingInboundConnection {
-                        connection_id,
-                    }))
-                }
-            };
-        }
-
         while let Poll::Ready(Some(result)) = self.pending_raw_connections.poll_next_unpin(cx) {
             tracing::trace!(target: LOG_TARGET, ?result, "raw connection result");
 
@@ -767,6 +724,50 @@ impl Stream for WebSocketTransport {
                     }
                 }
             }
+        }
+
+        // Polled last, so a busy listener can't starve pending connections and their timeouts.
+        if let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
+            return match event {
+                None => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        "Websocket listener terminated, ignore if the node is stopping",
+                    );
+
+                    Poll::Ready(None)
+                }
+                Some(Err(error)) => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "Websocket listener terminated with error",
+                    );
+
+                    Poll::Ready(None)
+                }
+                Some(Ok((connection, address))) => {
+                    let connection_id = self.context.next_connection_id();
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?connection_id,
+                        ?address,
+                        "pending inbound Websocket connection",
+                    );
+
+                    self.pending_inbound_connections.insert(
+                        connection_id,
+                        PendingInboundConnection {
+                            connection,
+                            address,
+                        },
+                    );
+
+                    Poll::Ready(Some(TransportEvent::PendingInboundConnection {
+                        connection_id,
+                    }))
+                }
+            };
         }
 
         Poll::Pending
