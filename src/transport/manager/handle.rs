@@ -381,9 +381,14 @@ impl TransportHandle {
         timeout: Duration,
     ) -> Option<InboundConnectionPermit> {
         let permit = self.pending_incoming_connections.clone().try_acquire_owned().ok()?;
+        let now = Instant::now();
+        // Far future on overflow, as `tokio::time::timeout` does.
+        let deadline = now
+            .checked_add(timeout)
+            .unwrap_or_else(|| now + Duration::from_secs(86400 * 365 * 30));
         Some(InboundConnectionPermit {
             _permit: permit,
-            deadline: Instant::now() + timeout,
+            deadline,
         })
     }
 
@@ -444,6 +449,19 @@ mod tests {
         assert!(other.is_expired());
         drop(permit);
         assert!(first.try_acquire_inbound_permit(Duration::from_secs(10)).is_some());
+    }
+
+    #[test]
+    fn extreme_inbound_opening_config_doesnt_panic() {
+        let manager = crate::transport::manager::TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                crate::transport::ConnectionLimitsConfig::default()
+                    .max_pending_incoming_connections(usize::MAX),
+            )
+            .build();
+        let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        let permit = handle.try_acquire_inbound_permit(Duration::MAX).unwrap();
+        assert!(!permit.is_expired());
     }
 
     #[test]

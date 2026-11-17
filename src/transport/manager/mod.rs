@@ -451,7 +451,9 @@ impl TransportManager {
         TransportHandle {
             // Per-transport, so that one transport can't starve the others.
             pending_incoming_connections: Arc::new(Semaphore::new(
-                self.connection_limits.max_pending_incoming_connections(),
+                self.connection_limits
+                    .max_pending_incoming_connections()
+                    .min(Semaphore::MAX_PERMITS),
             )),
             tx: self.event_tx.clone(),
             executor,
