@@ -49,8 +49,8 @@ impl Default for ConnectionLimitsConfig {
 impl ConnectionLimitsConfig {
     /// Limit concurrent incoming openings. Defaults to 256.
     ///
-    /// Applies separately to each of TCP, WebSocket and WebRTC, so one transport can't starve
-    /// the others. Zero disables incoming connections on these transports.
+    /// Applies separately to each transport, so one transport can't starve the others. Zero
+    /// disables incoming connections.
     pub fn max_pending_incoming_connections(mut self, limit: usize) -> Self {
         self.max_pending_incoming_connections = limit;
         self

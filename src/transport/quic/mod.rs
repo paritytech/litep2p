@@ -26,7 +26,7 @@ use crate::{
     crypto::tls::make_client_config,
     error::{AddressError, DialError, Error, QuicError},
     transport::{
-        manager::TransportHandle,
+        manager::{limits::InboundConnectionPermit, TransportHandle},
         quic::{config::Config as QuicConfig, connection::QuicConnection, listener::QuicListener},
         Endpoint as Litep2pEndpoint, Transport, TransportBuilder, TransportEvent,
     },
@@ -64,6 +64,9 @@ const LOG_TARGET: &str = "litep2p::quic";
 
 #[derive(Debug)]
 struct NegotiatedConnection {
+    /// Inbound opening capacity, held until acceptance.
+    opening_permit: Option<InboundConnectionPermit>,
+
     /// Remote peer ID.
     peer: PeerId,
 
@@ -144,10 +147,18 @@ impl QuicTransport {
 
     /// Handle inbound accepted connection.
     fn on_inbound_connection(&mut self, connection_id: ConnectionId, connection: Connecting) {
+        let Some(permit) =
+            self.context.try_acquire_inbound_permit(self.config.connection_open_timeout)
+        else {
+            return;
+        };
+        let deadline = tokio::time::Instant::from_std(permit.deadline);
+
         self.pending_connections.push(Box::pin(async move {
-            let connection = match connection.await {
-                Ok(connection) => connection,
-                Err(error) => return (connection_id, Err(DialError::from(error))),
+            let connection = match tokio::time::timeout_at(deadline, connection).await {
+                Err(_) => return (connection_id, Err(DialError::Timeout)),
+                Ok(Err(error)) => return (connection_id, Err(DialError::from(error))),
+                Ok(Ok(connection)) => connection,
             };
 
             let Some(peer) = Self::extract_peer_id(&connection) else {
@@ -157,7 +168,14 @@ impl QuicTransport {
                 );
             };
 
-            (connection_id, Ok(NegotiatedConnection { peer, connection }))
+            (
+                connection_id,
+                Ok(NegotiatedConnection {
+                    opening_permit: Some(permit),
+                    peer,
+                    connection,
+                }),
+            )
         }));
     }
 
@@ -323,7 +341,14 @@ impl Transport for QuicTransport {
                 );
             };
 
-            (connection_id, Ok(NegotiatedConnection { peer, connection }))
+            (
+                connection_id,
+                Ok(NegotiatedConnection {
+                    opening_permit: None,
+                    peer,
+                    connection,
+                }),
+            )
         }));
 
         Ok(())
@@ -333,10 +358,11 @@ impl Transport for QuicTransport {
         &mut self,
         connection_id: ConnectionId,
     ) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
-        let (connection, endpoint) = self
+        let (mut connection, endpoint) = self
             .pending_open
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
+        connection.opening_permit.take();
         let bandwidth_sink = self.context.bandwidth_sink.clone();
         let mut protocol_set = self.context.protocol_set(connection_id);
         let substream_open_timeout = self.config.substream_open_timeout;
@@ -464,7 +490,11 @@ impl Transport for QuicTransport {
                         .into());
                     };
 
-                    Ok(NegotiatedConnection { peer, connection })
+                    Ok(NegotiatedConnection {
+                        opening_permit: None,
+                        peer,
+                        connection,
+                    })
                 };
 
                 async move { future.await.map(|ok| (addr.clone(), ok)).map_err(|err| (addr, err)) }
@@ -536,6 +566,17 @@ impl Stream for QuicTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // Polled before the listener so that a busy listener can't keep expired openings
+        // from releasing their capacity.
+        while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
+            let (connection_id, result) = connection;
+
+            match self.on_connection_established(connection_id, result) {
+                Some(event) => return Poll::Ready(Some(event)),
+                None => {}
+            }
+        }
+
         if let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
             let connection_id = self.context.next_connection_id();
 
@@ -617,15 +658,6 @@ impl Stream for QuicTransport {
             }
         }
 
-        while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
-            let (connection_id, result) = connection;
-
-            match self.on_connection_established(connection_id, result) {
-                Some(event) => return Poll::Ready(Some(event)),
-                None => {}
-            }
-        }
-
         Poll::Pending
     }
 }
@@ -677,6 +709,7 @@ mod tests {
         };
         let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
 
+        let capacity = handle1.pending_incoming_connections.clone();
         let (mut transport1, listen_addresses) =
             QuicTransport::new(handle1, Default::default(), resolver.clone()).unwrap();
         let listen_address = listen_addresses[0].clone();
@@ -733,16 +766,68 @@ mod tests {
             _ => panic!("unexpected event"),
         }
 
-        let res1 = transport1.next().await;
-        let res2 = from_transport2.recv().await.unwrap();
+        let Some(TransportEvent::ConnectionEstablished { endpoint, .. }) = transport1.next().await
+        else {
+            panic!("connection did not establish");
+        };
+        assert_eq!(capacity.available_permits(), 255);
 
-        assert!(std::matches!(
-            res1,
-            Some(TransportEvent::ConnectionEstablished { .. })
-        ));
+        let res2 = from_transport2.recv().await.unwrap();
         assert!(std::matches!(
             res2,
             Some(TransportEvent::ConnectionEstablished { .. })
         ));
+
+        drop(transport1.accept(endpoint.connection_id()).unwrap());
+        assert_eq!(capacity.available_permits(), 256);
+    }
+
+    #[tokio::test]
+    async fn inbound_opening_dropped_at_capacity() {
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
+        let manager1 = crate::transport::manager::TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                crate::transport::ConnectionLimitsConfig::default()
+                    .max_pending_incoming_connections(1),
+            )
+            .build();
+        let handle1 = manager1.transport_handle(Arc::new(DefaultExecutor {}));
+        let peer1 = PeerId::from_public_key(&handle1.keypair.public().into());
+        let capacity = handle1.pending_incoming_connections.clone();
+        let (mut transport1, listen_addresses) =
+            QuicTransport::new(handle1, Default::default(), resolver.clone()).unwrap();
+        let listen_address = listen_addresses[0].clone().with(Protocol::P2p(peer1.into()));
+
+        let manager2 = crate::transport::manager::TransportManagerBuilder::new().build();
+        let handle2 = manager2.transport_handle(Arc::new(DefaultExecutor {}));
+        let (mut transport2, _) =
+            QuicTransport::new(handle2, Default::default(), resolver).unwrap();
+
+        // The handshake only progresses while the dialer is polled.
+        transport2.dial(ConnectionId::from(0usize), listen_address.clone()).unwrap();
+        transport2.dial(ConnectionId::from(1usize), listen_address).unwrap();
+        tokio::spawn(async move { while transport2.next().await.is_some() {} });
+
+        let held = capacity.clone().try_acquire_owned().unwrap();
+        let Some(TransportEvent::PendingInboundConnection { connection_id }) =
+            transport1.next().await
+        else {
+            panic!("unexpected event");
+        };
+        transport1.accept_pending(connection_id).unwrap();
+        assert!(transport1.pending_connections.is_empty());
+
+        drop(held);
+        let Some(TransportEvent::PendingInboundConnection { connection_id }) =
+            transport1.next().await
+        else {
+            panic!("unexpected event");
+        };
+        transport1.accept_pending(connection_id).unwrap();
+        assert_eq!(transport1.pending_connections.len(), 1);
+        assert_eq!(capacity.available_permits(), 0);
+
+        drop(transport1);
+        assert_eq!(capacity.available_permits(), 1);
     }
 }
