@@ -148,8 +148,21 @@ where
                         continue;
                     }
 
-                    // Retry before `poll_next_inbound`, which returns early for every inbound
-                    // stream and would otherwise starve the open.
+                    // Queued opens wait until the pending open is answered or canceled.
+                    if self.opening.is_none() {
+                        match self.open_requests.poll_next_unpin(cx) {
+                            Poll::Ready(Some(reply)) => self.opening = Some(reply),
+                            // Last `Control` sender was dropped, close the connection.
+                            Poll::Ready(None) => {
+                                self.state = State::Closing;
+                                continue;
+                            }
+                            Poll::Pending => {}
+                        }
+                    }
+
+                    // Opens are polled before `poll_next_inbound`, which returns early for every
+                    // inbound stream and would otherwise starve them.
                     if self.poll_opening(cx) {
                         continue;
                     }
@@ -174,17 +187,7 @@ where
                         continue;
                     }
 
-                    // Queued opens wait until the pending open is answered or canceled.
-                    if self.opening.is_some() {
-                        return Poll::Pending;
-                    }
-
-                    match self.open_requests.poll_next_unpin(cx) {
-                        Poll::Ready(Some(reply)) => self.opening = Some(reply),
-                        // Last `Control` sender was dropped, close the connection.
-                        Poll::Ready(None) => self.state = State::Closing,
-                        Poll::Pending => return Poll::Pending,
-                    }
+                    return Poll::Pending;
                 }
                 State::Draining => match self.open_requests.poll_next_unpin(cx) {
                     Poll::Ready(Some(reply)) => {
@@ -370,6 +373,24 @@ mod tests {
             assert!(matches!(timeout(connection.next()).await, Some(Ok(_))));
         }
         assert!(matches!(futures::poll!(&mut pending), Poll::Ready(Ok(_))));
+    }
+
+    #[tokio::test]
+    async fn inbound_streams_do_not_starve_queued_open() {
+        let (mut control, mut connection, mut remote) = controlled();
+
+        let mut open = Box::pin(control.open_stream());
+        assert!(futures::poll!(&mut open).is_pending());
+
+        // SYNs for remote streams 2, 4 and 6.
+        let mut frames = Vec::new();
+        for id in [2, 4, 6] {
+            frames.extend([0, 1, 0, 1, 0, 0, 0, id, 0, 0, 0, 0]);
+        }
+        remote.write_all(&frames).await.unwrap();
+
+        assert!(matches!(timeout(connection.next()).await, Some(Ok(_))));
+        assert!(matches!(futures::poll!(&mut open), Poll::Ready(Ok(_))));
     }
 
     #[tokio::test]
