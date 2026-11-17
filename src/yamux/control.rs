@@ -269,6 +269,21 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), future).await.expect("timed out")
     }
 
+    /// Opens streams the remote never ACKs, so further opens wait.
+    async fn fill_ack_backlog(
+        control: &mut Control,
+        connection: &mut ControlledConnection<Socket>,
+    ) -> Vec<Stream> {
+        let mut outbound = Vec::new();
+        for _ in 0..MAX_ACK_BACKLOG {
+            match future::select(Box::pin(control.open_stream()), connection.next()).await {
+                future::Either::Left((stream, _)) => outbound.push(stream.unwrap()),
+                future::Either::Right(_) => panic!("connection ended"),
+            }
+        }
+        outbound
+    }
+
     /// The remote never ACKs: its inbound streams are kept alive and never written to.
     /// The connection is kept alive after it ends so dropping it cannot answer requests.
     async fn saturate_ack_backlog() -> (
@@ -338,14 +353,7 @@ mod tests {
     #[tokio::test]
     async fn inbound_streams_do_not_starve_pending_open() {
         let (mut control, mut connection, mut remote) = controlled();
-
-        let mut outbound = Vec::new();
-        for _ in 0..MAX_ACK_BACKLOG {
-            match future::select(Box::pin(control.open_stream()), connection.next()).await {
-                future::Either::Left((stream, _)) => outbound.push(stream.unwrap()),
-                future::Either::Right(_) => panic!("connection ended"),
-            }
-        }
+        let _outbound = fill_ack_backlog(&mut control, &mut connection).await;
 
         let mut pending = Box::pin(control.open_stream());
         assert!(futures::poll!(&mut pending).is_pending());
@@ -486,6 +494,7 @@ mod tests {
     #[tokio::test]
     async fn inbound_error_closes_connection_with_live_control() {
         let (mut control, mut connection, mut remote) = controlled();
+        let _outbound = fill_ack_backlog(&mut control, &mut connection).await;
 
         let mut opener = control.clone();
         let mut queued = Box::pin(opener.open_stream());
@@ -533,6 +542,7 @@ mod tests {
     #[tokio::test]
     async fn remote_go_away_answers_queued_open() {
         let (mut control, mut connection, mut remote) = controlled();
+        let _outbound = fill_ack_backlog(&mut control, &mut connection).await;
 
         let mut queued = Box::pin(control.open_stream());
         assert!(futures::poll!(&mut queued).is_pending());
