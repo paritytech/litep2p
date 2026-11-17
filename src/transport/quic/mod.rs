@@ -112,7 +112,7 @@ pub(crate) struct QuicTransport {
     pending_dials: HashMap<ConnectionId, Multiaddr>,
 
     /// Pending inbound connections.
-    pending_inbound_connections: HashMap<ConnectionId, Connecting>,
+    pending_inbound_connections: HashMap<ConnectionId, (Connecting, InboundConnectionPermit)>,
 
     /// Pending connections.
     pending_connections: FuturesUnordered<
@@ -157,13 +157,12 @@ impl QuicTransport {
     }
 
     /// Handle inbound accepted connection.
-    fn on_inbound_connection(&mut self, connection_id: ConnectionId, connection: Connecting) {
-        let Some(permit) =
-            self.context.try_acquire_inbound_permit(self.config.connection_open_timeout)
-        else {
-            self.on_inbound_dropped();
-            return;
-        };
+    fn on_inbound_connection(
+        &mut self,
+        connection_id: ConnectionId,
+        connection: Connecting,
+        permit: InboundConnectionPermit,
+    ) {
         let deadline = tokio::time::Instant::from_std(permit.deadline);
 
         self.pending_connections.push(Box::pin(async move {
@@ -418,12 +417,12 @@ impl Transport for QuicTransport {
     }
 
     fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
-        let connection = self
+        let (connection, permit) = self
             .pending_inbound_connections
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
 
-        self.on_inbound_connection(connection_id, connection);
+        self.on_inbound_connection(connection_id, connection, permit);
 
         Ok(())
     }
@@ -656,11 +655,13 @@ impl Stream for QuicTransport {
         // Polled last, so a busy listener can't starve pending connections and their timeouts.
         if let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
             // Drop at capacity without a manager round trip; yield, as more may be queued.
-            if !self.context.has_inbound_capacity() {
+            let Some(permit) =
+                self.context.try_acquire_inbound_permit(self.config.connection_open_timeout)
+            else {
                 self.on_inbound_dropped();
                 cx.waker().wake_by_ref();
                 return Poll::Pending;
-            }
+            };
 
             let connection_id = self.context.next_connection_id();
 
@@ -670,7 +671,7 @@ impl Stream for QuicTransport {
                 "pending inbound connection",
             );
 
-            self.pending_inbound_connections.insert(connection_id, connection);
+            self.pending_inbound_connections.insert(connection_id, (connection, permit));
 
             return Poll::Ready(Some(TransportEvent::PendingInboundConnection {
                 connection_id,
@@ -856,26 +857,16 @@ mod tests {
         drop(held);
 
         // The handshake only progresses while the dialer is polled.
-        transport2.dial(ConnectionId::from(1usize), listen_address.clone()).unwrap();
-        transport2.dial(ConnectionId::from(2usize), listen_address).unwrap();
+        transport2.dial(ConnectionId::from(1usize), listen_address).unwrap();
         tokio::spawn(async move { while transport2.next().await.is_some() {} });
 
-        // Capacity lost between the listener and `accept_pending`.
+        // The listener reserves the capacity, which then follows the connection.
         let Some(TransportEvent::PendingInboundConnection { connection_id }) =
             transport1.next().await
         else {
             panic!("unexpected event");
         };
-        let held = capacity.clone().try_acquire_owned().unwrap();
-        transport1.accept_pending(connection_id).unwrap();
-        assert!(transport1.pending_connections.is_empty());
-
-        drop(held);
-        let Some(TransportEvent::PendingInboundConnection { connection_id }) =
-            transport1.next().await
-        else {
-            panic!("unexpected event");
-        };
+        assert_eq!(capacity.available_permits(), 0);
         transport1.accept_pending(connection_id).unwrap();
         assert_eq!(transport1.pending_connections.len(), 1);
         assert_eq!(capacity.available_permits(), 0);

@@ -376,11 +376,6 @@ pub struct TransportHandle {
 }
 
 impl TransportHandle {
-    /// Whether inbound opening capacity is currently available.
-    pub(crate) fn has_inbound_capacity(&self) -> bool {
-        self.pending_incoming_connections.available_permits() > 0
-    }
-
     /// Reserve inbound opening capacity without waiting.
     pub(crate) fn try_acquire_inbound_permit(
         &self,

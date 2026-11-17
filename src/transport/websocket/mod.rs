@@ -24,7 +24,7 @@ use crate::{
     error::{AddressError, Error, NegotiationError},
     transport::{
         common::listener::{DialAddresses, GetSocketAddr, SocketListener, WebSocketAddress},
-        manager::TransportHandle,
+        manager::{limits::InboundConnectionPermit, TransportHandle},
         websocket::{
             config::Config,
             connection::{NegotiatedConnection, WebSocketConnection},
@@ -70,6 +70,8 @@ struct PendingInboundConnection {
     connection: TcpStream,
     /// Address of the remote peer.
     address: SocketAddr,
+    /// Opening capacity, reserved when the listener yielded the connection.
+    permit: InboundConnectionPermit,
 }
 
 #[derive(Debug)]
@@ -150,13 +152,8 @@ impl WebSocketTransport {
         connection_id: ConnectionId,
         connection: TcpStream,
         address: SocketAddr,
+        permit: InboundConnectionPermit,
     ) {
-        let Some(permit) =
-            self.context.try_acquire_inbound_permit(self.config.connection_open_timeout)
-        else {
-            self.on_inbound_dropped();
-            return;
-        };
         let deadline = tokio::time::Instant::from_std(permit.deadline);
         let keypair = self.context.keypair.clone();
         let yamux_config = self.config.yamux_config.clone();
@@ -474,7 +471,12 @@ impl Transport for WebSocketTransport {
             Error::ConnectionDoesntExist(connection_id)
         })?;
 
-        self.on_inbound_connection(connection_id, pending.connection, pending.address);
+        self.on_inbound_connection(
+            connection_id,
+            pending.connection,
+            pending.address,
+            pending.permit,
+        );
 
         Ok(())
     }
@@ -753,11 +755,14 @@ impl Stream for WebSocketTransport {
                 }
                 Some(Ok((connection, address))) => {
                     // Drop at capacity without a manager round trip; yield, as more may be queued.
-                    if !self.context.has_inbound_capacity() {
+                    let Some(permit) = self
+                        .context
+                        .try_acquire_inbound_permit(self.config.connection_open_timeout)
+                    else {
                         self.on_inbound_dropped();
                         cx.waker().wake_by_ref();
                         return Poll::Pending;
-                    }
+                    };
 
                     let connection_id = self.context.next_connection_id();
                     tracing::trace!(
@@ -772,6 +777,7 @@ impl Stream for WebSocketTransport {
                         PendingInboundConnection {
                             connection,
                             address,
+                            permit,
                         },
                     );
 
@@ -792,6 +798,25 @@ mod tests {
     use crate::transport::{
         common::inbound_socket, manager::limits::DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
     };
+
+    /// Start negotiating an inbound connection, as `accept_pending` does.
+    fn start_inbound(
+        transport: &mut WebSocketTransport,
+        connection_id: usize,
+        connection: TcpStream,
+        address: SocketAddr,
+    ) {
+        let permit = transport
+            .context
+            .try_acquire_inbound_permit(transport.config.connection_open_timeout)
+            .unwrap();
+        transport.on_inbound_connection(
+            ConnectionId::from(connection_id),
+            connection,
+            address,
+            permit,
+        );
+    }
 
     #[tokio::test]
     async fn inbound_opening_capacity_and_failure_cleanup() {
@@ -814,19 +839,15 @@ mod tests {
         )
         .unwrap();
         let (client, server, address) = inbound_socket().await;
-        transport.on_inbound_connection(ConnectionId::from(0usize), server, address);
+        start_inbound(&mut transport, 0, server, address);
         assert_eq!(capacity.available_permits(), 0);
-
-        let (_other_client, server, address) = inbound_socket().await;
-        transport.on_inbound_connection(ConnectionId::from(1usize), server, address);
-        assert_eq!(transport.pending_connections.len(), 1);
 
         drop(client);
         assert!(transport.pending_connections.next().await.unwrap().is_err());
         assert_eq!(capacity.available_permits(), 1);
 
         let (_client, server, address) = inbound_socket().await;
-        transport.on_inbound_connection(ConnectionId::from(2usize), server, address);
+        start_inbound(&mut transport, 1, server, address);
         assert_eq!(capacity.available_permits(), 0);
         drop(transport);
         assert_eq!(capacity.available_permits(), 1);
@@ -872,12 +893,17 @@ mod tests {
         }
         assert!(transport.pending_inbound_connections.is_empty());
 
+        // The listener reserves the capacity; rejection releases it.
         drop(held);
         let _client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-        assert!(matches!(
-            transport.next().await,
-            Some(TransportEvent::PendingInboundConnection { .. })
-        ));
+        let Some(TransportEvent::PendingInboundConnection { connection_id }) =
+            transport.next().await
+        else {
+            panic!("unexpected event");
+        };
+        assert_eq!(capacity.available_permits(), 0);
+        transport.reject_pending(connection_id).unwrap();
+        assert_eq!(capacity.available_permits(), 1);
     }
 
     #[tokio::test]
@@ -897,7 +923,7 @@ mod tests {
         )
         .unwrap();
         let (_client, server, address) = inbound_socket().await;
-        transport.on_inbound_connection(ConnectionId::from(0usize), server, address);
+        start_inbound(&mut transport, 0, server, address);
         tokio::time::sleep(Duration::from_millis(40)).await;
         let port = listen_addresses[0]
             .iter()
@@ -912,9 +938,10 @@ mod tests {
             Some(TransportEvent::PendingInboundConnection { .. })
         ));
         assert!(transport.pending_connections.is_empty());
+        // Only the new pending connection holds capacity.
         assert_eq!(
             capacity.available_permits(),
-            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS - 1
         );
     }
 }
