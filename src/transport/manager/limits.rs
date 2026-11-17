@@ -109,6 +109,12 @@ impl DroppedOpenings {
         self.record_at(Instant::now())
     }
 
+    /// Whether any drop was recorded.
+    #[cfg(test)]
+    pub(crate) fn has_drops(&self) -> bool {
+        self.last_report.is_some()
+    }
+
     fn record_at(&mut self, now: Instant) -> Option<usize> {
         self.count += 1;
 

@@ -133,6 +133,17 @@ pub(crate) struct WebSocketTransport {
 }
 
 impl WebSocketTransport {
+    /// Note an inbound connection dropped at capacity.
+    fn on_inbound_dropped(&mut self) {
+        if let Some(dropped) = self.context.dropped_openings.record() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                dropped,
+                "inbound connections dropped: `max_pending_incoming_connections` reached",
+            );
+        }
+    }
+
     /// Handle inbound connection.
     fn on_inbound_connection(
         &mut self,
@@ -143,13 +154,7 @@ impl WebSocketTransport {
         let Some(permit) =
             self.context.try_acquire_inbound_permit(self.config.connection_open_timeout)
         else {
-            if let Some(dropped) = self.context.dropped_openings.record() {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    dropped,
-                    "inbound connections dropped: `max_pending_incoming_connections` reached",
-                );
-            }
+            self.on_inbound_dropped();
             return;
         };
         let deadline = tokio::time::Instant::from_std(permit.deadline);
@@ -747,6 +752,13 @@ impl Stream for WebSocketTransport {
                     Poll::Ready(None)
                 }
                 Some(Ok((connection, address))) => {
+                    // Drop at capacity without a manager round trip; yield, as more may be queued.
+                    if !self.context.has_inbound_capacity() {
+                        self.on_inbound_dropped();
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
+                    }
+
                     let connection_id = self.context.next_connection_id();
                     tracing::trace!(
                         target: LOG_TARGET,
@@ -818,6 +830,54 @@ mod tests {
         assert_eq!(capacity.available_permits(), 0);
         drop(transport);
         assert_eq!(capacity.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn inbound_dropped_by_listener_at_capacity() {
+        use tokio::io::AsyncReadExt;
+
+        let manager = crate::transport::manager::TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                crate::transport::ConnectionLimitsConfig::default()
+                    .max_pending_incoming_connections(1),
+            )
+            .build();
+        let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        let capacity = handle.pending_incoming_connections.clone();
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
+        let (mut transport, listen_addresses) = WebSocketTransport::new(
+            handle,
+            Config {
+                listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
+                ..Default::default()
+            },
+            resolver,
+        )
+        .unwrap();
+        let port = listen_addresses[0]
+            .iter()
+            .find_map(|protocol| match protocol {
+                Protocol::Tcp(port) => Some(port),
+                _ => None,
+            })
+            .unwrap();
+
+        // The socket is closed without involving the manager.
+        let held = capacity.clone().try_acquire_owned().unwrap();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let mut buffer = [0u8; 1];
+        tokio::select! {
+            event = transport.next() => panic!("unexpected event: {event:?}"),
+            read = client.read(&mut buffer) => assert_eq!(read.unwrap(), 0),
+        }
+        assert!(transport.pending_inbound_connections.is_empty());
+
+        drop(held);
+        let _client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        assert!(matches!(
+            transport.next().await,
+            Some(TransportEvent::PendingInboundConnection { .. })
+        ));
     }
 
     #[tokio::test]

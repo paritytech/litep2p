@@ -145,18 +145,23 @@ impl QuicTransport {
         Some(p2p_cert.peer_id())
     }
 
+    /// Note an inbound connection dropped at capacity.
+    fn on_inbound_dropped(&mut self) {
+        if let Some(dropped) = self.context.dropped_openings.record() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                dropped,
+                "inbound connections dropped: `max_pending_incoming_connections` reached",
+            );
+        }
+    }
+
     /// Handle inbound accepted connection.
     fn on_inbound_connection(&mut self, connection_id: ConnectionId, connection: Connecting) {
         let Some(permit) =
             self.context.try_acquire_inbound_permit(self.config.connection_open_timeout)
         else {
-            if let Some(dropped) = self.context.dropped_openings.record() {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    dropped,
-                    "inbound connections dropped: `max_pending_incoming_connections` reached",
-                );
-            }
+            self.on_inbound_dropped();
             return;
         };
         let deadline = tokio::time::Instant::from_std(permit.deadline);
@@ -650,6 +655,13 @@ impl Stream for QuicTransport {
 
         // Polled last, so a busy listener can't starve pending connections and their timeouts.
         if let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
+            // Drop at capacity without a manager round trip; yield, as more may be queued.
+            if !self.context.has_inbound_capacity() {
+                self.on_inbound_dropped();
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+
             let connection_id = self.context.next_connection_id();
 
             tracing::trace!(
@@ -825,17 +837,36 @@ mod tests {
         let (mut transport2, _) =
             QuicTransport::new(handle2, Default::default(), resolver).unwrap();
 
-        // The handshake only progresses while the dialer is polled.
+        // At capacity the listener drops the connection without involving the manager. The
+        // dialer's outcome is racy, as its handshake can complete before the drop.
+        let held = capacity.clone().try_acquire_owned().unwrap();
         transport2.dial(ConnectionId::from(0usize), listen_address.clone()).unwrap();
-        transport2.dial(ConnectionId::from(1usize), listen_address).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while !transport1.context.dropped_openings.has_drops() {
+                tokio::select! {
+                    event = transport1.next() => panic!("unexpected event: {event:?}"),
+                    _ = transport2.next() => {}
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {}
+                }
+            }
+        })
+        .await
+        .expect("listener to drop the connection");
+        assert!(transport1.pending_inbound_connections.is_empty());
+        drop(held);
+
+        // The handshake only progresses while the dialer is polled.
+        transport2.dial(ConnectionId::from(1usize), listen_address.clone()).unwrap();
+        transport2.dial(ConnectionId::from(2usize), listen_address).unwrap();
         tokio::spawn(async move { while transport2.next().await.is_some() {} });
 
-        let held = capacity.clone().try_acquire_owned().unwrap();
+        // Capacity lost between the listener and `accept_pending`.
         let Some(TransportEvent::PendingInboundConnection { connection_id }) =
             transport1.next().await
         else {
             panic!("unexpected event");
         };
+        let held = capacity.clone().try_acquire_owned().unwrap();
         transport1.accept_pending(connection_id).unwrap();
         assert!(transport1.pending_connections.is_empty());
 
