@@ -22,7 +22,7 @@
 
 use multiaddr::Multiaddr;
 
-use crate::transport::webrtc::certificate::DtlsCertificate;
+use crate::transport::{webrtc::certificate::DtlsCertificate, CONNECTION_OPEN_TIMEOUT};
 
 /// WebRTC transport configuration.
 ///
@@ -44,6 +44,12 @@ pub struct Config {
     ///
     /// If `None`, a fresh certificate is generated on every start.
     pub certificate: Option<DtlsCertificate>,
+
+    /// Connection open timeout.
+    ///
+    /// How long an inbound connection may take from the first STUN message
+    /// until it is accepted by litep2p.
+    pub connection_open_timeout: std::time::Duration,
 }
 
 impl Config {
@@ -64,6 +70,7 @@ impl Default for Config {
                 .expect("valid multiaddress")],
             datagram_buffer_size: 2048,
             certificate: None,
+            connection_open_timeout: CONNECTION_OPEN_TIMEOUT,
         }
     }
 }
