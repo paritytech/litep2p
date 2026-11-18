@@ -36,8 +36,10 @@ pub struct Config {
 
     /// Connection open timeout.
     ///
-    /// How long should litep2p wait for a connection to be opened before the host
-    /// is deemed unreachable. Also bounds the handshake of incoming connections.
+    /// Timeout for outbound address resolution and idle timeout for outbound handshakes.
+    ///
+    /// For inbound connections, the timeout starts when Quinn yields the connection
+    /// to litep2p. Quinn can start the handshake earlier.
     pub connection_open_timeout: Duration,
 
     /// Substream open timeout.

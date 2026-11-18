@@ -26,7 +26,6 @@ use std::{
     collections::HashSet,
     time::{Duration, Instant},
 };
-use tokio::sync::OwnedSemaphorePermit;
 
 /// Default limit of concurrent incoming openings, per transport.
 pub(crate) const DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS: usize = 256;
@@ -57,6 +56,9 @@ impl ConnectionLimitsConfig {
     ///
     /// Applies separately to each transport, so one transport can't starve the others. `None`
     /// removes the limit, `Some(0)` disables incoming connections.
+    ///
+    /// For QUIC, this caps openings after Quinn yields them to litep2p. Quinn can allocate
+    /// connection state and start the handshake before that point.
     pub fn max_pending_incoming_connections(mut self, limit: Option<usize>) -> Self {
         self.max_pending_incoming_connections = limit;
         self
@@ -72,19 +74,6 @@ impl ConnectionLimitsConfig {
     pub fn max_outgoing_connections(mut self, limit: Option<usize>) -> Self {
         self.max_outgoing_connections = limit;
         self
-    }
-}
-
-/// Reserves opening capacity until acceptance or removal.
-#[derive(Debug)]
-pub(crate) struct InboundConnectionPermit {
-    pub(crate) _permit: OwnedSemaphorePermit,
-    pub(crate) deadline: Instant,
-}
-
-impl InboundConnectionPermit {
-    pub(crate) fn is_expired(&self) -> bool {
-        Instant::now() >= self.deadline
     }
 }
 

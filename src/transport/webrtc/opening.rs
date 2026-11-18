@@ -24,7 +24,7 @@ use crate::{
     config::Role,
     crypto::{ed25519::Keypair, noise::NoiseContext},
     transport::{
-        manager::limits::InboundConnectionPermit,
+        common::InboundOpening,
         webrtc::{
             socket::WebRtcSocket,
             util::{extract_framed_message, WebRtcMessage},
@@ -101,7 +101,7 @@ pub enum WebRtcEvent {
 /// is created which implements a normal connection event loop dealing with substreams.
 pub struct OpeningWebRtcConnection {
     /// Inbound opening capacity and absolute deadline.
-    pub(super) permit: InboundConnectionPermit,
+    opening: InboundOpening<Instant>,
 
     /// WebRTC object
     rtc: Rtc,
@@ -176,7 +176,7 @@ impl OpeningWebRtcConnection {
         id_keypair: Keypair,
         addrs: AddressPair,
         socket: Arc<WebRtcSocket>,
-        permit: InboundConnectionPermit,
+        opening: InboundOpening<Instant>,
     ) -> OpeningWebRtcConnection {
         tracing::trace!(
             target: LOG_TARGET,
@@ -186,7 +186,7 @@ impl OpeningWebRtcConnection {
         );
 
         Self {
-            permit,
+            opening,
             rtc,
             state: State::Closed,
             connection_id,
@@ -206,12 +206,12 @@ impl OpeningWebRtcConnection {
     /// Absolute opening deadline.
     #[cfg(test)]
     pub fn deadline(&self) -> Instant {
-        self.permit.deadline
+        self.opening.deadline
     }
 
     /// Whether the opening deadline has elapsed.
     pub fn is_expired(&self) -> bool {
-        self.permit.is_expired()
+        Instant::now() >= self.opening.deadline
     }
 
     /// Socket the session's datagrams are received on and sent from.
@@ -527,7 +527,7 @@ impl OpeningWebRtcConnection {
                 }
                 Output::Timeout(timeout) => {
                     return WebRtcEvent::Timeout {
-                        timeout: timeout.min(self.permit.deadline),
+                        timeout: timeout.min(self.opening.deadline),
                     };
                 }
                 Output::Event(e) => match e {

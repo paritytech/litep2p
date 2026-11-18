@@ -29,7 +29,6 @@ use crate::{
     protocol::{Direction, Permit, ProtocolCommand, ProtocolSet, SubstreamKeepAlive},
     substream,
     transport::{
-        manager::limits::InboundConnectionPermit,
         websocket::{stream::BufferedStream, substream::Substream},
         Endpoint,
     },
@@ -103,9 +102,6 @@ enum ConnectionError {
 
 /// Negotiated connection.
 pub(super) struct NegotiatedConnection {
-    /// Inbound opening capacity, held until acceptance.
-    pub(super) opening_permit: Option<InboundConnectionPermit>,
-
     /// Remote peer ID.
     peer: PeerId,
 
@@ -187,7 +183,6 @@ impl WebSocketConnection {
         substream_open_timeout: Duration,
     ) -> Self {
         let NegotiatedConnection {
-            opening_permit: _,
             peer,
             endpoint,
             connection,
@@ -368,7 +363,6 @@ impl WebSocketConnection {
         };
 
         Ok(NegotiatedConnection {
-            opening_permit: None,
             peer,
             control,
             connection,

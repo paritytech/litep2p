@@ -24,8 +24,11 @@
 use crate::{
     error::{DialError, Error},
     transport::{
-        common::listener::{DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
-        manager::{limits::InboundConnectionPermit, TransportHandle},
+        common::{
+            listener::{DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
+            InboundOpening,
+        },
+        manager::TransportHandle,
         tcp::{
             config::Config,
             connection::{NegotiatedConnection, TcpConnection},
@@ -71,8 +74,7 @@ struct PendingInboundConnection {
     connection: TcpStream,
     /// Address of the remote peer.
     address: SocketAddr,
-    /// Opening capacity, reserved when the listener yielded the connection.
-    permit: InboundConnectionPermit,
+    handshake: InboundOpening<tokio::time::Instant>,
 }
 
 #[derive(Debug)]
@@ -154,9 +156,8 @@ impl TcpTransport {
         connection_id: ConnectionId,
         connection: TcpStream,
         address: SocketAddr,
-        permit: InboundConnectionPermit,
+        handshake: InboundOpening<tokio::time::Instant>,
     ) {
-        let deadline = tokio::time::Instant::from_std(permit.deadline);
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
@@ -171,9 +172,8 @@ impl TcpTransport {
         );
 
         self.pending_connections.push(Box::pin(async move {
-            let mut connection = tokio::time::timeout_at(
-                deadline,
-                TcpConnection::accept_connection(
+            handshake
+                .negotiate(TcpConnection::accept_connection(
                     connection,
                     connection_id,
                     keypair,
@@ -182,13 +182,10 @@ impl TcpTransport {
                     max_read_ahead_factor,
                     max_write_buffer_size,
                     substream_open_timeout,
-                ),
-            )
-            .await
-            .map_err(|_| (connection_id, DialError::Timeout))?
-            .map_err(|error| (connection_id, error.into()))?;
-            connection.opening_permit = Some(permit);
-            Ok(connection)
+                ))
+                .await
+                .map_err(|_| (connection_id, DialError::Timeout))?
+                .map_err(|error| (connection_id, error.into()))
         }));
     }
 
@@ -392,7 +389,7 @@ impl Transport for TcpTransport {
             connection_id,
             pending.connection,
             pending.address,
-            pending.permit,
+            pending.handshake,
         );
 
         Ok(())
@@ -417,12 +414,10 @@ impl Transport for TcpTransport {
         &mut self,
         connection_id: ConnectionId,
     ) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
-        let mut context = self
+        let context = self
             .pending_open
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
-        // Opening is over, release the capacity.
-        context.opening_permit.take();
         let mut protocol_set = self.context.protocol_set(connection_id);
         let bandwidth_sink = self.context.bandwidth_sink.clone();
         let next_substream_id = self.context.next_substream_id.clone();
@@ -714,14 +709,13 @@ impl Stream for TcpTransport {
                 }
                 Some(Ok((connection, address))) => {
                     // Drop at capacity without a manager round trip; yield, as more may be queued.
-                    let Some(permit) = self
-                        .context
-                        .try_acquire_inbound_permit(self.config.connection_open_timeout)
-                    else {
+                    let Some(permit) = self.context.try_acquire_inbound_permit() else {
                         self.on_inbound_dropped();
                         cx.waker().wake_by_ref();
                         return Poll::Pending;
                     };
+                    let handshake =
+                        InboundOpening::with_timeout(permit, self.config.connection_open_timeout);
 
                     let connection_id = self.context.next_connection_id();
                     tracing::trace!(
@@ -736,7 +730,7 @@ impl Stream for TcpTransport {
                         PendingInboundConnection {
                             connection,
                             address,
-                            permit,
+                            handshake,
                         },
                     );
 
@@ -780,15 +774,12 @@ mod tests {
         connection: TcpStream,
         address: SocketAddr,
     ) {
-        let permit = transport
-            .context
-            .try_acquire_inbound_permit(transport.config.connection_open_timeout)
-            .unwrap();
+        let permit = transport.context.try_acquire_inbound_permit().unwrap();
         transport.on_inbound_connection(
             ConnectionId::from(connection_id),
             connection,
             address,
-            permit,
+            InboundOpening::with_timeout(permit, transport.config.connection_open_timeout),
         );
     }
 
@@ -921,15 +912,6 @@ mod tests {
 
     #[tokio::test]
     async fn connect_and_accept_works() {
-        connect_and_finish_works(true).await;
-    }
-
-    #[tokio::test]
-    async fn negotiated_inbound_rejection_releases_capacity() {
-        connect_and_finish_works(false).await;
-    }
-
-    async fn connect_and_finish_works(accept: bool) {
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
@@ -1024,13 +1006,17 @@ mod tests {
             _ => panic!("unexpected event"),
         }
 
-        let Some(TransportEvent::ConnectionEstablished { endpoint, .. }) = transport1.next().await
-        else {
-            panic!("connection did not establish");
-        };
         assert_eq!(
             capacity.available_permits(),
             DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS - 1
+        );
+        assert!(matches!(
+            transport1.next().await,
+            Some(TransportEvent::ConnectionEstablished { .. })
+        ));
+        assert_eq!(
+            capacity.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS
         );
 
         let event = from_transport2.recv().await.unwrap();
@@ -1038,15 +1024,6 @@ mod tests {
             event,
             Some(TransportEvent::ConnectionEstablished { .. })
         ));
-        if accept {
-            drop(transport1.accept(endpoint.connection_id()).unwrap());
-        } else {
-            transport1.reject(endpoint.connection_id()).unwrap();
-        }
-        assert_eq!(
-            capacity.available_permits(),
-            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS
-        );
     }
 
     #[tokio::test]

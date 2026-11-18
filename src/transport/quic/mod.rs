@@ -26,7 +26,8 @@ use crate::{
     crypto::tls::make_client_config,
     error::{AddressError, DialError, Error, QuicError},
     transport::{
-        manager::{limits::InboundConnectionPermit, TransportHandle},
+        common::InboundOpening,
+        manager::TransportHandle,
         quic::{config::Config as QuicConfig, connection::QuicConnection, listener::QuicListener},
         Endpoint as Litep2pEndpoint, Transport, TransportBuilder, TransportEvent,
     },
@@ -64,9 +65,6 @@ const LOG_TARGET: &str = "litep2p::quic";
 
 #[derive(Debug)]
 struct NegotiatedConnection {
-    /// Inbound opening capacity, held until acceptance.
-    opening_permit: Option<InboundConnectionPermit>,
-
     /// Remote peer ID.
     peer: PeerId,
 
@@ -112,7 +110,8 @@ pub(crate) struct QuicTransport {
     pending_dials: HashMap<ConnectionId, Multiaddr>,
 
     /// Pending inbound connections.
-    pending_inbound_connections: HashMap<ConnectionId, (Connecting, InboundConnectionPermit)>,
+    pending_inbound_connections:
+        HashMap<ConnectionId, (Connecting, InboundOpening<tokio::time::Instant>)>,
 
     /// Pending connections.
     pending_connections: FuturesUnordered<
@@ -161,12 +160,10 @@ impl QuicTransport {
         &mut self,
         connection_id: ConnectionId,
         connection: Connecting,
-        permit: InboundConnectionPermit,
+        handshake: InboundOpening<tokio::time::Instant>,
     ) {
-        let deadline = tokio::time::Instant::from_std(permit.deadline);
-
         self.pending_connections.push(Box::pin(async move {
-            let connection = match tokio::time::timeout_at(deadline, connection).await {
+            let connection = match handshake.negotiate(connection).await {
                 Err(_) => return (connection_id, Err(DialError::Timeout)),
                 Ok(Err(error)) => return (connection_id, Err(DialError::from(error))),
                 Ok(Ok(connection)) => connection,
@@ -179,14 +176,7 @@ impl QuicTransport {
                 );
             };
 
-            (
-                connection_id,
-                Ok(NegotiatedConnection {
-                    opening_permit: Some(permit),
-                    peer,
-                    connection,
-                }),
-            )
+            (connection_id, Ok(NegotiatedConnection { peer, connection }))
         }));
     }
 
@@ -352,14 +342,7 @@ impl Transport for QuicTransport {
                 );
             };
 
-            (
-                connection_id,
-                Ok(NegotiatedConnection {
-                    opening_permit: None,
-                    peer,
-                    connection,
-                }),
-            )
+            (connection_id, Ok(NegotiatedConnection { peer, connection }))
         }));
 
         Ok(())
@@ -369,12 +352,10 @@ impl Transport for QuicTransport {
         &mut self,
         connection_id: ConnectionId,
     ) -> crate::Result<BoxFuture<'static, crate::Result<()>>> {
-        let (mut connection, endpoint) = self
+        let (connection, endpoint) = self
             .pending_open
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
-        // Opening is over, release the capacity.
-        connection.opening_permit.take();
         let bandwidth_sink = self.context.bandwidth_sink.clone();
         let mut protocol_set = self.context.protocol_set(connection_id);
         let substream_open_timeout = self.config.substream_open_timeout;
@@ -417,12 +398,12 @@ impl Transport for QuicTransport {
     }
 
     fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
-        let (connection, permit) = self
+        let (connection, handshake) = self
             .pending_inbound_connections
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
 
-        self.on_inbound_connection(connection_id, connection, permit);
+        self.on_inbound_connection(connection_id, connection, handshake);
 
         Ok(())
     }
@@ -502,11 +483,7 @@ impl Transport for QuicTransport {
                         .into());
                     };
 
-                    Ok(NegotiatedConnection {
-                        opening_permit: None,
-                        peer,
-                        connection,
-                    })
+                    Ok(NegotiatedConnection { peer, connection })
                 };
 
                 async move { future.await.map(|ok| (addr.clone(), ok)).map_err(|err| (addr, err)) }
@@ -655,13 +632,13 @@ impl Stream for QuicTransport {
         // Polled last, so a busy listener can't starve pending connections and their timeouts.
         if let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
             // Drop at capacity without a manager round trip; yield, as more may be queued.
-            let Some(permit) =
-                self.context.try_acquire_inbound_permit(self.config.connection_open_timeout)
-            else {
+            let Some(permit) = self.context.try_acquire_inbound_permit() else {
                 self.on_inbound_dropped();
                 cx.waker().wake_by_ref();
                 return Poll::Pending;
             };
+            let handshake =
+                InboundOpening::with_timeout(permit, self.config.connection_open_timeout);
 
             let connection_id = self.context.next_connection_id();
 
@@ -671,7 +648,7 @@ impl Stream for QuicTransport {
                 "pending inbound connection",
             );
 
-            self.pending_inbound_connections.insert(connection_id, (connection, permit));
+            self.pending_inbound_connections.insert(connection_id, (connection, handshake));
 
             return Poll::Ready(Some(TransportEvent::PendingInboundConnection {
                 connection_id,
@@ -795,13 +772,17 @@ mod tests {
             _ => panic!("unexpected event"),
         }
 
-        let Some(TransportEvent::ConnectionEstablished { endpoint, .. }) = transport1.next().await
-        else {
-            panic!("connection did not establish");
-        };
         assert_eq!(
             capacity.available_permits(),
             DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS - 1
+        );
+        assert!(matches!(
+            transport1.next().await,
+            Some(TransportEvent::ConnectionEstablished { .. })
+        ));
+        assert_eq!(
+            capacity.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS
         );
 
         let res2 = from_transport2.recv().await.unwrap();
@@ -809,12 +790,6 @@ mod tests {
             res2,
             Some(TransportEvent::ConnectionEstablished { .. })
         ));
-
-        drop(transport1.accept(endpoint.connection_id()).unwrap());
-        assert_eq!(
-            capacity.available_permits(),
-            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS
-        );
     }
 
     #[tokio::test]

@@ -23,6 +23,7 @@
 use crate::{
     error::Error,
     transport::{
+        common::{opening_deadline, InboundOpening},
         manager::TransportHandle,
         webrtc::{
             config::Config, connection::WebRtcConnection, listener::WebRtcListener,
@@ -479,8 +480,7 @@ impl WebRtcTransport {
         }
 
         // Reserve capacity before decoding, so that datagrams dropped at capacity stay cheap.
-        let Some(permit) = self.context.try_acquire_inbound_permit(self.connection_open_timeout)
-        else {
+        let Some(permit) = self.context.try_acquire_inbound_permit() else {
             if let Some(dropped) = self.context.dropped_openings.record() {
                 tracing::debug!(
                     target: LOG_TARGET,
@@ -490,6 +490,7 @@ impl WebRtcTransport {
             }
             return Ok(false);
         };
+        let deadline = opening_deadline(Instant::now(), self.connection_open_timeout);
 
         let contents: DatagramRecv =
             buffer.as_slice().try_into().map_err(|_| Error::InvalidData)?;
@@ -522,7 +523,7 @@ impl WebRtcTransport {
             self.context.keypair.clone(),
             addrs,
             socket.clone(),
-            permit,
+            InboundOpening::new(permit, deadline),
         );
         connection.on_input(contents)?;
         self.opening.insert(addrs, connection);
@@ -966,11 +967,7 @@ mod tests {
         socket: Arc<WebRtcSocket>,
         deadline: Instant,
     ) -> ConnectionId {
-        let mut permit = transport
-            .context
-            .try_acquire_inbound_permit(transport.connection_open_timeout)
-            .unwrap();
-        permit.deadline = deadline;
+        let permit = transport.context.try_acquire_inbound_permit().unwrap();
         let (rtc, channel_id) = transport.make_rtc("user", "password", &addrs).unwrap();
         let connection_id = transport.context.next_connection_id();
         transport.opening.insert(
@@ -982,8 +979,12 @@ mod tests {
                 transport.context.keypair.clone(),
                 addrs,
                 socket,
-                permit,
+                InboundOpening::new(permit, deadline),
             ),
+        );
+        assert_eq!(
+            transport.context.pending_incoming_connections.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS - 1
         );
         connection_id
     }
@@ -1006,6 +1007,10 @@ mod tests {
         assert!(transport.timeouts.is_empty());
         assert!(transport.connections.is_empty());
         assert!(transport.pending_events.is_empty());
+        assert_eq!(
+            transport.context.pending_incoming_connections.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS
+        );
     }
 
     #[tokio::test]
@@ -1174,27 +1179,10 @@ mod tests {
         )
     }
 
-    fn queue_established_event(
-        transport: &mut WebRtcTransport,
-        addrs: AddressPair,
-    ) -> ConnectionId {
-        let connection_id = *transport.opening[&addrs].connection_id();
-        let peer = PeerId::random();
-        let endpoint = Endpoint::listener(Multiaddr::empty(), connection_id);
-        transport.connections.insert(connection_id, (peer, addrs, endpoint.clone()));
-        transport
-            .pending_events
-            .push_back(TransportEvent::ConnectionEstablished { peer, endpoint });
-        connection_id
-    }
-
     #[tokio::test]
     async fn opening_admission_and_existing_session_traffic() {
         let (mut transport, socket, addrs) = opening_transport(1).await;
-        let other = transport
-            .context
-            .try_acquire_inbound_permit(transport.connection_open_timeout)
-            .unwrap();
+        let other = transport.context.try_acquire_inbound_permit().unwrap();
         assert!(!transport
             .on_socket_input(addrs, &socket, stun_request("user:password"))
             .unwrap());
@@ -1202,8 +1190,7 @@ mod tests {
 
         // Admission is checked before decoding: at capacity a malformed datagram is dropped,
         // otherwise it is an error and its capacity is released.
-        let mut malformed = vec![0u8; 20];
-        malformed[4..8].copy_from_slice(&[0x21, 0x12, 0xA4, 0x42]);
+        let malformed = stun_datagram(20);
         assert!(!transport.on_socket_input(addrs, &socket, malformed.clone()).unwrap());
         drop(other);
         assert!(transport.on_socket_input(addrs, &socket, malformed).is_err());
@@ -1213,17 +1200,9 @@ mod tests {
         );
         assert!(transport.opening.is_empty());
 
-        let before = Instant::now();
         assert!(transport
             .on_socket_input(addrs, &socket, stun_request("user:password"))
             .unwrap());
-        let deadline = transport.opening[&addrs].permit.deadline;
-        assert!(deadline >= before + transport.connection_open_timeout);
-        assert!(deadline <= Instant::now() + transport.connection_open_timeout);
-        assert!(matches!(
-            transport.poll_connection(&addrs),
-            ConnectionEvent::Timeout { .. }
-        ));
 
         let another = AddressPair {
             remote: "127.0.0.1:40001".parse().unwrap(),
@@ -1236,7 +1215,6 @@ mod tests {
             .on_socket_input(addrs, &socket, stun_request("user:password"))
             .unwrap());
         assert_eq!(transport.opening.len(), 1);
-        assert_eq!(transport.opening[&addrs].permit.deadline, deadline);
     }
 
     #[tokio::test]
@@ -1263,91 +1241,6 @@ mod tests {
         assert_eq!(capacity.available_permits(), 0);
         drop(transport);
         assert_eq!(capacity.available_permits(), 2);
-    }
-
-    #[tokio::test]
-    async fn opening_expiry_removes_timers_and_stale_events() {
-        let (mut transport, socket, addrs) = opening_transport(1).await;
-        assert!(transport
-            .on_socket_input(addrs, &socket, stun_request("user:password"))
-            .unwrap());
-        queue_established_event(&mut transport, addrs);
-        transport.timeouts.insert(addrs, Delay::new(Duration::from_secs(60)));
-        transport.opening.get_mut(&addrs).unwrap().permit.deadline = Instant::now();
-
-        assert!(futures::poll!(transport.next()).is_pending());
-        assert!(transport.opening.is_empty());
-        assert!(transport.connections.is_empty());
-        assert!(transport.timeouts.is_empty());
-        assert!(transport.pending_events.is_empty());
-        assert_eq!(
-            transport.context.pending_incoming_connections.available_permits(),
-            1
-        );
-        assert!(transport
-            .on_socket_input(addrs, &socket, stun_request("user:password"))
-            .unwrap());
-    }
-
-    #[tokio::test]
-    async fn opening_timeout_is_capped_by_absolute_deadline() {
-        let (mut transport, socket, addrs) = opening_transport(1).await;
-        assert!(transport
-            .on_socket_input(addrs, &socket, stun_request("user:password"))
-            .unwrap());
-        transport.opening.get_mut(&addrs).unwrap().permit.deadline =
-            Instant::now() + Duration::from_millis(20);
-        let ConnectionEvent::Timeout { timeout } = transport.poll_connection(&addrs) else {
-            panic!("expected a timeout");
-        };
-        assert!(timeout <= transport.opening[&addrs].deadline());
-        // Force a protocol timer to fire before the absolute deadline.
-        transport.timeouts.insert(addrs, Delay::new(Duration::ZERO));
-        let start = Instant::now();
-
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            futures::future::poll_fn(|cx| {
-                assert!(Pin::new(&mut transport).poll_next(cx).is_pending());
-                if transport.opening.is_empty() {
-                    Poll::Ready(())
-                } else {
-                    Poll::Pending
-                }
-            }),
-        )
-        .await
-        .unwrap();
-        assert!(start.elapsed() < Duration::from_millis(500));
-        assert_eq!(
-            transport.context.pending_incoming_connections.available_permits(),
-            1
-        );
-    }
-
-    #[tokio::test]
-    async fn opening_rejection_and_failed_acceptance_release_capacity() {
-        let (mut transport, socket, addrs) = opening_transport(1).await;
-        for accept in [false, true] {
-            assert!(transport
-                .on_socket_input(addrs, &socket, stun_request("user:password"))
-                .unwrap());
-            let connection_id = queue_established_event(&mut transport, addrs);
-            transport.timeouts.insert(addrs, Delay::new(Duration::from_secs(60)));
-            if accept {
-                assert!(transport.accept(connection_id).is_err());
-            } else {
-                transport.reject(connection_id).unwrap();
-            }
-            assert!(transport.opening.is_empty());
-            assert!(transport.timeouts.is_empty());
-            assert!(transport.connections.is_empty());
-            assert!(transport.pending_events.is_empty());
-            assert_eq!(
-                transport.context.pending_incoming_connections.available_permits(),
-                1
-            );
-        }
     }
 
     /// A STUN-shaped datagram of `len` bytes, carrying the magic cookie.

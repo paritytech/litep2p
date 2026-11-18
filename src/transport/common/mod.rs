@@ -20,7 +20,56 @@
 
 //! Shared transport protocol implementation
 
+use std::{
+    future::Future,
+    time::{Duration, Instant},
+};
+use tokio::{
+    sync::OwnedSemaphorePermit,
+    time::{error::Elapsed, timeout_at, Instant as TokioInstant},
+};
+
 pub mod listener;
+
+pub(crate) fn opening_deadline(now: Instant, timeout: Duration) -> Instant {
+    // Match Tokio's far-future fallback on overflow.
+    now.checked_add(timeout)
+        .unwrap_or_else(|| now + Duration::from_secs(86400 * 365 * 30))
+}
+
+/// Holds inbound capacity and a deadline in the transport's clock.
+pub(crate) struct InboundOpening<T> {
+    _permit: OwnedSemaphorePermit,
+    pub(crate) deadline: T,
+}
+
+impl<T> InboundOpening<T> {
+    pub(crate) fn new(permit: OwnedSemaphorePermit, deadline: T) -> Self {
+        Self {
+            _permit: permit,
+            deadline,
+        }
+    }
+}
+
+impl InboundOpening<TokioInstant> {
+    pub(crate) fn with_timeout(permit: OwnedSemaphorePermit, timeout: Duration) -> Self {
+        Self::new(
+            permit,
+            opening_deadline(TokioInstant::now().into_std(), timeout).into(),
+        )
+    }
+
+    pub(crate) async fn negotiate<F: Future>(self, handshake: F) -> Result<F::Output, Elapsed> {
+        timeout_at(self.deadline, handshake).await
+    }
+}
+
+#[test]
+fn opening_deadline_handles_extreme_timeout() {
+    let now = Instant::now();
+    assert!(opening_deadline(now, Duration::MAX) > now);
+}
 
 /// Connected loopback TCP pair: `(client, server, client address)`.
 #[cfg(test)]

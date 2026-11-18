@@ -26,7 +26,7 @@ use crate::{
     protocol::{InnerTransportEvent, ProtocolSet},
     transport::manager::{
         address::AddressRecord,
-        limits::{DroppedOpenings, InboundConnectionPermit},
+        limits::DroppedOpenings,
         peer_state::StateDialResult,
         protocols::WeakProtocolRegistry,
         types::{PeerContext, SupportedTransport},
@@ -40,7 +40,7 @@ use multiaddr::{Multiaddr, Protocol};
 use parking_lot::RwLock;
 use tokio::sync::{
     mpsc::{error::TrySendError, Sender},
-    Semaphore,
+    OwnedSemaphorePermit, Semaphore,
 };
 
 use std::{
@@ -50,7 +50,6 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
 };
 
 /// Inner commands sent from [`TransportManagerHandle`] to
@@ -377,20 +376,8 @@ pub struct TransportHandle {
 
 impl TransportHandle {
     /// Reserve inbound opening capacity without waiting.
-    pub(crate) fn try_acquire_inbound_permit(
-        &self,
-        timeout: Duration,
-    ) -> Option<InboundConnectionPermit> {
-        let permit = self.pending_incoming_connections.clone().try_acquire_owned().ok()?;
-        let now = Instant::now();
-        // Far future on overflow, as `tokio::time::timeout` does.
-        let deadline = now
-            .checked_add(timeout)
-            .unwrap_or_else(|| now + Duration::from_secs(86400 * 365 * 30));
-        Some(InboundConnectionPermit {
-            _permit: permit,
-            deadline,
-        })
+    pub(crate) fn try_acquire_inbound_permit(&self) -> Option<OwnedSemaphorePermit> {
+        self.pending_incoming_connections.clone().try_acquire_owned().ok()
     }
 
     pub fn protocol_set(&self, connection_id: ConnectionId) -> ProtocolSet {
@@ -427,9 +414,9 @@ mod tests {
         let manager = crate::transport::manager::TransportManagerBuilder::new().build();
         let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
         let permits: Vec<_> = (0..DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS)
-            .map(|_| handle.try_acquire_inbound_permit(Duration::from_secs(10)).unwrap())
+            .map(|_| handle.try_acquire_inbound_permit().unwrap())
             .collect();
-        assert!(handle.try_acquire_inbound_permit(Duration::from_secs(10)).is_none());
+        assert!(handle.try_acquire_inbound_permit().is_none());
         drop(permits);
         assert_eq!(
             handle.pending_incoming_connections.available_permits(),
@@ -447,13 +434,11 @@ mod tests {
             .build();
         let first = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
         let second = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
-        let permit = first.try_acquire_inbound_permit(Duration::from_secs(10)).unwrap();
-        assert!(!permit.is_expired());
-        assert!(first.try_acquire_inbound_permit(Duration::from_secs(10)).is_none());
-        let other = second.try_acquire_inbound_permit(Duration::ZERO).unwrap();
-        assert!(other.is_expired());
+        let permit = first.try_acquire_inbound_permit().unwrap();
+        assert!(first.try_acquire_inbound_permit().is_none());
+        assert!(second.try_acquire_inbound_permit().is_some());
         drop(permit);
-        assert!(first.try_acquire_inbound_permit(Duration::from_secs(10)).is_some());
+        assert!(first.try_acquire_inbound_permit().is_some());
     }
 
     #[test]
@@ -465,8 +450,10 @@ mod tests {
             )
             .build();
         let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
-        let permit = handle.try_acquire_inbound_permit(Duration::MAX).unwrap();
-        assert!(!permit.is_expired());
+        assert_eq!(
+            handle.pending_incoming_connections.available_permits(),
+            Semaphore::MAX_PERMITS
+        );
     }
 
     #[test]
@@ -493,7 +480,7 @@ mod tests {
             )
             .build();
         let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
-        assert!(handle.try_acquire_inbound_permit(Duration::from_secs(10)).is_none());
+        assert!(handle.try_acquire_inbound_permit().is_none());
     }
 
     fn make_transport_manager_handle() -> (
