@@ -74,7 +74,8 @@ struct PendingInboundConnection {
     connection: TcpStream,
     /// Address of the remote peer.
     address: SocketAddr,
-    handshake: InboundOpening<tokio::time::Instant>,
+    /// Opening capacity and deadline, reserved when the listener yielded the connection.
+    opening: InboundOpening<tokio::time::Instant>,
 }
 
 #[derive(Debug)]
@@ -156,7 +157,7 @@ impl TcpTransport {
         connection_id: ConnectionId,
         connection: TcpStream,
         address: SocketAddr,
-        handshake: InboundOpening<tokio::time::Instant>,
+        opening: InboundOpening<tokio::time::Instant>,
     ) {
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
@@ -172,7 +173,7 @@ impl TcpTransport {
         );
 
         self.pending_connections.push(Box::pin(async move {
-            handshake
+            opening
                 .negotiate(TcpConnection::accept_connection(
                     connection,
                     connection_id,
@@ -389,7 +390,7 @@ impl Transport for TcpTransport {
             connection_id,
             pending.connection,
             pending.address,
-            pending.handshake,
+            pending.opening,
         );
 
         Ok(())
@@ -714,7 +715,7 @@ impl Stream for TcpTransport {
                         cx.waker().wake_by_ref();
                         return Poll::Pending;
                     };
-                    let handshake =
+                    let opening =
                         InboundOpening::with_timeout(permit, self.config.connection_open_timeout);
 
                     let connection_id = self.context.next_connection_id();
@@ -730,7 +731,7 @@ impl Stream for TcpTransport {
                         PendingInboundConnection {
                             connection,
                             address,
-                            handshake,
+                            opening,
                         },
                     );
 

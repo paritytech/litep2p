@@ -73,7 +73,8 @@ struct PendingInboundConnection {
     connection: TcpStream,
     /// Address of the remote peer.
     address: SocketAddr,
-    handshake: InboundOpening<tokio::time::Instant>,
+    /// Opening capacity and deadline, reserved when the listener yielded the connection.
+    opening: InboundOpening<tokio::time::Instant>,
 }
 
 #[derive(Debug)]
@@ -154,7 +155,7 @@ impl WebSocketTransport {
         connection_id: ConnectionId,
         connection: TcpStream,
         address: SocketAddr,
-        handshake: InboundOpening<tokio::time::Instant>,
+        opening: InboundOpening<tokio::time::Instant>,
     ) {
         let keypair = self.context.keypair.clone();
         let yamux_config = self.config.yamux_config.clone();
@@ -167,7 +168,7 @@ impl WebSocketTransport {
             .with(Protocol::Ws(std::borrow::Cow::Borrowed("/")));
 
         self.pending_connections.push(Box::pin(async move {
-            handshake
+            opening
                 .negotiate(WebSocketConnection::accept_connection(
                     connection,
                     connection_id,
@@ -465,7 +466,7 @@ impl Transport for WebSocketTransport {
             connection_id,
             pending.connection,
             pending.address,
-            pending.handshake,
+            pending.opening,
         );
 
         Ok(())
@@ -750,7 +751,7 @@ impl Stream for WebSocketTransport {
                         cx.waker().wake_by_ref();
                         return Poll::Pending;
                     };
-                    let handshake =
+                    let opening =
                         InboundOpening::with_timeout(permit, self.config.connection_open_timeout);
 
                     let connection_id = self.context.next_connection_id();
@@ -766,7 +767,7 @@ impl Stream for WebSocketTransport {
                         PendingInboundConnection {
                             connection,
                             address,
-                            handshake,
+                            opening,
                         },
                     );
 

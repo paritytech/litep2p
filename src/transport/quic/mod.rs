@@ -160,10 +160,10 @@ impl QuicTransport {
         &mut self,
         connection_id: ConnectionId,
         connection: Connecting,
-        handshake: InboundOpening<tokio::time::Instant>,
+        opening: InboundOpening<tokio::time::Instant>,
     ) {
         self.pending_connections.push(Box::pin(async move {
-            let connection = match handshake.negotiate(connection).await {
+            let connection = match opening.negotiate(connection).await {
                 Err(_) => return (connection_id, Err(DialError::Timeout)),
                 Ok(Err(error)) => return (connection_id, Err(DialError::from(error))),
                 Ok(Ok(connection)) => connection,
@@ -398,12 +398,12 @@ impl Transport for QuicTransport {
     }
 
     fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
-        let (connection, handshake) = self
+        let (connection, opening) = self
             .pending_inbound_connections
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
 
-        self.on_inbound_connection(connection_id, connection, handshake);
+        self.on_inbound_connection(connection_id, connection, opening);
 
         Ok(())
     }
@@ -637,8 +637,7 @@ impl Stream for QuicTransport {
                 cx.waker().wake_by_ref();
                 return Poll::Pending;
             };
-            let handshake =
-                InboundOpening::with_timeout(permit, self.config.connection_open_timeout);
+            let opening = InboundOpening::with_timeout(permit, self.config.connection_open_timeout);
 
             let connection_id = self.context.next_connection_id();
 
@@ -648,7 +647,7 @@ impl Stream for QuicTransport {
                 "pending inbound connection",
             );
 
-            self.pending_inbound_connections.insert(connection_id, (connection, handshake));
+            self.pending_inbound_connections.insert(connection_id, (connection, opening));
 
             return Poll::Ready(Some(TransportEvent::PendingInboundConnection {
                 connection_id,

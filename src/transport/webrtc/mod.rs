@@ -967,6 +967,7 @@ mod tests {
         socket: Arc<WebRtcSocket>,
         deadline: Instant,
     ) -> ConnectionId {
+        let available = transport.context.pending_incoming_connections.available_permits();
         let permit = transport.context.try_acquire_inbound_permit().unwrap();
         let (rtc, channel_id) = transport.make_rtc("user", "password", &addrs).unwrap();
         let connection_id = transport.context.next_connection_id();
@@ -982,9 +983,10 @@ mod tests {
                 InboundOpening::new(permit, deadline),
             ),
         );
+        // The opening holds the capacity.
         assert_eq!(
             transport.context.pending_incoming_connections.available_permits(),
-            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS - 1
+            available - 1
         );
         connection_id
     }
@@ -1218,7 +1220,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn openings_share_a_global_budget_without_a_per_ip_limit() {
+    async fn openings_share_a_transport_budget_without_a_per_ip_limit() {
         let (mut transport, socket, addrs) = opening_transport(2).await;
         assert!(transport
             .on_socket_input(addrs, &socket, stun_request("user:password"))

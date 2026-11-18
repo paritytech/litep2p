@@ -31,6 +31,7 @@ use tokio::{
 
 pub mod listener;
 
+/// Absolute deadline of an opening started at `now`.
 pub(crate) fn opening_deadline(now: Instant, timeout: Duration) -> Instant {
     // Match Tokio's far-future fallback on overflow.
     now.checked_add(timeout)
@@ -44,6 +45,7 @@ pub(crate) struct InboundOpening<T> {
 }
 
 impl<T> InboundOpening<T> {
+    /// Create an opening with an explicit deadline.
     pub(crate) fn new(permit: OwnedSemaphorePermit, deadline: T) -> Self {
         Self {
             _permit: permit,
@@ -53,6 +55,7 @@ impl<T> InboundOpening<T> {
 }
 
 impl InboundOpening<TokioInstant> {
+    /// Create an opening that expires `timeout` from now.
     pub(crate) fn with_timeout(permit: OwnedSemaphorePermit, timeout: Duration) -> Self {
         Self::new(
             permit,
@@ -60,15 +63,10 @@ impl InboundOpening<TokioInstant> {
         )
     }
 
+    /// Run `handshake` until the deadline, releasing the capacity when done.
     pub(crate) async fn negotiate<F: Future>(self, handshake: F) -> Result<F::Output, Elapsed> {
         timeout_at(self.deadline, handshake).await
     }
-}
-
-#[test]
-fn opening_deadline_handles_extreme_timeout() {
-    let now = Instant::now();
-    assert!(opening_deadline(now, Duration::MAX) > now);
 }
 
 /// Connected loopback TCP pair: `(client, server, client address)`.
@@ -85,4 +83,15 @@ pub(crate) async fn inbound_socket() -> (
     );
     let (server, address) = server.unwrap();
     (client.unwrap(), server, address)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opening_deadline_handles_extreme_timeout() {
+        let now = Instant::now();
+        assert!(opening_deadline(now, Duration::MAX) > now);
+    }
 }
