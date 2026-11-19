@@ -26,6 +26,7 @@ use crate::{
     protocol::{InnerTransportEvent, ProtocolSet},
     transport::manager::{
         address::AddressRecord,
+        limits::DroppedOpenings,
         peer_state::StateDialResult,
         protocols::WeakProtocolRegistry,
         types::{PeerContext, SupportedTransport},
@@ -37,7 +38,10 @@ use crate::{
 
 use multiaddr::{Multiaddr, Protocol};
 use parking_lot::RwLock;
-use tokio::sync::mpsc::{error::TrySendError, Sender};
+use tokio::sync::{
+    mpsc::{error::TrySendError, Sender},
+    OwnedSemaphorePermit, Semaphore,
+};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -359,6 +363,8 @@ impl TransportManagerHandle {
 }
 
 pub struct TransportHandle {
+    pub(crate) pending_incoming_connections: Arc<Semaphore>,
+    pub(crate) dropped_openings: DroppedOpenings,
     pub keypair: Keypair,
     pub tx: Sender<TransportManagerEvent>,
     pub protocols: ProtocolRegistry,
@@ -369,6 +375,11 @@ pub struct TransportHandle {
 }
 
 impl TransportHandle {
+    /// Reserve inbound opening capacity without waiting.
+    pub(crate) fn try_acquire_inbound_permit(&self) -> Option<OwnedSemaphorePermit> {
+        self.pending_incoming_connections.clone().try_acquire_owned().ok()
+    }
+
     pub fn protocol_set(&self, connection_id: ConnectionId) -> ProtocolSet {
         ProtocolSet::new(
             connection_id,
@@ -394,8 +405,83 @@ mod tests {
     };
 
     use super::*;
+    use crate::transport::manager::limits::DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS;
     use parking_lot::lock_api::RwLock;
     use tokio::sync::mpsc::{channel, Receiver};
+
+    #[test]
+    fn default_inbound_opening_capacity() {
+        let manager = crate::transport::manager::TransportManagerBuilder::new().build();
+        let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        let permits: Vec<_> = (0..DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS)
+            .map(|_| handle.try_acquire_inbound_permit().unwrap())
+            .collect();
+        assert!(handle.try_acquire_inbound_permit().is_none());
+        drop(permits);
+        assert_eq!(
+            handle.pending_incoming_connections.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS
+        );
+    }
+
+    #[test]
+    fn inbound_opening_capacity_is_per_transport_and_released_on_drop() {
+        let manager = crate::transport::manager::TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                crate::transport::ConnectionLimitsConfig::default()
+                    .max_pending_incoming_connections(Some(1)),
+            )
+            .build();
+        let first = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        let second = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        let permit = first.try_acquire_inbound_permit().unwrap();
+        assert!(first.try_acquire_inbound_permit().is_none());
+        assert!(second.try_acquire_inbound_permit().is_some());
+        drop(permit);
+        assert!(first.try_acquire_inbound_permit().is_some());
+    }
+
+    #[test]
+    fn extreme_inbound_opening_config_doesnt_panic() {
+        let manager = crate::transport::manager::TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                crate::transport::ConnectionLimitsConfig::default()
+                    .max_pending_incoming_connections(Some(usize::MAX)),
+            )
+            .build();
+        let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        assert_eq!(
+            handle.pending_incoming_connections.available_permits(),
+            Semaphore::MAX_PERMITS
+        );
+    }
+
+    #[test]
+    fn unlimited_inbound_opening_capacity() {
+        let manager = crate::transport::manager::TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                crate::transport::ConnectionLimitsConfig::default()
+                    .max_pending_incoming_connections(None),
+            )
+            .build();
+        let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        assert_eq!(
+            handle.pending_incoming_connections.available_permits(),
+            Semaphore::MAX_PERMITS
+        );
+    }
+
+    #[test]
+    fn zero_inbound_opening_capacity() {
+        let manager = crate::transport::manager::TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                crate::transport::ConnectionLimitsConfig::default()
+                    .max_pending_incoming_connections(Some(0)),
+            )
+            .build();
+        let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        assert!(handle.try_acquire_inbound_permit().is_none());
+    }
 
     fn make_transport_manager_handle() -> (
         TransportManagerHandle,
