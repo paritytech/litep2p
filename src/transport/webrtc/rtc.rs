@@ -22,7 +22,10 @@
 //!
 //! [`Rtc`] mirrors the part of [`str0m::Rtc`] used by the transport. A panic in `str0m` discards
 //! the instance, after which every call fails and the connection is closed through its regular
-//! error paths. Has no effect when built with `panic = "abort"`.
+//! error paths.
+//!
+//! Has no effect when built with `panic = "abort"`, or when the panic hook terminates the process
+//! instead of letting the panic unwind.
 
 use str0m::{
     channel::{ChannelConfig, ChannelId},
@@ -97,13 +100,17 @@ impl Rtc {
     }
 
     /// See [`str0m::Rtc::is_alive`].
+    ///
+    /// Not guarded: a plain state read.
     pub fn is_alive(&self) -> bool {
-        self.0.as_ref().is_some_and(|rtc| guard(|| rtc.is_alive()).unwrap_or(false))
+        self.0.as_ref().is_some_and(str0m::Rtc::is_alive)
     }
 
     /// See [`str0m::Rtc::is_connected`].
+    ///
+    /// Not guarded: a plain state read.
     pub fn is_connected(&self) -> bool {
-        self.0.as_ref().is_some_and(|rtc| guard(|| rtc.is_connected()).unwrap_or(false))
+        self.0.as_ref().is_some_and(str0m::Rtc::is_connected)
     }
 
     /// See [`str0m::Rtc::disconnect`].
