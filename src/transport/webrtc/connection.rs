@@ -28,6 +28,7 @@ use crate::{
     substream::Substream,
     transport::{
         webrtc::{
+            rtc::{guard, Channel, Rtc},
             schema::webrtc::message::Flag,
             socket::WebRtcSocket,
             substream::{Message, Substream as WebRtcSubstream, SubstreamHandle},
@@ -44,9 +45,9 @@ use bytes::{Bytes, BytesMut};
 use futures::{task::AtomicWaker, Stream, StreamExt};
 use indexmap::IndexMap;
 use str0m::{
-    channel::{Channel, ChannelConfig, ChannelId, Reliability},
-    net::{Protocol as Str0mProtocol, Receive},
-    Event, IceConnectionState, Input, Output, Rtc,
+    channel::{ChannelConfig, ChannelId, Reliability},
+    net::{DatagramRecv, Protocol as Str0mProtocol, Receive},
+    Event, IceConnectionState, Input, Output, RtcError,
 };
 use tokio::sync::mpsc::Receiver;
 
@@ -1166,7 +1167,7 @@ impl WebRtcConnection {
     }
 
     /// Open outbound substream.
-    fn on_open_substream(
+    async fn on_open_substream(
         &mut self,
         protocol: ProtocolName,
         fallback_names: Vec<ProtocolName>,
@@ -1174,13 +1175,24 @@ impl WebRtcConnection {
         opening_permit: Permit,
         keep_alive: SubstreamKeepAlive,
     ) {
-        let channel_id = self.rtc.direct_api().create_data_channel(ChannelConfig {
+        let Some(channel_id) = self.rtc.direct_api().create_data_channel(ChannelConfig {
             label: "".to_string(),
             ordered: true,
             reliability: Reliability::Reliable,
             negotiated: None,
             protocol: protocol.to_string(),
-        });
+        }) else {
+            // Not tracked yet, so the connection close won't report it.
+            let _ = self
+                .protocol_set
+                .report_substream_open_failure(
+                    protocol,
+                    substream_id,
+                    SubstreamError::ConnectionClosed,
+                )
+                .await;
+            return;
+        };
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -1411,7 +1423,9 @@ impl WebRtcConnection {
                 biased;
                 datagram = self.dgram_rx.recv() => match datagram {
                     Some(datagram) => {
-                        let contents = match datagram.as_slice().try_into() {
+                        let contents = match guard(|| DatagramRecv::try_from(datagram.as_slice()))
+                            .and_then(|contents| contents.map_err(RtcError::Net))
+                        {
                             Ok(contents) => contents,
                             Err(error) => {
                                 tracing::debug!(
@@ -1513,7 +1527,8 @@ impl WebRtcConnection {
                             substream_id,
                             permit,
                             keep_alive,
-                        );
+                        )
+                        .await;
                     }
                 },
                 _ = tokio::time::sleep(timeout.saturating_duration_since(Instant::now())) => {
