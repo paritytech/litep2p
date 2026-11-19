@@ -450,6 +450,12 @@ impl OpeningWebRtcConnection {
         }
 
         self.rtc.direct_api().close_data_channel(self.noise_channel_id);
+
+        // Closing the channel may have discarded the `Rtc`.
+        if !self.rtc.is_alive() {
+            return Err(Error::Disconnected);
+        }
+
         Ok(self.rtc)
     }
 
