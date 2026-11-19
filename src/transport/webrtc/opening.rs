@@ -24,6 +24,7 @@ use crate::{
     config::Role,
     crypto::{ed25519::Keypair, noise::NoiseContext},
     transport::{
+        common::InboundOpening,
         webrtc::{
             socket::WebRtcSocket,
             util::{extract_framed_message, WebRtcMessage},
@@ -99,6 +100,9 @@ pub enum WebRtcEvent {
 /// After the handshake is done, this object is destroyed and a new WebRTC connection object
 /// is created which implements a normal connection event loop dealing with substreams.
 pub struct OpeningWebRtcConnection {
+    /// Inbound opening capacity and absolute deadline.
+    opening: InboundOpening<Instant>,
+
     /// WebRTC object
     rtc: Rtc,
 
@@ -107,9 +111,6 @@ pub struct OpeningWebRtcConnection {
 
     /// Connection ID.
     connection_id: ConnectionId,
-
-    /// Absolute deadline, including manager validation.
-    deadline: Instant,
 
     /// Noise channel ID.
     noise_channel_id: ChannelId,
@@ -175,7 +176,7 @@ impl OpeningWebRtcConnection {
         id_keypair: Keypair,
         addrs: AddressPair,
         socket: Arc<WebRtcSocket>,
-        deadline: Instant,
+        opening: InboundOpening<Instant>,
     ) -> OpeningWebRtcConnection {
         tracing::trace!(
             target: LOG_TARGET,
@@ -185,10 +186,10 @@ impl OpeningWebRtcConnection {
         );
 
         Self {
+            opening,
             rtc,
             state: State::Closed,
             connection_id,
-            deadline,
             noise_channel_id,
             id_keypair,
             addrs,
@@ -205,12 +206,12 @@ impl OpeningWebRtcConnection {
     /// Absolute opening deadline.
     #[cfg(test)]
     pub fn deadline(&self) -> Instant {
-        self.deadline
+        self.opening.deadline
     }
 
     /// Whether the opening deadline has elapsed.
     pub fn is_expired(&self) -> bool {
-        Instant::now() >= self.deadline
+        Instant::now() >= self.opening.deadline
     }
 
     /// Socket the session's datagrams are received on and sent from.
@@ -526,7 +527,7 @@ impl OpeningWebRtcConnection {
                 }
                 Output::Timeout(timeout) => {
                     return WebRtcEvent::Timeout {
-                        timeout: timeout.min(self.deadline),
+                        timeout: timeout.min(self.opening.deadline),
                     };
                 }
                 Output::Event(e) => match e {

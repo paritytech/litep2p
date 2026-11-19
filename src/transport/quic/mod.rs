@@ -26,6 +26,7 @@ use crate::{
     crypto::tls::make_client_config,
     error::{AddressError, DialError, Error, QuicError},
     transport::{
+        common::InboundOpening,
         manager::TransportHandle,
         quic::{config::Config as QuicConfig, connection::QuicConnection, listener::QuicListener},
         Endpoint as Litep2pEndpoint, Transport, TransportBuilder, TransportEvent,
@@ -109,7 +110,8 @@ pub(crate) struct QuicTransport {
     pending_dials: HashMap<ConnectionId, Multiaddr>,
 
     /// Pending inbound connections.
-    pending_inbound_connections: HashMap<ConnectionId, Connecting>,
+    pending_inbound_connections:
+        HashMap<ConnectionId, (Connecting, InboundOpening<tokio::time::Instant>)>,
 
     /// Pending connections.
     pending_connections: FuturesUnordered<
@@ -142,12 +144,29 @@ impl QuicTransport {
         Some(p2p_cert.peer_id())
     }
 
+    /// Note an inbound connection dropped at capacity.
+    fn on_inbound_dropped(&mut self) {
+        if let Some(dropped) = self.context.dropped_openings.record() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                dropped,
+                "inbound connections dropped: `max_pending_incoming_connections` reached",
+            );
+        }
+    }
+
     /// Handle inbound accepted connection.
-    fn on_inbound_connection(&mut self, connection_id: ConnectionId, connection: Connecting) {
+    fn on_inbound_connection(
+        &mut self,
+        connection_id: ConnectionId,
+        connection: Connecting,
+        opening: InboundOpening<tokio::time::Instant>,
+    ) {
         self.pending_connections.push(Box::pin(async move {
-            let connection = match connection.await {
-                Ok(connection) => connection,
-                Err(error) => return (connection_id, Err(DialError::from(error))),
+            let connection = match opening.negotiate(connection).await {
+                Err(_) => return (connection_id, Err(DialError::Timeout)),
+                Ok(Err(error)) => return (connection_id, Err(DialError::from(error))),
+                Ok(Ok(connection)) => connection,
             };
 
             let Some(peer) = Self::extract_peer_id(&connection) else {
@@ -379,12 +398,12 @@ impl Transport for QuicTransport {
     }
 
     fn accept_pending(&mut self, connection_id: ConnectionId) -> crate::Result<()> {
-        let connection = self
+        let (connection, opening) = self
             .pending_inbound_connections
             .remove(&connection_id)
             .ok_or(Error::ConnectionDoesntExist(connection_id))?;
 
-        self.on_inbound_connection(connection_id, connection);
+        self.on_inbound_connection(connection_id, connection, opening);
 
         Ok(())
     }
@@ -536,20 +555,13 @@ impl Stream for QuicTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
-            let connection_id = self.context.next_connection_id();
+        while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
+            let (connection_id, result) = connection;
 
-            tracing::trace!(
-                target: LOG_TARGET,
-                ?connection_id,
-                "pending inbound connection",
-            );
-
-            self.pending_inbound_connections.insert(connection_id, connection);
-
-            return Poll::Ready(Some(TransportEvent::PendingInboundConnection {
-                connection_id,
-            }));
+            match self.on_connection_established(connection_id, result) {
+                Some(event) => return Poll::Ready(Some(event)),
+                None => {}
+            }
         }
 
         while let Poll::Ready(Some(result)) = self.pending_raw_connections.poll_next_unpin(cx) {
@@ -617,13 +629,29 @@ impl Stream for QuicTransport {
             }
         }
 
-        while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
-            let (connection_id, result) = connection;
+        // Polled last, so a busy listener can't starve pending connections and their timeouts.
+        if let Poll::Ready(Some(connection)) = self.listener.poll_next_unpin(cx) {
+            // Drop at capacity without a manager round trip; yield, as more may be queued.
+            let Some(permit) = self.context.try_acquire_inbound_permit() else {
+                self.on_inbound_dropped();
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            };
+            let opening = InboundOpening::with_timeout(permit, self.config.connection_open_timeout);
 
-            match self.on_connection_established(connection_id, result) {
-                Some(event) => return Poll::Ready(Some(event)),
-                None => {}
-            }
+            let connection_id = self.context.next_connection_id();
+
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?connection_id,
+                "pending inbound connection",
+            );
+
+            self.pending_inbound_connections.insert(connection_id, (connection, opening));
+
+            return Poll::Ready(Some(TransportEvent::PendingInboundConnection {
+                connection_id,
+            }));
         }
 
         Poll::Pending
@@ -638,7 +666,10 @@ mod tests {
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
         protocol::SubstreamKeepAlive,
-        transport::manager::{InboundProtocol, ProtocolContext, TransportHandle},
+        transport::manager::{
+            limits::DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS, InboundProtocol, ProtocolContext,
+            TransportHandle,
+        },
         types::protocol::ProtocolName,
         BandwidthSink,
     };
@@ -655,6 +686,10 @@ mod tests {
         let (event_tx1, _event_rx1) = channel(64);
 
         let handle1 = TransportHandle {
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            )),
+            dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -676,6 +711,7 @@ mod tests {
         };
         let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
 
+        let capacity = handle1.pending_incoming_connections.clone();
         let (mut transport1, listen_addresses) =
             QuicTransport::new(handle1, Default::default(), resolver.clone()).unwrap();
         let listen_address = listen_addresses[0].clone();
@@ -685,6 +721,10 @@ mod tests {
         let (event_tx2, _event_rx2) = channel(64);
 
         let handle2 = TransportHandle {
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            )),
+            dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -731,16 +771,81 @@ mod tests {
             _ => panic!("unexpected event"),
         }
 
-        let res1 = transport1.next().await;
-        let res2 = from_transport2.recv().await.unwrap();
-
-        assert!(std::matches!(
-            res1,
+        assert_eq!(
+            capacity.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS - 1
+        );
+        assert!(matches!(
+            transport1.next().await,
             Some(TransportEvent::ConnectionEstablished { .. })
         ));
+        assert_eq!(
+            capacity.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS
+        );
+
+        let res2 = from_transport2.recv().await.unwrap();
         assert!(std::matches!(
             res2,
             Some(TransportEvent::ConnectionEstablished { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn inbound_opening_dropped_at_capacity() {
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
+        let manager1 = crate::transport::manager::TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                crate::transport::ConnectionLimitsConfig::default()
+                    .max_pending_incoming_connections(Some(1)),
+            )
+            .build();
+        let handle1 = manager1.transport_handle(Arc::new(DefaultExecutor {}));
+        let peer1 = PeerId::from_public_key(&handle1.keypair.public().into());
+        let capacity = handle1.pending_incoming_connections.clone();
+        let (mut transport1, listen_addresses) =
+            QuicTransport::new(handle1, Default::default(), resolver.clone()).unwrap();
+        let listen_address = listen_addresses[0].clone().with(Protocol::P2p(peer1.into()));
+
+        let manager2 = crate::transport::manager::TransportManagerBuilder::new().build();
+        let handle2 = manager2.transport_handle(Arc::new(DefaultExecutor {}));
+        let (mut transport2, _) =
+            QuicTransport::new(handle2, Default::default(), resolver).unwrap();
+
+        // At capacity the listener drops the connection without involving the manager. The
+        // dialer's outcome is racy, as its handshake can complete before the drop.
+        let held = capacity.clone().try_acquire_owned().unwrap();
+        transport2.dial(ConnectionId::from(0usize), listen_address.clone()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while !transport1.context.dropped_openings.has_drops() {
+                tokio::select! {
+                    event = transport1.next() => panic!("unexpected event: {event:?}"),
+                    _ = transport2.next() => {}
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {}
+                }
+            }
+        })
+        .await
+        .expect("listener to drop the connection");
+        assert!(transport1.pending_inbound_connections.is_empty());
+        drop(held);
+
+        // The handshake only progresses while the dialer is polled.
+        transport2.dial(ConnectionId::from(1usize), listen_address).unwrap();
+        tokio::spawn(async move { while transport2.next().await.is_some() {} });
+
+        // The listener reserves the capacity, which then follows the connection.
+        let Some(TransportEvent::PendingInboundConnection { connection_id }) =
+            transport1.next().await
+        else {
+            panic!("unexpected event");
+        };
+        assert_eq!(capacity.available_permits(), 0);
+        transport1.accept_pending(connection_id).unwrap();
+        assert_eq!(transport1.pending_connections.len(), 1);
+        assert_eq!(capacity.available_permits(), 0);
+
+        drop(transport1);
+        assert_eq!(capacity.available_permits(), 1);
     }
 }
