@@ -143,7 +143,7 @@ impl TcpTransport {
     /// Note an inbound connection dropped at capacity.
     fn on_inbound_dropped(&mut self) {
         if let Some(dropped) = self.context.dropped_openings.record() {
-            tracing::debug!(
+            tracing::warn!(
                 target: LOG_TARGET,
                 dropped,
                 "inbound connections dropped: `max_pending_incoming_connections` reached",
