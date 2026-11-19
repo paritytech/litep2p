@@ -24,7 +24,10 @@
 use crate::{
     error::{DialError, Error},
     transport::{
-        common::listener::{DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
+        common::{
+            listener::{DialAddresses, GetSocketAddr, SocketListener, TcpAddress},
+            InboundOpening,
+        },
         manager::TransportHandle,
         tcp::{
             config::Config,
@@ -71,6 +74,8 @@ struct PendingInboundConnection {
     connection: TcpStream,
     /// Address of the remote peer.
     address: SocketAddr,
+    /// Opening capacity and deadline, reserved when the listener yielded the connection.
+    opening: InboundOpening<tokio::time::Instant>,
 }
 
 #[derive(Debug)]
@@ -135,17 +140,28 @@ pub(crate) struct TcpTransport {
 }
 
 impl TcpTransport {
+    /// Note an inbound connection dropped at capacity.
+    fn on_inbound_dropped(&mut self) {
+        if let Some(dropped) = self.context.dropped_openings.record() {
+            tracing::warn!(
+                target: LOG_TARGET,
+                dropped,
+                "inbound connections dropped: `max_pending_incoming_connections` reached",
+            );
+        }
+    }
+
     /// Handle inbound TCP connection.
     fn on_inbound_connection(
         &mut self,
         connection_id: ConnectionId,
         connection: TcpStream,
         address: SocketAddr,
+        opening: InboundOpening<tokio::time::Instant>,
     ) {
         let yamux_config = self.config.yamux_config.clone();
         let max_read_ahead_factor = self.config.noise_read_ahead_frame_count;
         let max_write_buffer_size = self.config.noise_write_buffer_size;
-        let connection_open_timeout = self.config.connection_open_timeout;
         let substream_open_timeout = self.config.substream_open_timeout;
         let keypair = self.context.keypair.clone();
 
@@ -157,19 +173,20 @@ impl TcpTransport {
         );
 
         self.pending_connections.push(Box::pin(async move {
-            TcpConnection::accept_connection(
-                connection,
-                connection_id,
-                keypair,
-                address,
-                yamux_config,
-                max_read_ahead_factor,
-                max_write_buffer_size,
-                connection_open_timeout,
-                substream_open_timeout,
-            )
-            .await
-            .map_err(|error| (connection_id, error.into()))
+            opening
+                .negotiate(TcpConnection::accept_connection(
+                    connection,
+                    connection_id,
+                    keypair,
+                    address,
+                    yamux_config,
+                    max_read_ahead_factor,
+                    max_write_buffer_size,
+                    substream_open_timeout,
+                ))
+                .await
+                .map_err(|_| (connection_id, DialError::Timeout))?
+                .map_err(|error| (connection_id, error.into()))
         }));
     }
 
@@ -369,7 +386,12 @@ impl Transport for TcpTransport {
             Error::ConnectionDoesntExist(connection_id)
         })?;
 
-        self.on_inbound_connection(connection_id, pending.connection, pending.address);
+        self.on_inbound_connection(
+            connection_id,
+            pending.connection,
+            pending.address,
+            pending.opening,
+        );
 
         Ok(())
     }
@@ -575,47 +597,31 @@ impl Stream for TcpTransport {
     type Item = TransportEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
-            return match event {
-                None => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        "TCP listener terminated, ignore if the node is stopping",
-                    );
+        while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
+            match connection {
+                Ok(connection) => {
+                    let peer = connection.peer();
+                    let endpoint = connection.endpoint();
+                    self.pending_dials.remove(&connection.connection_id());
+                    self.pending_open.insert(connection.connection_id(), connection);
 
-                    Poll::Ready(None)
+                    return Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                        peer,
+                        endpoint,
+                    }));
                 }
-                Some(Err(error)) => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?error,
-                        "TCP listener terminated with error",
-                    );
-
-                    Poll::Ready(None)
-                }
-                Some(Ok((connection, address))) => {
-                    let connection_id = self.context.next_connection_id();
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        ?connection_id,
-                        ?address,
-                        "pending inbound TCP connection",
-                    );
-
-                    self.pending_inbound_connections.insert(
-                        connection_id,
-                        PendingInboundConnection {
-                            connection,
+                Err((connection_id, error)) => {
+                    if let Some(address) = self.pending_dials.remove(&connection_id) {
+                        return Poll::Ready(Some(TransportEvent::DialFailure {
+                            connection_id,
                             address,
-                        },
-                    );
-
-                    Poll::Ready(Some(TransportEvent::PendingInboundConnection {
-                        connection_id,
-                    }))
+                            error,
+                        }));
+                    } else {
+                        tracing::debug!(target: LOG_TARGET, ?error, ?connection_id, "Pending inbound connection failed");
+                    }
                 }
-            };
+            }
         }
 
         while let Poll::Ready(Some(result)) = self.pending_raw_connections.poll_next_unpin(cx) {
@@ -682,31 +688,58 @@ impl Stream for TcpTransport {
             }
         }
 
-        while let Poll::Ready(Some(connection)) = self.pending_connections.poll_next_unpin(cx) {
-            match connection {
-                Ok(connection) => {
-                    let peer = connection.peer();
-                    let endpoint = connection.endpoint();
-                    self.pending_dials.remove(&connection.connection_id());
-                    self.pending_open.insert(connection.connection_id(), connection);
+        // Polled last, so a busy listener can't starve pending connections and their timeouts.
+        if let Poll::Ready(event) = self.listener.poll_next_unpin(cx) {
+            return match event {
+                None => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        "TCP listener terminated, ignore if the node is stopping",
+                    );
 
-                    return Poll::Ready(Some(TransportEvent::ConnectionEstablished {
-                        peer,
-                        endpoint,
-                    }));
+                    Poll::Ready(None)
                 }
-                Err((connection_id, error)) => {
-                    if let Some(address) = self.pending_dials.remove(&connection_id) {
-                        return Poll::Ready(Some(TransportEvent::DialFailure {
-                            connection_id,
+                Some(Err(error)) => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "TCP listener terminated with error",
+                    );
+
+                    Poll::Ready(None)
+                }
+                Some(Ok((connection, address))) => {
+                    // Drop at capacity without a manager round trip; yield, as more may be queued.
+                    let Some(permit) = self.context.try_acquire_inbound_permit() else {
+                        self.on_inbound_dropped();
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
+                    };
+                    let opening =
+                        InboundOpening::with_timeout(permit, self.config.connection_open_timeout);
+
+                    let connection_id = self.context.next_connection_id();
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?connection_id,
+                        ?address,
+                        "pending inbound TCP connection",
+                    );
+
+                    self.pending_inbound_connections.insert(
+                        connection_id,
+                        PendingInboundConnection {
+                            connection,
                             address,
-                            error,
-                        }));
-                    } else {
-                        tracing::debug!(target: LOG_TARGET, ?error, ?connection_id, "Pending inbound connection failed");
-                    }
+                            opening,
+                        },
+                    );
+
+                    Poll::Ready(Some(TransportEvent::PendingInboundConnection {
+                        connection_id,
+                    }))
                 }
-            }
+            };
         }
 
         Poll::Pending
@@ -721,8 +754,12 @@ mod tests {
         crypto::ed25519::Keypair,
         executor::DefaultExecutor,
         protocol::SubstreamKeepAlive,
-        transport::manager::{
-            InboundProtocol, ProtocolContext, SupportedTransport, TransportManagerBuilder,
+        transport::{
+            common::inbound_socket,
+            manager::{
+                limits::DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS, InboundProtocol, ProtocolContext,
+                SupportedTransport, TransportManagerBuilder,
+            },
         },
         types::protocol::ProtocolName,
         BandwidthSink, PeerId,
@@ -730,6 +767,149 @@ mod tests {
     use multiaddr::Protocol;
     use std::sync::Arc;
     use tokio::sync::mpsc::channel;
+
+    /// Start negotiating an inbound connection, as `accept_pending` does.
+    fn start_inbound(
+        transport: &mut TcpTransport,
+        connection_id: usize,
+        connection: TcpStream,
+        address: SocketAddr,
+    ) {
+        let permit = transport.context.try_acquire_inbound_permit().unwrap();
+        transport.on_inbound_connection(
+            ConnectionId::from(connection_id),
+            connection,
+            address,
+            InboundOpening::with_timeout(permit, transport.config.connection_open_timeout),
+        );
+    }
+
+    #[tokio::test]
+    async fn inbound_opening_capacity_and_failure_cleanup() {
+        let manager = crate::transport::manager::TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                crate::transport::ConnectionLimitsConfig::default()
+                    .max_pending_incoming_connections(Some(1)),
+            )
+            .build();
+        let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        let capacity = handle.pending_incoming_connections.clone();
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
+        let (mut transport, _) = TcpTransport::new(
+            handle,
+            Config {
+                listen_addresses: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
+                ..Default::default()
+            },
+            resolver,
+        )
+        .unwrap();
+        let (client, server, address) = inbound_socket().await;
+        start_inbound(&mut transport, 0, server, address);
+        assert_eq!(capacity.available_permits(), 0);
+
+        drop(client);
+        assert!(transport.pending_connections.next().await.unwrap().is_err());
+        assert_eq!(capacity.available_permits(), 1);
+
+        let (_client, server, address) = inbound_socket().await;
+        start_inbound(&mut transport, 1, server, address);
+        assert_eq!(capacity.available_permits(), 0);
+        drop(transport);
+        assert_eq!(capacity.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn inbound_dropped_by_listener_at_capacity() {
+        use tokio::io::AsyncReadExt;
+
+        let manager = crate::transport::manager::TransportManagerBuilder::new()
+            .with_connection_limits_config(
+                crate::transport::ConnectionLimitsConfig::default()
+                    .max_pending_incoming_connections(Some(1)),
+            )
+            .build();
+        let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        let capacity = handle.pending_incoming_connections.clone();
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
+        let (mut transport, listen_addresses) = TcpTransport::new(
+            handle,
+            Config {
+                listen_addresses: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
+                ..Default::default()
+            },
+            resolver,
+        )
+        .unwrap();
+        let port = listen_addresses[0]
+            .iter()
+            .find_map(|protocol| match protocol {
+                Protocol::Tcp(port) => Some(port),
+                _ => None,
+            })
+            .unwrap();
+
+        // The socket is closed without involving the manager.
+        let held = capacity.clone().try_acquire_owned().unwrap();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let mut buffer = [0u8; 1];
+        tokio::select! {
+            event = transport.next() => panic!("unexpected event: {event:?}"),
+            read = client.read(&mut buffer) => assert_eq!(read.unwrap(), 0),
+        }
+        assert!(transport.pending_inbound_connections.is_empty());
+
+        // The listener reserves the capacity; rejection releases it.
+        drop(held);
+        let _client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let Some(TransportEvent::PendingInboundConnection { connection_id }) =
+            transport.next().await
+        else {
+            panic!("unexpected event");
+        };
+        assert_eq!(capacity.available_permits(), 0);
+        transport.reject_pending(connection_id).unwrap();
+        assert_eq!(capacity.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn inbound_opening_deadline_is_serviced_before_accepting_more_sockets() {
+        let manager = crate::transport::manager::TransportManagerBuilder::new().build();
+        let handle = manager.transport_handle(Arc::new(crate::executor::DefaultExecutor {}));
+        let capacity = handle.pending_incoming_connections.clone();
+        let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
+        let (mut transport, listen_addresses) = TcpTransport::new(
+            handle,
+            Config {
+                listen_addresses: vec!["/ip4/127.0.0.1/tcp/0".parse().unwrap()],
+                connection_open_timeout: Duration::from_millis(20),
+                ..Default::default()
+            },
+            resolver,
+        )
+        .unwrap();
+        let (_client, server, address) = inbound_socket().await;
+        start_inbound(&mut transport, 0, server, address);
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        let port = listen_addresses[0]
+            .iter()
+            .find_map(|protocol| match protocol {
+                Protocol::Tcp(port) => Some(port),
+                _ => None,
+            })
+            .unwrap();
+        let _incoming = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        assert!(matches!(
+            transport.next().await,
+            Some(TransportEvent::PendingInboundConnection { .. })
+        ));
+        assert!(transport.pending_connections.is_empty());
+        // Only the new pending connection holds capacity.
+        assert_eq!(
+            capacity.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS - 1
+        );
+    }
 
     #[tokio::test]
     async fn connect_and_accept_works() {
@@ -743,6 +923,10 @@ mod tests {
         let bandwidth_sink = BandwidthSink::new();
 
         let handle1 = crate::transport::manager::TransportHandle {
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            )),
+            dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -768,6 +952,7 @@ mod tests {
         };
         let resolver = Arc::new(TokioResolver::builder_tokio().unwrap().build().unwrap());
 
+        let capacity = handle1.pending_incoming_connections.clone();
         let (mut transport1, listen_addresses) =
             TcpTransport::new(handle1, transport_config1, resolver.clone()).unwrap();
         let listen_address = listen_addresses[0].clone();
@@ -777,6 +962,10 @@ mod tests {
         let (event_tx2, _event_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            )),
+            dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -818,11 +1007,18 @@ mod tests {
             _ => panic!("unexpected event"),
         }
 
-        let event = transport1.next().await;
-        assert!(std::matches!(
-            event,
+        assert_eq!(
+            capacity.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS - 1
+        );
+        assert!(matches!(
+            transport1.next().await,
             Some(TransportEvent::ConnectionEstablished { .. })
         ));
+        assert_eq!(
+            capacity.available_permits(),
+            DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS
+        );
 
         let event = from_transport2.recv().await.unwrap();
         assert!(std::matches!(
@@ -843,6 +1039,10 @@ mod tests {
         let bandwidth_sink = BandwidthSink::new();
 
         let handle1 = crate::transport::manager::TransportHandle {
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            )),
+            dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -877,6 +1077,10 @@ mod tests {
         let (event_tx2, _event_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            )),
+            dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -938,6 +1142,10 @@ mod tests {
         let bandwidth_sink = BandwidthSink::new();
 
         let handle1 = crate::transport::manager::TransportHandle {
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            )),
+            dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),
@@ -979,6 +1187,10 @@ mod tests {
         let (event_tx2, _event_rx2) = channel(64);
 
         let handle2 = crate::transport::manager::TransportHandle {
+            pending_incoming_connections: Arc::new(tokio::sync::Semaphore::new(
+                DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            )),
+            dropped_openings: Default::default(),
             executor: Arc::new(DefaultExecutor {}),
             next_substream_id: Default::default(),
             next_connection_id: Default::default(),

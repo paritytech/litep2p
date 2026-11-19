@@ -46,7 +46,7 @@ use multiaddr::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::HashMap,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -118,13 +118,6 @@ struct PeerContext {
 }
 
 impl PeerContext {
-    /// Create new [`PeerContext`].
-    pub fn new() -> Self {
-        Self {
-            pending_actions: HashMap::new(),
-        }
-    }
-
     /// Add pending action for peer.
     pub fn add_pending_action(&mut self, substream_id: SubstreamId, action: PeerAction) {
         self.pending_actions.insert(substream_id, action);
@@ -234,68 +227,41 @@ impl Kademlia {
     }
 
     /// Connection established to remote peer.
-    fn on_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) -> crate::Result<()> {
+    fn on_connection_established(&mut self, peer: PeerId, endpoint: Endpoint) {
         tracing::trace!(target: LOG_TARGET, ?peer, "connection established");
 
-        match self.peers.entry(peer) {
-            Entry::Vacant(entry) => {
-                // Set the conenction type to connected and potentially save the address in the
-                // table.
-                //
-                // Note: this happens regardless of the state of the kademlia managed peers, because
-                // an already occupied entry in the `self.peers` map does not mean that we are
-                // no longer interested in the address / connection type of the peer.
-                self.routing_table.on_connection_established(Key::from(peer), endpoint);
+        self.routing_table.on_connection_established(Key::from(peer), endpoint);
 
-                let Some(actions) = self.pending_dials.remove(&peer) else {
-                    // Note that we do not add peer entry if we don't have any pending actions.
-                    // This is done to not populate `self.peers` with peers that don't support
-                    // our Kademlia protocol.
-                    return Ok(());
-                };
+        // Peers without pending actions are not added to `self.peers`, as they may not support
+        // our Kademlia protocol.
+        let Some(actions) = self.pending_dials.remove(&peer) else {
+            return;
+        };
 
-                // go over all pending actions, open substreams and save the state to `PeerContext`
-                // from which it will be later queried when the substream opens
-                let mut context = PeerContext::new();
+        // Defensive: keep any substreams already tracked for the peer instead of dropping them.
+        let mut context = self.peers.remove(&peer).unwrap_or_default();
 
-                for action in actions {
-                    match self.service.open_substream(peer) {
-                        Ok(substream_id) => {
-                            context.add_pending_action(substream_id, action);
-                        }
-                        Err(error) => {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?peer,
-                                ?action,
-                                ?error,
-                                "connection established to peer but failed to open substream",
-                            );
-
-                            self.engine.register_peer_failure(action.query_id(), peer);
-                        }
-                    }
+        for action in actions {
+            match self.service.open_substream(peer) {
+                Ok(substream_id) => {
+                    self.pending_substreams.insert(substream_id, peer);
+                    context.add_pending_action(substream_id, action);
                 }
+                Err(error) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?action,
+                        ?error,
+                        "connection established to peer but failed to open substream",
+                    );
 
-                entry.insert(context);
-                Ok(())
-            }
-            Entry::Occupied(_) => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?endpoint,
-                    "connection already exists, discarding opening substreams, this is unexpected"
-                );
-
-                // Update the connection in the routing table, similar as above. The function call
-                // happens in two places to avoid unnecessary cloning of the endpoint for logging
-                // purposes.
-                self.routing_table.on_connection_established(Key::from(peer), endpoint);
-
-                Err(Error::PeerAlreadyExists(peer))
+                    self.engine.register_peer_failure(action.query_id(), peer);
+                }
             }
         }
+
+        self.peers.insert(peer, context);
     }
 
     /// Disconnect peer from `Kademlia`.
@@ -1069,15 +1035,8 @@ impl Kademlia {
 
             tokio::select! {
                 event = self.service.next() => match event {
-                    Some(TransportEvent::ConnectionEstablished { peer, endpoint }) => {
-                        if let Err(error) = self.on_connection_established(peer, endpoint) {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?error,
-                                "failed to handle established connection",
-                            );
-                        }
-                    }
+                    Some(TransportEvent::ConnectionEstablished { peer, endpoint }) =>
+                        self.on_connection_established(peer, endpoint),
                     Some(TransportEvent::ConnectionClosed { peer }) => {
                         self.disconnect_peer(peer, None).await;
                     }
@@ -1460,9 +1419,15 @@ mod tests {
     use super::*;
     use crate::{
         codec::ProtocolCodec,
+        error::NegotiationError,
         mock::substream::MockSubstream,
+        multistream_select::NegotiationError as MultistreamNegotiationError,
+        protocol::{connection::ConnectionHandle, InnerTransportEvent, ProtocolCommand},
         transport::{
-            manager::{SubstreamKeepAlive, TransportManager, TransportManagerBuilder},
+            dummy::DummyTransport,
+            manager::{
+                SubstreamKeepAlive, SupportedTransport, TransportManager, TransportManagerBuilder,
+            },
             KEEP_ALIVE_TIMEOUT,
         },
         types::protocol::ProtocolName,
@@ -1476,6 +1441,7 @@ mod tests {
     struct Context {
         _cmd_tx: Sender<KademliaCommand>,
         event_rx: Receiver<KademliaEvent>,
+        transport_tx: Sender<InnerTransportEvent>,
     }
 
     fn make_kademlia() -> (Kademlia, Context, TransportManager) {
@@ -1486,10 +1452,11 @@ mod tests {
         mode: KademliaMode,
         remote_address_mode: RemoteAddressMode,
     ) -> (Kademlia, Context, TransportManager) {
-        let manager = TransportManagerBuilder::new().build();
+        let mut manager = TransportManagerBuilder::new().build();
+        manager.register_transport(SupportedTransport::Tcp, Box::new(DummyTransport::new()));
 
         let peer = PeerId::random();
-        let (transport_service, _tx) = TransportService::new(
+        let (transport_service, transport_tx) = TransportService::new(
             peer,
             ProtocolName::from("/kad/1"),
             Vec::new(),
@@ -1520,7 +1487,11 @@ mod tests {
 
         (
             Kademlia::new(transport_service, config),
-            Context { _cmd_tx, event_rx },
+            Context {
+                _cmd_tx,
+                event_rx,
+                transport_tx,
+            },
             manager,
         )
     }
@@ -1645,7 +1616,7 @@ mod tests {
         };
 
         // Report successful connection with address b via dialer endpoint.
-        let _ = kademlia.on_connection_established(
+        kademlia.on_connection_established(
             peer,
             Endpoint::Dialer {
                 address: address_b.clone(),
@@ -1666,7 +1637,7 @@ mod tests {
         };
 
         // Report successful connection with a random address via listener endpoint.
-        let _ = kademlia.on_connection_established(
+        kademlia.on_connection_established(
             peer,
             Endpoint::Listener {
                 address: address_c.clone(),
@@ -2043,16 +2014,90 @@ mod tests {
             )],
         );
 
-        kademlia
-            .on_connection_established(
-                peer,
-                Endpoint::listener(Multiaddr::empty(), ConnectionId::from(0usize)),
-            )
-            .unwrap();
+        kademlia.on_connection_established(
+            peer,
+            Endpoint::listener(Multiaddr::empty(), ConnectionId::from(0usize)),
+        );
 
         assert!(std::matches!(
             kademlia.engine.next_action(),
             Some(QueryAction::QueryFailed { query: QueryId(0) })
         ));
+    }
+
+    #[tokio::test]
+    async fn substream_open_failure_after_dial_fails_query() {
+        let (mut kademlia, context, _manager) = make_kademlia();
+        let peer = PeerId::random();
+        let address = Multiaddr::from_str("/ip4/1.1.1.1/tcp/30333").unwrap();
+        kademlia.service.add_known_address(&peer, std::iter::once(address.clone()));
+
+        // Not connected yet, so the `PUT_VALUE` waits in `pending_dials`.
+        let query = QueryId(0);
+        kademlia
+            .on_query_action(QueryAction::PutRecordToFoundNodes {
+                query,
+                record: Record::new(RecordKey::from(vec![1, 2, 3]), vec![4, 5, 6]),
+                peers: vec![KademliaPeer::new(
+                    peer,
+                    vec![address.clone()],
+                    ConnectionType::NotConnected,
+                )],
+                quorum: Quorum::All,
+            })
+            .await
+            .unwrap();
+        assert!(kademlia.pending_dials.contains_key(&peer));
+
+        let (connection_tx, mut connection_rx) = channel(64);
+        let connection_id = ConnectionId::from(0usize);
+        context
+            .transport_tx
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: connection_id,
+                endpoint: Endpoint::dialer(address, connection_id),
+                sender: ConnectionHandle::new(connection_id, connection_tx),
+            })
+            .await
+            .unwrap();
+        let Some(TransportEvent::ConnectionEstablished { peer, endpoint }) =
+            kademlia.service.next().await
+        else {
+            panic!("expected `ConnectionEstablished`");
+        };
+        kademlia.on_connection_established(peer, endpoint);
+
+        let Ok(ProtocolCommand::OpenSubstream { substream_id, .. }) = connection_rx.try_recv()
+        else {
+            panic!("expected `OpenSubstream`");
+        };
+        assert!(kademlia.pending_dials.is_empty());
+        assert_eq!(kademlia.pending_substreams.get(&substream_id), Some(&peer));
+
+        // The remote doesn't speak the protocol.
+        context
+            .transport_tx
+            .send(InnerTransportEvent::SubstreamOpenFailure {
+                substream: substream_id,
+                error: SubstreamError::NegotiationError(NegotiationError::MultistreamSelectError(
+                    MultistreamNegotiationError::Failed,
+                )),
+            })
+            .await
+            .unwrap();
+        let Some(TransportEvent::SubstreamOpenFailure { substream, error }) =
+            kademlia.service.next().await
+        else {
+            panic!("expected `SubstreamOpenFailure`");
+        };
+        kademlia.on_substream_open_failure(substream, error).await;
+
+        assert!(kademlia.pending_substreams.is_empty());
+        assert!(!kademlia.peers.contains_key(&peer));
+        match kademlia.engine.next_action() {
+            Some(QueryAction::QueryFailed { query: failed }) => assert_eq!(failed, query),
+            action => panic!("unexpected action: {action:?}"),
+        }
     }
 }
