@@ -916,6 +916,8 @@ impl NotificationProtocol {
     /// Outbound substream can opened only if the `PeerState` is `Closed`.
     /// By forcing the substream to be opened only if the state is currently closed,
     /// `NotificationProtocol` can enfore more predictable state transitions.
+    /// The one exception is an inbound substream whose handshake is still being read, since the
+    /// user doesn't know about it yet.
     ///
     /// Other states either imply an invalid state transition ([`PeerState::Open`]) or that an
     /// inbound substream has already been received and its currently being validated by the user.
@@ -994,7 +996,14 @@ impl NotificationProtocol {
                     substream: substream_id,
                 };
             }
-            PeerState::Closed { .. } => match self.service.open_substream(peer) {
+            // the user hasn't been told about an inbound substream whose handshake is still being
+            // read, so the outbound substream is opened just like when both sides open at once
+            PeerState::Closed { .. }
+            | PeerState::Validating {
+                inbound: InboundState::ReadingHandshake,
+                outbound: OutboundState::Closed,
+                ..
+            } => match self.service.open_substream(peer) {
                 Ok(substream_id) => {
                     tracing::trace!(
                         target: LOG_TARGET,
@@ -1005,8 +1014,25 @@ impl NotificationProtocol {
                     );
 
                     self.pending_outbound.insert(substream_id, peer);
-                    context.state = PeerState::OutboundInitiated {
-                        substream: substream_id,
+                    context.state = match std::mem::replace(&mut context.state, PeerState::Poisoned)
+                    {
+                        PeerState::Validating {
+                            protocol,
+                            fallback,
+                            inbound,
+                            ..
+                        } => PeerState::Validating {
+                            protocol,
+                            fallback,
+                            direction: Direction::Outbound,
+                            inbound,
+                            outbound: OutboundState::OutboundInitiated {
+                                substream: substream_id,
+                            },
+                        },
+                        _ => PeerState::OutboundInitiated {
+                            substream: substream_id,
+                        },
                     };
                 }
                 Err(error) => {
@@ -1024,7 +1050,6 @@ impl NotificationProtocol {
                             NotificationError::NoConnection,
                         )
                         .await;
-                    context.state = PeerState::Closed { pending_open: None };
                 }
             },
             // while a validation is pending for an inbound substream, user is not allowed to open
