@@ -293,7 +293,7 @@ impl GetProvidersContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::libp2p::kademlia::types::ConnectionType;
+    use crate::protocol::libp2p::kademlia::types::{ConnectionType, MAX_ADDRESSES};
     use multiaddr::multiaddr;
 
     fn default_config() -> GetProvidersConfig {
@@ -528,5 +528,36 @@ mod tests {
         assert!(addresses.contains(&address3));
         assert!(addresses.contains(&address4));
         assert!(addresses.contains(&address5));
+    }
+
+    #[test]
+    fn provider_addresses_bounded_across_responses() {
+        let peers = (0..3).map(|_| PeerId::random()).collect::<Vec<_>>();
+        let mut context = GetProvidersContext::new(
+            default_config(),
+            peers.iter().map(|peer| peer_to_kad(*peer)).collect(),
+        );
+        for _ in 0..3 {
+            context.next_action().unwrap();
+        }
+
+        let provider = PeerId::random();
+        let mut port = 0u16;
+        for peer in peers {
+            let providers = (0..20).map(|_| {
+                let addresses = (0..MAX_ADDRESSES)
+                    .map(|_| {
+                        port += 1;
+                        multiaddr!(Ip4([1, 1, 1, 1]), Tcp(port))
+                    })
+                    .collect();
+                peer_to_kad_with_addresses(provider, addresses)
+            });
+            context.register_response(peer, providers.collect::<Vec<_>>(), vec![]);
+        }
+
+        let found_providers = context.found_providers();
+        assert_eq!(found_providers.len(), 1);
+        assert_eq!(found_providers[0].addresses.len(), MAX_ADDRESSES);
     }
 }
