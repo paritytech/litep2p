@@ -2225,4 +2225,55 @@ mod tests {
         }
         assert_eq!(routing_table_updates, vec![vec![responder_peer]]);
     }
+
+    #[tokio::test]
+    async fn add_provider_response_fails_query() {
+        let (mut kademlia, mut context, _manager) =
+            make_kademlia_with(KademliaMode::Client, RemoteAddressMode::All);
+
+        let peer = PeerId::random();
+        let query = QueryId(0);
+        kademlia.engine.start_find_node(
+            query,
+            PeerId::random(),
+            VecDeque::from([KademliaPeer::new(
+                peer,
+                vec![],
+                ConnectionType::NotConnected,
+            )]),
+        );
+        match kademlia.engine.next_action() {
+            Some(QueryAction::SendMessage { peer: queried, .. }) => assert_eq!(queried, peer),
+            action => panic!("unexpected action: {action:?}"),
+        }
+
+        let key = RecordKey::from(vec![1, 2, 3]);
+        let message = KademliaMessage::add_provider(
+            key.clone(),
+            ContentProvider {
+                peer,
+                addresses: vec![Multiaddr::from_str("/ip4/8.8.8.8/tcp/30333").unwrap()],
+            },
+        );
+        kademlia
+            .on_message_received(
+                peer,
+                Some(query),
+                BytesMut::from(&message[..]),
+                Substream::new_mock(
+                    peer,
+                    SubstreamId::from(0usize),
+                    Box::new(MockSubstream::new()),
+                ),
+            )
+            .await
+            .unwrap();
+
+        assert!(kademlia.store.get_providers(&key).is_empty());
+        assert!(context.event_rx.try_recv().is_err());
+        match kademlia.engine.next_action() {
+            Some(QueryAction::QueryFailed { query: failed }) => assert_eq!(failed, query),
+            action => panic!("unexpected action: {action:?}"),
+        }
+    }
 }
