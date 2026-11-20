@@ -173,10 +173,20 @@ fn undialable_listen_addresses_are_dropped() {
     addresses.extend(raw(&dialable));
     addresses.push(vec![0xff, 0xff]);
 
-    let expected: Vec<Multiaddr> =
-        dialable.iter().map(|address| address.parse().unwrap()).collect();
-    assert_eq!(
-        parse_listen_addresses(PeerId::random(), addresses),
-        expected
-    );
+    let peer = PeerId::random();
+    let expected: Vec<Multiaddr> = dialable
+        .iter()
+        .map(|address| address.parse::<Multiaddr>().unwrap().with(Protocol::P2p(peer.into())))
+        .collect();
+    assert_eq!(parse_listen_addresses(peer, addresses), expected);
+}
+
+#[test]
+fn listen_addresses_are_deduplicated() {
+    let peer = PeerId::random();
+    let address: Multiaddr = "/ip4/1.1.1.1/tcp/30333".parse().unwrap();
+    let with_peer = address.clone().with(Protocol::P2p(peer.into()));
+
+    let addresses = vec![address.to_vec(), with_peer.to_vec(), address.to_vec()];
+    assert_eq!(parse_listen_addresses(peer, addresses), vec![with_peer]);
 }
