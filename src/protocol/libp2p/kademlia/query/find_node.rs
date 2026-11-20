@@ -91,6 +91,10 @@ pub struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
     /// These represent the number of peers added to the `Self::pending` minus the number of peers
     /// that have failed to respond within the `Self::peer_timeout`
     pending_responses: usize,
+
+    /// Pending peers that exceeded `Self::peer_timeout` and no longer count towards
+    /// `Self::pending_responses`.
+    timed_out: HashSet<PeerId>,
 }
 
 impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
@@ -116,6 +120,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
 
             peer_timeout: DEFAULT_PEER_TIMEOUT,
             pending_responses: 0,
+            timed_out: HashSet::new(),
         }
     }
 
@@ -125,7 +130,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "pending peer doesn't exist during response failure");
             return;
         };
-        self.pending_responses = self.pending_responses.saturating_sub(1);
+        self.release_pending_slot(&peer.peer);
 
         tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, elapsed = ?instant.elapsed(), "peer failed to respond");
 
@@ -145,7 +150,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             return None;
         };
         let proven_responder = peer.clone();
-        self.pending_responses = self.pending_responses.saturating_sub(1);
+        self.release_pending_slot(&peer.peer);
 
         tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, elapsed = ?instant.elapsed(), "received response from peer");
 
@@ -201,6 +206,12 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         }
 
         Some(proven_responder)
+    }
+
+    fn release_pending_slot(&mut self, peer: &PeerId) {
+        if !self.timed_out.remove(peer) {
+            self.pending_responses = self.pending_responses.saturating_sub(1);
+        }
     }
 
     /// Register a failure of sending `FIN_NODE` request to `peer`.
@@ -274,7 +285,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         }
 
         for (peer, instant) in self.pending.values() {
-            if instant.elapsed() > self.peer_timeout {
+            if instant.elapsed() > self.peer_timeout && self.timed_out.insert(peer.peer) {
                 tracing::trace!(
                     target: LOG_TARGET,
                     query = ?self.config.query,
