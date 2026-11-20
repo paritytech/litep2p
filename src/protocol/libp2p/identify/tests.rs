@@ -85,3 +85,62 @@ async fn update_identify_addresses() {
         }
     }
 }
+
+#[tokio::test]
+async fn listen_addresses_direct_dials_at_third_party() {
+    let accepted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut victim_ports = Vec::new();
+    for _ in 0..40 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        victim_ports.push(listener.local_addr().unwrap().port());
+
+        let accepted = accepted.clone();
+        tokio::spawn(async move {
+            while listener.accept().await.is_ok() {
+                accepted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+    }
+
+    let (mut litep2p1, mut event_stream1, _peer1) = create_litep2p();
+    let (mut litep2p2, _event_stream2, peer2) = create_litep2p();
+    for port in victim_ports {
+        let address: Multiaddr = format!("/ip4/127.0.0.1/tcp/{port}").parse().unwrap();
+        litep2p2.public_addresses().add_address(address).unwrap();
+    }
+
+    let address = litep2p2.listen_addresses().next().unwrap().clone();
+    litep2p1.dial_address(address).await.unwrap();
+
+    let attacker = tokio::spawn(async move { while litep2p2.next_event().await.is_some() {} });
+
+    let listen_addresses = loop {
+        tokio::select! {
+            _ = litep2p1.next_event() => {}
+            event = event_stream1.next() => {
+                let Some(IdentifyEvent::PeerIdentified { listen_addresses, .. }) = event else {
+                    panic!("identify stream ended");
+                };
+                break listen_addresses;
+            }
+        }
+    };
+    assert!(listen_addresses.len() > 40);
+    litep2p1.add_known_address(peer2, listen_addresses.into_iter());
+
+    attacker.abort();
+    while !std::matches!(
+        litep2p1.next_event().await,
+        Some(crate::Litep2pEvent::ConnectionClosed { .. })
+    ) {}
+
+    litep2p1.dial(&peer2).await.unwrap();
+    while !std::matches!(
+        litep2p1.next_event().await,
+        Some(
+            crate::Litep2pEvent::DialFailure { .. } | crate::Litep2pEvent::ListDialFailures { .. }
+        )
+    ) {}
+
+    assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 40);
+}
