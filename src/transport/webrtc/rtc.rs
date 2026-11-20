@@ -36,10 +36,53 @@ use str0m::{
 use std::{
     io,
     panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
+    sync::{Mutex, PoisonError},
+    time::{Duration, Instant},
 };
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::webrtc::rtc";
+
+/// Minimum interval between reports of `str0m` panics.
+const PANIC_REPORT_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Panics of all connections.
+static PANICS: Mutex<Panics> = Mutex::new(Panics::new());
+
+/// Rate-limits reports of `str0m` panics, which a remote peer may cause at will.
+#[derive(Debug)]
+struct Panics {
+    /// Panics since the last report.
+    count: usize,
+    /// Time of the last report.
+    last_report: Option<Instant>,
+}
+
+impl Panics {
+    const fn new() -> Self {
+        Self {
+            count: 0,
+            last_report: None,
+        }
+    }
+
+    /// Record a panic.
+    ///
+    /// Returns the number of panics since the last report if a report is due: on the first
+    /// panic, then at most once per interval.
+    fn record_at(&mut self, now: Instant) -> Option<usize> {
+        self.count += 1;
+
+        if self.last_report.is_some_and(|last_report| {
+            now.saturating_duration_since(last_report) < PANIC_REPORT_INTERVAL
+        }) {
+            return None;
+        }
+
+        self.last_report = Some(now);
+        Some(std::mem::take(&mut self.count))
+    }
+}
 
 /// Error returned in place of a `str0m` panic.
 fn panicked() -> RtcError {
@@ -61,7 +104,12 @@ pub(super) fn guard<T>(f: impl FnOnce() -> T) -> Result<T, RtcError> {
             .copied()
             .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
             .unwrap_or("unknown");
-        tracing::error!(target: LOG_TARGET, reason, "`str0m` panicked");
+        let panics =
+            PANICS.lock().unwrap_or_else(PoisonError::into_inner).record_at(Instant::now());
+        match panics {
+            Some(panics) => tracing::error!(target: LOG_TARGET, reason, panics, "`str0m` panicked"),
+            None => tracing::debug!(target: LOG_TARGET, reason, "`str0m` panicked"),
+        }
 
         panicked()
     })
@@ -197,7 +245,6 @@ impl DirectApi<'_> {
 mod tests {
     use super::*;
     use crate::transport::webrtc::certificate::DtlsCertificate;
-    use std::time::Instant;
     use str0m::channel::Reliability;
 
     fn rtc() -> Rtc {
@@ -219,6 +266,18 @@ mod tests {
             negotiated: None,
             protocol: String::new(),
         }
+    }
+
+    #[test]
+    fn panic_reports_are_rate_limited() {
+        let mut panics = Panics::new();
+        let start = Instant::now();
+
+        assert_eq!(panics.record_at(start), Some(1));
+        assert_eq!(panics.record_at(start), None);
+        assert_eq!(panics.record_at(start + PANIC_REPORT_INTERVAL / 2), None);
+        assert_eq!(panics.record_at(start + PANIC_REPORT_INTERVAL), Some(3));
+        assert_eq!(panics.record_at(start + PANIC_REPORT_INTERVAL), None);
     }
 
     #[test]
