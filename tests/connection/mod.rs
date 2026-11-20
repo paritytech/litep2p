@@ -297,6 +297,7 @@ async fn connection_timeout_tcp() {
     connection_timeout(
         Transport::Tcp(TcpConfig {
             listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
+            reuse_port: false,
             ..Default::default()
         }),
         address,
@@ -334,6 +335,7 @@ async fn connection_timeout_websocket() {
     connection_timeout(
         Transport::WebSocket(WebSocketConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/0/ws".parse().unwrap()],
+            reuse_port: false,
             ..Default::default()
         }),
         address,
