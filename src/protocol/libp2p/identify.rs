@@ -428,11 +428,26 @@ fn parse_listen_addresses(peer: PeerId, addresses: Vec<Vec<u8>>) -> Vec<Multiadd
     let mut listen_addresses = Vec::new();
 
     for address in addresses {
-        let Ok(address) = Multiaddr::try_from(address) else {
+        let Ok(mut address) = Multiaddr::try_from(address) else {
             continue;
         };
 
-        if !is_dialable(&address) {
+        if let Some(Protocol::P2p(peer_id)) = address.iter().last() {
+            if peer_id != peer.into() {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?address,
+                    "peer identified provided listen address with incorrect peer ID",
+                );
+                continue;
+            }
+            address.pop();
+        }
+
+        let nested_peer_id =
+            address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_)));
+        if nested_peer_id || !is_dialable(&address) {
             tracing::debug!(
                 target: LOG_TARGET,
                 ?peer,
@@ -442,19 +457,7 @@ fn parse_listen_addresses(peer: PeerId, addresses: Vec<Vec<u8>>) -> Vec<Multiadd
             continue;
         }
 
-        let address = match address.iter().last() {
-            Some(Protocol::P2p(peer_id)) if peer_id != peer.into() => {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?address,
-                    "peer identified provided listen address with incorrect peer ID",
-                );
-                continue;
-            }
-            Some(Protocol::P2p(_)) => address,
-            _ => address.with(Protocol::P2p(peer.into())),
-        };
+        let address = address.with(Protocol::P2p(peer.into()));
 
         if listen_addresses.contains(&address) {
             continue;

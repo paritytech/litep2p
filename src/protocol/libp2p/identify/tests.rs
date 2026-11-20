@@ -172,10 +172,17 @@ fn undialable_listen_addresses_are_dropped() {
         "/tcp/30333",
         "/dnsaddr/example.com",
     ]);
+    let peer = PeerId::random();
+    let other = PeerId::random();
+    addresses.extend(raw(&[
+        &format!("/ip4/1.1.1.1/tcp/30333/p2p/{other}/p2p-circuit"),
+        &format!("/ip4/1.1.1.1/tcp/30333/p2p/{other}/ws"),
+        &format!("/ip4/1.1.1.1/tcp/30333/p2p/{peer}/ws"),
+        &format!("/ip4/1.1.1.1/tcp/30333/p2p/{peer}/p2p/{peer}"),
+    ]));
     addresses.extend(raw(&dialable));
     addresses.push(vec![0xff, 0xff]);
 
-    let peer = PeerId::random();
     let expected: Vec<Multiaddr> = dialable
         .iter()
         .map(|address| address.parse::<Multiaddr>().unwrap().with(Protocol::P2p(peer.into())))
