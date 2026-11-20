@@ -490,70 +490,59 @@ fn local_addresses(public: Vec<Multiaddr>, listen: HashSet<Multiaddr>) -> Vec<Mu
 }
 
 fn parse_listen_addresses(peer: PeerId, addresses: Vec<Vec<u8>>) -> Vec<Multiaddr> {
-    let mut listen_addresses = Vec::new();
+    let mut seen = HashSet::new();
+    let mut per_host = HashMap::<Host, usize>::new();
 
-    for address in addresses {
-        let Ok(mut address) = Multiaddr::try_from(address) else {
-            continue;
-        };
-
-        if let Some(Protocol::P2p(peer_id)) = address.iter().last() {
-            if peer_id != peer.into() {
+    addresses
+        .into_iter()
+        .filter_map(|address| parse_listen_address(peer, address))
+        .filter(|address| seen.insert(address.clone()))
+        .filter(|address| {
+            let count = per_host.entry(Host::from(address)).or_default();
+            *count += 1;
+            if *count > MAX_ADDRESSES_PER_HOST {
                 tracing::debug!(
                     target: LOG_TARGET,
                     ?peer,
                     ?address,
-                    "peer identified provided listen address with incorrect peer ID",
+                    "peer identified provided too many listen addresses for one host",
                 );
-                continue;
+                return false;
             }
-            address.pop();
-        }
+            true
+        })
+        .take(MAX_LISTEN_ADDRESSES)
+        .collect()
+}
 
-        let nested_peer_id =
-            address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_)));
-        if nested_peer_id || !is_dialable(&address) {
+fn parse_listen_address(peer: PeerId, address: Vec<u8>) -> Option<Multiaddr> {
+    let mut address = Multiaddr::try_from(address).ok()?;
+
+    if let Some(Protocol::P2p(peer_id)) = address.iter().last() {
+        if peer_id != peer.into() {
             tracing::debug!(
                 target: LOG_TARGET,
                 ?peer,
                 ?address,
-                "peer identified provided undialable listen address",
+                "peer identified provided listen address with incorrect peer ID",
             );
-            continue;
+            return None;
         }
-
-        let address = address.with(Protocol::P2p(peer.into()));
-
-        if listen_addresses.contains(&address) {
-            continue;
-        }
-
-        let host = Host::from(&address);
-        if listen_addresses.iter().filter(|known| Host::from(*known) == host).count()
-            == MAX_ADDRESSES_PER_HOST
-        {
-            tracing::debug!(
-                target: LOG_TARGET,
-                ?peer,
-                ?address,
-                "peer identified provided too many listen addresses for one host",
-            );
-            continue;
-        }
-
-        if listen_addresses.len() == MAX_LISTEN_ADDRESSES {
-            tracing::debug!(
-                target: LOG_TARGET,
-                ?peer,
-                "peer identified provided too many listen addresses",
-            );
-            break;
-        }
-
-        listen_addresses.push(address);
+        address.pop();
     }
 
-    listen_addresses
+    let nested_peer_id = address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_)));
+    if nested_peer_id || !is_dialable(&address) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            ?address,
+            "peer identified provided undialable listen address",
+        );
+        return None;
+    }
+
+    Some(address.with(Protocol::P2p(peer.into())))
 }
 
 fn parse_observed_address(
@@ -592,7 +581,7 @@ fn parse_observed_address(
 ///
 /// DNS names share one host since a wildcard record can resolve any number of them to one IP,
 /// and IPv6 addresses share one host per /64 since a single machine can own the whole prefix.
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Hash)]
 enum Host {
     Ip(IpAddr),
     Dns,
