@@ -282,7 +282,9 @@ impl Kademlia {
         // Apart from the failing query, we need to fail all other pending queries for the peer
         // being disconnected.
         if let Some(PeerContext { pending_actions }) = self.peers.remove(&peer) {
-            pending_actions.into_iter().for_each(|(_, action)| {
+            pending_actions.into_iter().for_each(|(substream_id, action)| {
+                self.pending_substreams.remove(&substream_id);
+
                 // Don't report failure twice for the same `query_id` if it was already reported
                 // above. (We can still have other pending queries for the peer that
                 // need to be reported.)
