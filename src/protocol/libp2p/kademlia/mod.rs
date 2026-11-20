@@ -2225,4 +2225,49 @@ mod tests {
         }
         assert_eq!(routing_table_updates, vec![vec![responder_peer]]);
     }
+
+    #[tokio::test]
+    async fn undecodable_response_fails_query() {
+        let (mut kademlia, _context, _manager) =
+            make_kademlia_with(KademliaMode::Client, RemoteAddressMode::All);
+
+        let peer = PeerId::random();
+        let query = QueryId(0);
+        kademlia.engine.start_find_node(
+            query,
+            PeerId::random(),
+            VecDeque::from([KademliaPeer::new(
+                peer,
+                vec![],
+                ConnectionType::NotConnected,
+            )]),
+        );
+        match kademlia.engine.next_action() {
+            Some(QueryAction::SendMessage { peer: queried, .. }) => assert_eq!(queried, peer),
+            action => panic!("unexpected action: {action:?}"),
+        }
+
+        let ping = schema::kademlia::Message {
+            r#type: 5,
+            ..Default::default()
+        };
+        assert!(kademlia
+            .on_message_received(
+                peer,
+                Some(query),
+                BytesMut::from(&prost::Message::encode_to_vec(&ping)[..]),
+                Substream::new_mock(
+                    peer,
+                    SubstreamId::from(0usize),
+                    Box::new(MockSubstream::new()),
+                ),
+            )
+            .await
+            .is_err());
+
+        match kademlia.engine.next_action() {
+            Some(QueryAction::QueryFailed { query: failed }) => assert_eq!(failed, query),
+            action => panic!("unexpected action: {action:?}"),
+        }
+    }
 }
