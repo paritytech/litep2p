@@ -210,3 +210,13 @@ fn listen_addresses_are_limited_per_host() {
     let parsed = parse_listen_addresses(PeerId::random(), raw(&addresses));
     assert_eq!(parsed.len(), 2 * MAX_ADDRESSES_PER_HOST + 1);
 }
+
+#[test]
+fn listen_addresses_are_limited() {
+    let addresses: Vec<String> =
+        (1..=100).map(|host| format!("/ip4/10.0.0.{host}/tcp/30333")).collect();
+    let addresses: Vec<&str> = addresses.iter().map(String::as_str).collect();
+
+    let parsed = parse_listen_addresses(PeerId::random(), raw(&addresses));
+    assert_eq!(parsed.len(), MAX_LISTEN_ADDRESSES);
+}

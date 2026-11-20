@@ -63,6 +63,9 @@ const DEFAULT_AGENT: &str = "litep2p/1.0.0";
 // TODO: https://github.com/paritytech/litep2p/issues/334 what is the max size?
 const IDENTIFY_PAYLOAD_SIZE: usize = 4096;
 
+/// Maximum number of listen addresses accepted from a peer.
+const MAX_LISTEN_ADDRESSES: usize = 30;
+
 /// Bounds how many of our dials a peer can direct at a single host.
 const MAX_ADDRESSES_PER_HOST: usize = 4;
 
@@ -483,6 +486,15 @@ fn parse_listen_addresses(peer: PeerId, addresses: Vec<Vec<u8>>) -> Vec<Multiadd
                 "peer identified provided too many listen addresses for one host",
             );
             continue;
+        }
+
+        if listen_addresses.len() == MAX_LISTEN_ADDRESSES {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                "peer identified provided too many listen addresses",
+            );
+            break;
         }
 
         listen_addresses.push(address);
