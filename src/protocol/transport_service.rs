@@ -506,26 +506,29 @@ impl TransportService {
             return;
         }
 
-        match context.secondary.take() {
-            Some(handle) if handle.connection_id() == &connection_id => {
-                tracing::trace!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?connection_id,
-                    protocol = %self.protocol,
-                    "secondary connection closed",
-                );
-            }
-            connection_state => {
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    ?peer,
-                    ?connection_id,
-                    ?connection_state,
-                    protocol = %self.protocol,
-                    "connection closed but it doesn't exist",
-                );
-            }
+        if context
+            .secondary
+            .as_ref()
+            .is_some_and(|handle| handle.connection_id() == &connection_id)
+        {
+            context.secondary = None;
+
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?peer,
+                ?connection_id,
+                protocol = %self.protocol,
+                "secondary connection closed",
+            );
+        } else {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                ?connection_id,
+                connection_state = ?context.secondary,
+                protocol = %self.protocol,
+                "connection closed but it doesn't exist",
+            );
         }
     }
 
@@ -963,6 +966,63 @@ mod tests {
             &ConnectionId::from(1usize)
         );
         assert!(cmd_rx3.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn tertiary_connection_closing_keeps_secondary() {
+        let (mut service, sender, _) = transport_service();
+        let peer = PeerId::random();
+        let mut receivers = Vec::new();
+
+        for id in 0..3usize {
+            let (cmd_tx, cmd_rx) = channel(64);
+            receivers.push(cmd_rx);
+            sender
+                .send(InnerTransportEvent::ConnectionEstablished {
+                    peer,
+                    connection: ConnectionId::from(id),
+                    endpoint: Endpoint::dialer(Multiaddr::empty(), ConnectionId::from(id)),
+                    sender: ConnectionHandle::new(ConnectionId::from(id), cmd_tx),
+                })
+                .await
+                .unwrap();
+        }
+        assert!(std::matches!(
+            service.next().await,
+            Some(TransportEvent::ConnectionEstablished { .. })
+        ));
+
+        for id in [2usize, 0] {
+            sender
+                .send(InnerTransportEvent::ConnectionClosed {
+                    peer,
+                    connection: ConnectionId::from(id),
+                })
+                .await
+                .unwrap();
+        }
+        futures::future::poll_fn(|cx| match service.poll_next_unpin(cx) {
+            std::task::Poll::Ready(_) => panic!("didn't expect event from `TransportService`"),
+            std::task::Poll::Pending => std::task::Poll::Ready(()),
+        })
+        .await;
+
+        let context = service.connections.get(&peer).unwrap();
+        assert_eq!(context.primary.connection_id(), &ConnectionId::from(1usize));
+        assert!(context.secondary.is_none());
+
+        sender
+            .send(InnerTransportEvent::ConnectionClosed {
+                peer,
+                connection: ConnectionId::from(1usize),
+            })
+            .await
+            .unwrap();
+        assert!(std::matches!(
+            service.next().await,
+            Some(TransportEvent::ConnectionClosed { peer: closed }) if closed == peer
+        ));
+        assert!(!service.connections.contains_key(&peer));
     }
 
     #[tokio::test]
