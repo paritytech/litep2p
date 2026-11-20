@@ -40,6 +40,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use std::{
     collections::{HashMap, HashSet},
+    net::IpAddr,
     time::Duration,
 };
 
@@ -61,6 +62,9 @@ const DEFAULT_AGENT: &str = "litep2p/1.0.0";
 /// Size for `/ipfs/ping/1.0.0` payloads.
 // TODO: https://github.com/paritytech/litep2p/issues/334 what is the max size?
 const IDENTIFY_PAYLOAD_SIZE: usize = 4096;
+
+/// Bounds how many of our dials a peer can direct at a single host.
+const MAX_ADDRESSES_PER_HOST: usize = 4;
 
 mod identify_schema {
     include!(concat!(env!("OUT_DIR"), "/identify.rs"));
@@ -464,12 +468,46 @@ fn parse_listen_addresses(peer: PeerId, addresses: Vec<Vec<u8>>) -> Vec<Multiadd
             _ => address.with(Protocol::P2p(peer.into())),
         };
 
-        if !listen_addresses.contains(&address) {
-            listen_addresses.push(address);
+        if listen_addresses.contains(&address) {
+            continue;
         }
+
+        let host = Host::from(&address);
+        if listen_addresses.iter().filter(|known| Host::from(*known) == host).count()
+            == MAX_ADDRESSES_PER_HOST
+        {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                ?address,
+                "peer identified provided too many listen addresses for one host",
+            );
+            continue;
+        }
+
+        listen_addresses.push(address);
     }
 
     listen_addresses
+}
+
+/// Host of a dialable address.
+///
+/// DNS names share one host since a wildcard record can resolve any number of them to one IP.
+#[derive(PartialEq, Eq)]
+enum Host {
+    Ip(IpAddr),
+    Dns,
+}
+
+impl From<&Multiaddr> for Host {
+    fn from(address: &Multiaddr) -> Self {
+        match address.iter().next() {
+            Some(Protocol::Ip4(ip)) => Host::Ip(ip.into()),
+            Some(Protocol::Ip6(ip)) => Host::Ip(ip.to_ipv4_mapped().map_or(ip.into(), Into::into)),
+            _ => Host::Dns,
+        }
+    }
 }
 
 fn is_dialable(address: &Multiaddr) -> bool {

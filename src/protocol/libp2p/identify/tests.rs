@@ -87,7 +87,7 @@ async fn update_identify_addresses() {
 }
 
 #[tokio::test]
-async fn listen_addresses_direct_dials_at_third_party() {
+async fn listen_addresses_bound_dials_at_third_party() {
     let accepted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut victim_ports = Vec::new();
     for _ in 0..40 {
@@ -125,7 +125,6 @@ async fn listen_addresses_direct_dials_at_third_party() {
             }
         }
     };
-    assert!(listen_addresses.len() > 40);
     litep2p1.add_known_address(peer2, listen_addresses.into_iter());
 
     attacker.abort();
@@ -142,7 +141,10 @@ async fn listen_addresses_direct_dials_at_third_party() {
         )
     ) {}
 
-    assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 40);
+    assert_eq!(
+        accepted.load(std::sync::atomic::Ordering::SeqCst),
+        MAX_ADDRESSES_PER_HOST
+    );
 }
 
 fn raw(addresses: &[&str]) -> Vec<Vec<u8>> {
@@ -189,4 +191,22 @@ fn listen_addresses_are_deduplicated() {
 
     let addresses = vec![address.to_vec(), with_peer.to_vec(), address.to_vec()];
     assert_eq!(parse_listen_addresses(peer, addresses), vec![with_peer]);
+}
+
+#[test]
+fn listen_addresses_are_limited_per_host() {
+    let addresses: Vec<String> = (1..=10)
+        .flat_map(|port| {
+            [
+                format!("/ip4/1.1.1.1/tcp/{port}"),
+                format!("/ip6/::ffff:1.1.1.1/tcp/{port}"),
+                format!("/dns/{port}.example.com/tcp/30333"),
+            ]
+        })
+        .chain(["/ip4/2.2.2.2/tcp/30333".to_string()])
+        .collect();
+    let addresses: Vec<&str> = addresses.iter().map(String::as_str).collect();
+
+    let parsed = parse_listen_addresses(PeerId::random(), raw(&addresses));
+    assert_eq!(parsed.len(), 2 * MAX_ADDRESSES_PER_HOST + 1);
 }
