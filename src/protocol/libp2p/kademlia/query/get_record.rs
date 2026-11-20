@@ -177,7 +177,14 @@ impl GetRecordContext {
         };
 
         if let Some(record) = record {
-            if !record.is_expired(std::time::Instant::now()) {
+            if record.key != self.config.target.clone().into_preimage() {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    query = ?self.config.query,
+                    peer = ?peer.peer,
+                    "`GetRecordContext`: ignoring record for another key",
+                );
+            } else if !record.is_expired(std::time::Instant::now()) {
                 self.records.push_back(PeerRecord {
                     peer: peer.peer,
                     record,
