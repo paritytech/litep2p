@@ -614,6 +614,17 @@ impl Kademlia {
                 }
             }
             KademliaMessage::AddProvider { key, mut providers } => {
+                if let Some(query_id) = query_id {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        query = ?query_id,
+                        "`ADD_PROVIDER` received as a query response",
+                    );
+                    self.engine.register_response_failure(query_id, peer);
+                    return Ok(());
+                }
+
                 tracing::trace!(
                     target: LOG_TARGET,
                     ?peer,
