@@ -31,7 +31,7 @@ use crate::{
     PeerId,
 };
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::get_record";
@@ -100,6 +100,9 @@ pub struct GetRecordContext {
     /// Candidates.
     pub candidates: BTreeMap<Distance, KademliaPeer>,
 
+    /// Distances of the `replication_factor` closest peers that responded.
+    responses: BTreeSet<Distance>,
+
     /// Number of found records.
     pub found_records: usize,
 
@@ -130,6 +133,7 @@ impl GetRecordContext {
             candidates,
             pending: HashMap::new(),
             queried: HashSet::new(),
+            responses: BTreeSet::new(),
             found_records: if local_record { 1 } else { 0 },
             records: VecDeque::new(),
         }
@@ -190,6 +194,11 @@ impl GetRecordContext {
         // Add the queried peer to `queried` and all new peers which haven't been
         // queried to `candidates`
         self.queried.insert(peer.peer);
+
+        self.responses.insert(self.config.target.distance(&peer.key));
+        if self.responses.len() > self.config.replication_factor {
+            self.responses.pop_last();
+        }
 
         let to_query_candidate = peers.into_iter().filter_map(|peer| {
             // Peer already produced a response.
@@ -273,6 +282,24 @@ impl GetRecordContext {
         self.pending.is_empty() && self.candidates.is_empty()
     }
 
+    /// Check if no known peer is closer than the `replication_factor` closest responders.
+    fn closest_peers_responded(&self) -> bool {
+        if self.responses.len() < self.config.replication_factor {
+            return false;
+        }
+        let Some(furthest) = self.responses.last() else {
+            return false;
+        };
+
+        self.candidates
+            .first_key_value()
+            .is_none_or(|(distance, _)| distance > furthest)
+            && self
+                .pending
+                .values()
+                .all(|peer| self.config.target.distance(&peer.key) > *furthest)
+    }
+
     /// Get next action for a `GET_VALUE` query.
     pub fn next_action(&mut self) -> Option<QueryAction> {
         // Drain the records first.
@@ -289,7 +316,7 @@ impl GetRecordContext {
 
         // If we cannot make progress, return the final result.
         // A query failed when we are not able to identify one single record.
-        if self.is_done() {
+        if self.is_done() || self.closest_peers_responded() {
             return if known_records == 0 {
                 Some(QueryAction::QueryFailed {
                     query: self.config.query,
@@ -611,5 +638,43 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn stops_when_closest_peers_responded() {
+        let config = GetRecordConfig {
+            replication_factor: 2,
+            ..default_config()
+        };
+
+        let mut peers = (0..10).map(|_| PeerId::random()).collect::<Vec<_>>();
+        peers.sort_by_key(|peer| Key::from(*peer).distance(&config.target));
+
+        let in_peers = [peers[1], peers[2]].iter().map(|peer| peer_to_kad(*peer)).collect();
+        let mut context = GetRecordContext::new(config, in_peers, false);
+
+        for _ in 0..2 {
+            assert!(matches!(
+                context.next_action(),
+                Some(QueryAction::SendMessage { .. })
+            ));
+        }
+
+        let closer_peers = peers[3..].iter().map(|peer| peer_to_kad(*peer)).collect::<Vec<_>>();
+        context.register_response(peers[1], None, closer_peers);
+        context.register_response(peers[2], None, vec![peer_to_kad(peers[0])]);
+
+        // A candidate closer than the furthest responder is still queried.
+        match context.next_action() {
+            Some(QueryAction::SendMessage { peer, .. }) => assert_eq!(peer, peers[0]),
+            event => panic!("Unexpected event {event:?}"),
+        }
+        context.register_response(peers[0], None, vec![]);
+
+        assert!(matches!(
+            context.next_action(),
+            Some(QueryAction::QueryFailed { .. })
+        ));
+        assert_eq!(context.candidates.len(), 7);
     }
 }

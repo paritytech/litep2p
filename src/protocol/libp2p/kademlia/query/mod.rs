@@ -473,6 +473,7 @@ impl QueryEngine {
         let target = Key::new(key);
         let config = GetProvidersConfig {
             local_peer_id: self.local_peer_id,
+            replication_factor: self.replication_factor,
             parallelism_factor: self.parallelism_factor,
             query: query_id,
             target,

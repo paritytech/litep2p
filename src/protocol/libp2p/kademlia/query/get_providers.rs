@@ -31,7 +31,7 @@ use crate::{
     PeerId,
 };
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::get_providers";
@@ -41,6 +41,9 @@ const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::get_providers";
 pub struct GetProvidersConfig {
     /// Local peer ID.
     pub local_peer_id: PeerId,
+
+    /// Replication factor.
+    pub replication_factor: usize,
 
     /// Parallelism factor.
     pub parallelism_factor: usize,
@@ -75,6 +78,9 @@ pub struct GetProvidersContext {
     /// Candidates.
     pub candidates: BTreeMap<Distance, KademliaPeer>,
 
+    /// Distances of the `replication_factor` closest peers that responded.
+    responses: BTreeSet<Distance>,
+
     /// Found providers.
     pub found_providers: Vec<KademliaPeer>,
 }
@@ -98,6 +104,7 @@ impl GetProvidersContext {
             candidates,
             pending: HashMap::new(),
             queried: HashSet::new(),
+            responses: BTreeSet::new(),
             found_providers: Vec::new(),
         }
     }
@@ -184,6 +191,11 @@ impl GetProvidersContext {
         // queried to `candidates`
         self.queried.insert(peer.peer);
 
+        self.responses.insert(self.config.target.distance(&peer.key));
+        if self.responses.len() > self.config.replication_factor {
+            self.responses.pop_last();
+        }
+
         let to_query_candidate = closer_peers.into_iter().filter_map(|peer| {
             // Peer already produced a response.
             if self.queried.contains(&peer.peer) {
@@ -266,9 +278,27 @@ impl GetProvidersContext {
         self.pending.is_empty() && self.candidates.is_empty()
     }
 
+    /// Check if no known peer is closer than the `replication_factor` closest responders.
+    fn closest_peers_responded(&self) -> bool {
+        if self.responses.len() < self.config.replication_factor {
+            return false;
+        }
+        let Some(furthest) = self.responses.last() else {
+            return false;
+        };
+
+        self.candidates
+            .first_key_value()
+            .is_none_or(|(distance, _)| distance > furthest)
+            && self
+                .pending
+                .values()
+                .all(|peer| self.config.target.distance(&peer.key) > *furthest)
+    }
+
     /// Get next action for a `GET_PROVIDERS` query.
     pub fn next_action(&mut self) -> Option<QueryAction> {
-        if self.is_done() {
+        if self.is_done() || self.closest_peers_responded() {
             // If we cannot make progress, return the final result.
             // A query failed when we are not able to find any providers.
             if self.found_providers.is_empty() {
@@ -299,6 +329,7 @@ mod tests {
     fn default_config() -> GetProvidersConfig {
         GetProvidersConfig {
             local_peer_id: PeerId::random(),
+            replication_factor: 20,
             parallelism_factor: 3,
             query: QueryId(0),
             target: Key::new(vec![1, 2, 3].into()),
@@ -473,6 +504,44 @@ mod tests {
         assert!(found_providers.contains(&provider2));
         assert!(found_providers.contains(&provider3));
         assert!(found_providers.contains(&provider4));
+    }
+
+    #[test]
+    fn stops_when_closest_peers_responded() {
+        let config = GetProvidersConfig {
+            replication_factor: 2,
+            ..default_config()
+        };
+
+        let mut peers = (0..10).map(|_| PeerId::random()).collect::<Vec<_>>();
+        peers.sort_by_key(|peer| Key::from(*peer).distance(&config.target));
+
+        let candidates = [peers[1], peers[2]].iter().map(|peer| peer_to_kad(*peer)).collect();
+        let mut context = GetProvidersContext::new(config, candidates);
+
+        for _ in 0..2 {
+            assert!(matches!(
+                context.next_action(),
+                Some(QueryAction::SendMessage { .. })
+            ));
+        }
+
+        let closer_peers = peers[3..].iter().map(|peer| peer_to_kad(*peer)).collect::<Vec<_>>();
+        context.register_response(peers[1], vec![], closer_peers);
+        context.register_response(peers[2], vec![], vec![peer_to_kad(peers[0])]);
+
+        // A candidate closer than the furthest responder is still queried.
+        match context.next_action() {
+            Some(QueryAction::SendMessage { peer, .. }) => assert_eq!(peer, peers[0]),
+            event => panic!("Unexpected event {event:?}"),
+        }
+        context.register_response(peers[0], vec![], vec![]);
+
+        assert!(matches!(
+            context.next_action(),
+            Some(QueryAction::QueryFailed { .. })
+        ));
+        assert_eq!(context.candidates.len(), 7);
     }
 
     #[test]
