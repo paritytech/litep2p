@@ -26,7 +26,7 @@ use crate::{
     error::{Error, SubstreamError},
     protocol::{Direction, TransportEvent, TransportService},
     substream::Substream,
-    transport::Endpoint,
+    transport::{manager::address::is_global_multiaddr, Endpoint},
     types::{protocol::ProtocolName, SubstreamId},
     utils::futures_stream::FuturesStream,
     PeerId, DEFAULT_CHANNEL_SIZE,
@@ -432,18 +432,20 @@ impl Identify {
     }
 }
 
-/// Public addresses first, then listen addresses, each once and ending with the local peer ID.
+/// Public addresses first, then global and other listen addresses, each once and ending with the
+/// local peer ID.
 fn local_addresses(public: Vec<Multiaddr>, listen: HashSet<Multiaddr>) -> Vec<Multiaddr> {
+    let mut listen: Vec<_> = listen
+        .into_iter()
+        .filter(|address| {
+            std::matches!(address.iter().last(), Some(Protocol::P2p(_)))
+                && !public.contains(address)
+        })
+        .collect();
+    listen.sort_by_key(|address| !is_global_multiaddr(address));
+
     let mut addresses = public;
-
-    for address in listen {
-        if std::matches!(address.iter().last(), Some(Protocol::P2p(_)))
-            && !addresses.contains(&address)
-        {
-            addresses.push(address);
-        }
-    }
-
+    addresses.extend(listen);
     addresses
 }
 

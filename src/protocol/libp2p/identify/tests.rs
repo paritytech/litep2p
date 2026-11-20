@@ -290,6 +290,19 @@ fn local_addresses_are_sent_once_public_first() {
 }
 
 #[test]
+fn global_listen_addresses_are_sent_first() {
+    let peer = PeerId::random();
+    let global: Multiaddr = format!("/ip4/1.1.1.1/tcp/30333/p2p/{peer}").parse().unwrap();
+    let listen: HashSet<Multiaddr> = (1..=40)
+        .map(|host| format!("/ip4/10.0.0.{host}/tcp/30333/p2p/{peer}"))
+        .chain([format!("/ip6/::1/tcp/30333/p2p/{peer}"), global.to_string()])
+        .map(|address| address.parse().unwrap())
+        .collect();
+
+    assert_eq!(local_addresses(Vec::new(), listen)[0], global);
+}
+
+#[test]
 fn listen_addresses_are_limited() {
     let addresses: Vec<String> =
         (1..=100).map(|host| format!("/ip4/10.0.0.{host}/tcp/30333")).collect();
