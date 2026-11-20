@@ -259,16 +259,16 @@ impl Identify {
             }
         };
 
-        let mut listen_addr: HashSet<_> =
-            self.service.listen_addresses().into_iter().map(|addr| addr.to_vec()).collect();
-        listen_addr
-            .extend(self.service.public_addresses().inner.read().iter().map(|addr| addr.to_vec()));
+        let listen_addrs = local_addresses(
+            self.service.public_addresses().get_addresses(),
+            self.service.listen_addresses(),
+        );
 
         let identify = identify_schema::Identify {
             protocol_version: Some(self.protocol_version.clone()),
             agent_version: Some(self.user_agent.clone()),
             public_key: Some(self.public.to_protobuf_encoding()),
-            listen_addrs: listen_addr.into_iter().collect(),
+            listen_addrs: listen_addrs.iter().map(Multiaddr::to_vec).collect(),
             observed_addr,
             protocols: self
                 .service
@@ -422,6 +422,21 @@ impl Identify {
             }
         }
     }
+}
+
+/// Public addresses first, then listen addresses, each once and ending with the local peer ID.
+fn local_addresses(public: Vec<Multiaddr>, listen: HashSet<Multiaddr>) -> Vec<Multiaddr> {
+    let mut addresses = public;
+
+    for address in listen {
+        if std::matches!(address.iter().last(), Some(Protocol::P2p(_)))
+            && !addresses.contains(&address)
+        {
+            addresses.push(address);
+        }
+    }
+
+    addresses
 }
 
 fn parse_listen_addresses(peer: PeerId, addresses: Vec<Vec<u8>>) -> Vec<Multiaddr> {

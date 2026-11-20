@@ -231,6 +231,32 @@ fn ipv6_listen_addresses_are_limited_per_prefix() {
 }
 
 #[test]
+fn local_addresses_are_sent_once_public_first() {
+    let peer = PeerId::random();
+    let public: Multiaddr = "/ip4/1.1.1.1/tcp/30333".parse().unwrap();
+    let public = public.with(Protocol::P2p(peer.into()));
+
+    let listen: HashSet<Multiaddr> = (1..=40)
+        .map(|host| format!("/ip4/10.0.0.{host}/tcp/30333"))
+        .chain(["/ip4/1.1.1.1/tcp/30333".to_string()])
+        .flat_map(|address| {
+            let address: Multiaddr = address.parse().unwrap();
+            [address.clone(), address.with(Protocol::P2p(peer.into()))]
+        })
+        .collect();
+
+    let addresses = local_addresses(vec![public.clone()], listen);
+    assert_eq!(addresses.len(), 41);
+    assert_eq!(addresses[0], public);
+    assert!(addresses
+        .iter()
+        .all(|address| std::matches!(address.iter().last(), Some(Protocol::P2p(_)))));
+
+    let addresses = addresses.iter().map(Multiaddr::to_vec).collect();
+    assert_eq!(parse_listen_addresses(peer, addresses)[0], public);
+}
+
+#[test]
 fn listen_addresses_are_limited() {
     let addresses: Vec<String> =
         (1..=100).map(|host| format!("/ip4/10.0.0.{host}/tcp/30333")).collect();
