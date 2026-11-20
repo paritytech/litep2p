@@ -25,13 +25,16 @@ use crate::{
         message::KademliaMessage,
         query::{QueryAction, QueryId},
         record::{ContentProvider, Key as RecordKey},
-        types::{Distance, KademliaPeer, Key},
+        types::{ConnectionType, Distance, KademliaPeer, Key, MAX_ADDRESSES},
     },
     types::multiaddr::Multiaddr,
     PeerId,
 };
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::{
+    cmp::Reverse,
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::kademlia::query::get_providers";
@@ -75,8 +78,8 @@ pub struct GetProvidersContext {
     /// Candidates.
     pub candidates: BTreeMap<Distance, KademliaPeer>,
 
-    /// Found providers.
-    pub found_providers: Vec<KademliaPeer>,
+    /// Found providers, with the number of responders that reported each address.
+    pub found_providers: HashMap<PeerId, HashMap<Multiaddr, usize>>,
 }
 
 impl GetProvidersContext {
@@ -98,14 +101,23 @@ impl GetProvidersContext {
             candidates,
             pending: HashMap::new(),
             queried: HashSet::new(),
-            found_providers: Vec::new(),
+            found_providers: HashMap::new(),
         }
     }
 
     /// Get the found providers.
     pub fn found_providers(self) -> Vec<ContentProvider> {
+        let found_providers = self.found_providers.into_iter().map(|(peer, addresses)| {
+            let mut addresses = addresses.into_iter().collect::<Vec<_>>();
+            addresses.sort_unstable_by_key(|(_, responders)| Reverse(*responders));
+            let addresses =
+                addresses.into_iter().take(MAX_ADDRESSES).map(|(address, _)| address).collect();
+
+            KademliaPeer::new(peer, addresses, ConnectionType::NotConnected)
+        });
+
         Self::merge_and_sort_providers(
-            self.config.known_providers.into_iter().chain(self.found_providers),
+            self.config.known_providers.into_iter().chain(found_providers),
             self.config.target,
         )
     }
@@ -178,7 +190,17 @@ impl GetProvidersContext {
             return None;
         };
 
-        self.found_providers.extend(providers);
+        let mut reported = HashSet::new();
+        for provider in providers {
+            if !reported.insert(provider.peer) {
+                continue;
+            }
+
+            let addresses = self.found_providers.entry(provider.peer).or_default();
+            for address in provider.addresses() {
+                *addresses.entry(address).or_default() += 1;
+            }
+        }
 
         // Add the queried peer to `queried` and all new peers which haven't been
         // queried to `candidates`
@@ -293,7 +315,6 @@ impl GetProvidersContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::libp2p::kademlia::types::{ConnectionType, MAX_ADDRESSES};
     use multiaddr::multiaddr;
 
     fn default_config() -> GetProvidersConfig {
@@ -432,14 +453,14 @@ mod tests {
         context.register_response(peer_b, providers, candidates);
         assert_eq!(context.pending.len(), 1);
         assert_eq!(context.queried.len(), 2);
-        assert_eq!(context.found_providers.len(), 4);
+        assert_eq!(context.found_providers.len(), 3);
         assert_eq!(context.candidates.len(), 1);
 
         // Peer C fails.
         context.register_response_failure(peer_c);
         assert!(context.pending.is_empty());
         assert_eq!(context.queried.len(), 3);
-        assert_eq!(context.found_providers.len(), 4);
+        assert_eq!(context.found_providers.len(), 3);
 
         // Drain the last candidate.
         let event = context.next_action().unwrap();
