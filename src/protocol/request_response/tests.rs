@@ -557,3 +557,25 @@ async fn request_over_replaced_primary_connection_fails() {
         event => panic!("unexpected event: {event:?}"),
     }
 }
+
+#[tokio::test]
+async fn yamux_open_on_closed_connection_is_connection_closed() {
+    use crate::{
+        protocol::Direction,
+        yamux::{Config, Connection, Control, Mode},
+    };
+    use tokio_util::compat::TokioAsyncReadCompatExt;
+
+    let (local, _remote) = tokio::io::duplex(1024);
+    let (mut control, connection) = Control::new(Connection::new(
+        local.compat(),
+        Config::default(),
+        Mode::Client,
+    ));
+    drop(connection);
+
+    let error = control.open_stream().await.unwrap_err();
+    let error = SubstreamError::YamuxError(error, Direction::Outbound(SubstreamId::from(0usize)));
+
+    assert_eq!(RejectReason::from(error), RejectReason::ConnectionClosed);
+}

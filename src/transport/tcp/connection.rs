@@ -787,6 +787,7 @@ mod tests {
             manager::{InboundProtocol, ProtocolContext, TransportManagerEvent},
             tcp::TcpTransport,
         },
+        yamux::MAX_ACK_BACKLOG,
     };
 
     use super::*;
@@ -929,6 +930,136 @@ mod tests {
                 assert_eq!(closed_connection, connection_id);
             }
             event => panic!("protocol was not notified about the closed connection: {event:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn substream_opens_beyond_ack_backlog_complete() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
+
+        let (local, remote) = negotiated_pair().await;
+        let peer = local.peer;
+
+        let (mgr_tx, _mgr_rx) = channel(64);
+        let (protocol_tx, mut protocol_rx) = channel(1024);
+        let mut protocol_set = ProtocolSet::new(
+            local.endpoint.connection_id(),
+            mgr_tx,
+            Default::default(),
+            HashMap::from_iter([(
+                ProtocolName::from("/proto/1"),
+                ProtocolContext {
+                    tx: protocol_tx,
+                    codec: ProtocolCodec::Identity(32),
+                    fallback_names: Vec::new(),
+                    keep_alive: SubstreamKeepAlive::Yes,
+                    inbound: InboundProtocol::Accept,
+                },
+            )])
+            .into(),
+        );
+        protocol_set.report_connection_established(peer, local.endpoint.clone()).await;
+        let mut handle = match protocol_rx.recv().await.unwrap() {
+            InnerTransportEvent::ConnectionEstablished { sender, .. } => sender,
+            event => panic!("unexpected event: {event:?}"),
+        };
+        let connection = TcpConnection::new(
+            local,
+            protocol_set,
+            BandwidthSink::new(),
+            Default::default(),
+        );
+        tokio::spawn(connection.start());
+
+        let NegotiatedConnection {
+            connection: mut remote_connection,
+            control: mut remote_control,
+            ..
+        } = remote;
+        let (inbound_tx, mut inbound_rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Some(Ok(stream)) = remote_connection.next().await {
+                if inbound_tx.send(stream).is_err() {
+                    break;
+                }
+            }
+        });
+        let answer = |stream: crate::yamux::Stream| {
+            tokio::spawn(async move {
+                let _io = listener_select_proto(stream, vec!["/proto/1"]).await;
+                futures::future::pending::<()>().await
+            });
+        };
+
+        let mut open_substream = |substream_id: usize| {
+            let permit = handle.try_get_permit().unwrap();
+            handle
+                .open_substream(
+                    ProtocolName::from("/proto/1"),
+                    Vec::new(),
+                    SubstreamId::from(substream_id),
+                    permit,
+                    SubstreamKeepAlive::Yes,
+                )
+                .unwrap();
+        };
+
+        // The remote withholds the ACK of every stream until the local ACK backlog is full.
+        for substream_id in 0..MAX_ACK_BACKLOG {
+            open_substream(substream_id);
+            tokio::task::yield_now().await;
+        }
+        let mut withheld = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while withheld.len() < MAX_ACK_BACKLOG {
+                withheld.push(inbound_rx.recv().await.unwrap());
+            }
+        })
+        .await
+        .expect("streams to reach the remote");
+
+        open_substream(MAX_ACK_BACKLOG);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), inbound_rx.recv())
+                .await
+                .is_err(),
+            "open beyond the ACK backlog reached the remote",
+        );
+
+        withheld.into_iter().for_each(answer);
+        tokio::spawn(async move {
+            while let Some(stream) = inbound_rx.recv().await {
+                answer(stream);
+            }
+        });
+
+        let mut outbound = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while outbound.len() <= MAX_ACK_BACKLOG {
+                match protocol_rx.recv().await.unwrap() {
+                    InnerTransportEvent::SubstreamOpened { substream, .. } =>
+                        outbound.push(substream),
+                    event => panic!("unexpected event: {event:?}"),
+                }
+            }
+        })
+        .await
+        .expect("substreams to open");
+
+        // The connection still accepts inbound substreams.
+        let _io = tokio::time::timeout(Duration::from_secs(5), async {
+            let stream = remote_control.open_stream().await.unwrap();
+            dialer_select_proto(stream, vec!["/proto/1"], Version::V1).await.unwrap()
+        })
+        .await
+        .expect("inbound substream to negotiate");
+
+        match tokio::time::timeout(Duration::from_secs(5), protocol_rx.recv()).await {
+            Ok(Some(InnerTransportEvent::SubstreamOpened { direction, .. })) =>
+                assert_eq!(direction, Direction::Inbound),
+            event => panic!("unexpected event: {event:?}"),
         }
     }
 

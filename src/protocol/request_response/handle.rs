@@ -96,6 +96,8 @@ impl From<SubstreamError> for RejectReason {
         match error {
             SubstreamError::ConnectionClosed => RejectReason::ConnectionClosed,
             SubstreamError::IoError(ErrorKind::NotConnected) => RejectReason::ConnectionClosed,
+            SubstreamError::YamuxError(crate::yamux::ConnectionError::Closed, _) =>
+                RejectReason::ConnectionClosed,
             SubstreamError::YamuxError(crate::yamux::ConnectionError::Io(error), _)
                 if error.kind() == ErrorKind::NotConnected =>
                 RejectReason::ConnectionClosed,
