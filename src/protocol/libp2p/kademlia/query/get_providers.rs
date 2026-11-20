@@ -581,4 +581,39 @@ mod tests {
         assert_eq!(found_providers.len(), 1);
         assert_eq!(found_providers[0].addresses.len(), MAX_ADDRESSES);
     }
+
+    #[test]
+    fn first_responder_cannot_crowd_out_provider_addresses() {
+        let peers = (0..3).map(|_| PeerId::random()).collect::<Vec<_>>();
+        let mut context = GetProvidersContext::new(
+            default_config(),
+            peers.iter().map(|peer| peer_to_kad(*peer)).collect(),
+        );
+        for _ in 0..3 {
+            context.next_action().unwrap();
+        }
+
+        let provider = PeerId::random();
+        let bogus = (0..2 * MAX_ADDRESSES as u16)
+            .map(|port| multiaddr!(Ip4([1, 1, 1, 1]), Tcp(port)))
+            .collect();
+        context.register_response(
+            peers[0],
+            vec![peer_to_kad_with_addresses(provider, bogus)],
+            vec![],
+        );
+
+        let address = multiaddr!(Ip4([8, 8, 8, 8]), Tcp(30333u16));
+        for peer in &peers[1..] {
+            context.register_response(
+                *peer,
+                vec![peer_to_kad_with_addresses(provider, vec![address.clone()])],
+                vec![],
+            );
+        }
+
+        let found_providers = context.found_providers();
+        assert_eq!(found_providers.len(), 1);
+        assert!(found_providers[0].addresses.contains(&address));
+    }
 }
