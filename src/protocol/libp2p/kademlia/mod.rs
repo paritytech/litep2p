@@ -2225,4 +2225,87 @@ mod tests {
         }
         assert_eq!(routing_table_updates, vec![vec![responder_peer]]);
     }
+
+    #[tokio::test]
+    async fn stale_substream_open_failure_after_disconnect_ignored() {
+        let (mut kademlia, context, _manager) = make_kademlia();
+        let peer = PeerId::random();
+        let address = Multiaddr::from_str("/ip4/1.1.1.1/tcp/30333").unwrap();
+
+        let (connection_tx, mut connection_rx) = channel(64);
+        let connection_id = ConnectionId::from(0usize);
+        context
+            .transport_tx
+            .send(InnerTransportEvent::ConnectionEstablished {
+                peer,
+                connection: connection_id,
+                endpoint: Endpoint::dialer(address.clone(), connection_id),
+                sender: ConnectionHandle::new(connection_id, connection_tx),
+            })
+            .await
+            .unwrap();
+        let Some(TransportEvent::ConnectionEstablished { peer, endpoint }) =
+            kademlia.service.next().await
+        else {
+            panic!("expected `ConnectionEstablished`");
+        };
+        kademlia.on_connection_established(peer, endpoint);
+
+        let put_record = |query| QueryAction::PutRecordToFoundNodes {
+            query,
+            record: Record::new(RecordKey::from(vec![1, 2, 3]), vec![4, 5, 6]),
+            peers: vec![KademliaPeer::new(
+                peer,
+                vec![address.clone()],
+                ConnectionType::Connected,
+            )],
+            quorum: Quorum::All,
+        };
+
+        kademlia.on_query_action(put_record(QueryId(0))).await.unwrap();
+        let Ok(ProtocolCommand::OpenSubstream {
+            substream_id: stale,
+            ..
+        }) = connection_rx.try_recv()
+        else {
+            panic!("expected `OpenSubstream`");
+        };
+
+        // E.g. the remote reset an inbound substream while ours is still opening.
+        kademlia.disconnect_peer(peer, None).await;
+        match kademlia.engine.next_action() {
+            Some(QueryAction::QueryFailed { query }) => assert_eq!(query, QueryId(0)),
+            action => panic!("unexpected action: {action:?}"),
+        }
+
+        kademlia.on_query_action(put_record(QueryId(1))).await.unwrap();
+        let Ok(ProtocolCommand::OpenSubstream { substream_id, .. }) = connection_rx.try_recv()
+        else {
+            panic!("expected `OpenSubstream`");
+        };
+
+        context
+            .transport_tx
+            .send(InnerTransportEvent::SubstreamOpenFailure {
+                substream: stale,
+                error: SubstreamError::ConnectionClosed,
+            })
+            .await
+            .unwrap();
+        let Some(TransportEvent::SubstreamOpenFailure { substream, error }) =
+            kademlia.service.next().await
+        else {
+            panic!("expected `SubstreamOpenFailure`");
+        };
+        kademlia.on_substream_open_failure(substream, error).await;
+
+        if let Some(action) = kademlia.engine.next_action() {
+            panic!("unexpected action: {action:?}");
+        }
+        assert!(kademlia.peers[&peer].pending_actions.contains_key(&substream_id));
+        assert_eq!(
+            kademlia.pending_substreams,
+            HashMap::from([(substream_id, peer)])
+        );
+    }
 }
