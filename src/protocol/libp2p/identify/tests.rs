@@ -87,6 +87,39 @@ async fn update_identify_addresses() {
 }
 
 #[tokio::test]
+async fn identify_response_fits_payload_size() {
+    let (mut litep2p1, mut event_stream1, _peer1) = create_litep2p();
+    let (mut litep2p2, _event_stream2, _peer2) = create_litep2p();
+    for host in 0..100 {
+        let label = "a".repeat(60);
+        let address = format!("/dns/{host}.{label}.{label}.example/tcp/30333");
+        litep2p2.public_addresses().add_address(address.parse().unwrap()).unwrap();
+    }
+
+    let address = litep2p2.listen_addresses().next().unwrap().clone();
+    litep2p1.dial_address(address).await.unwrap();
+    tokio::spawn(async move { while litep2p2.next_event().await.is_some() {} });
+
+    let identified = async {
+        loop {
+            tokio::select! {
+                _ = litep2p1.next_event() => {}
+                event = event_stream1.next() => {
+                    let Some(IdentifyEvent::PeerIdentified { listen_addresses, .. }) = event else {
+                        panic!("identify stream ended");
+                    };
+                    break listen_addresses;
+                }
+            }
+        }
+    };
+    let listen_addresses = tokio::time::timeout(Duration::from_secs(10), identified)
+        .await
+        .expect("peer to be identified");
+    assert!(!listen_addresses.is_empty());
+}
+
+#[tokio::test]
 async fn listen_addresses_bound_dials_at_third_party() {
     let accepted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut victim_ports = Vec::new();

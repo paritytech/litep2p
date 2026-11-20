@@ -264,11 +264,15 @@ impl Identify {
             self.service.listen_addresses(),
         );
 
-        let identify = identify_schema::Identify {
+        let mut identify = identify_schema::Identify {
             protocol_version: Some(self.protocol_version.clone()),
             agent_version: Some(self.user_agent.clone()),
             public_key: Some(self.public.to_protobuf_encoding()),
-            listen_addrs: listen_addrs.iter().map(Multiaddr::to_vec).collect(),
+            listen_addrs: listen_addrs
+                .iter()
+                .take(MAX_LISTEN_ADDRESSES)
+                .map(Multiaddr::to_vec)
+                .collect(),
             observed_addr,
             protocols: self
                 .service
@@ -277,6 +281,10 @@ impl Identify {
                 .map(|protocol| protocol.to_string())
                 .collect(),
         };
+
+        while identify.encoded_len() > IDENTIFY_PAYLOAD_SIZE
+            && identify.listen_addrs.pop().is_some()
+        {}
 
         tracing::trace!(
             target: LOG_TARGET,
