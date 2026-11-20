@@ -40,7 +40,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use std::{
     collections::{HashMap, HashSet},
-    net::IpAddr,
+    net::{IpAddr, Ipv6Addr},
     time::Duration,
 };
 
@@ -505,7 +505,8 @@ fn parse_listen_addresses(peer: PeerId, addresses: Vec<Vec<u8>>) -> Vec<Multiadd
 
 /// Host of a dialable address.
 ///
-/// DNS names share one host since a wildcard record can resolve any number of them to one IP.
+/// DNS names share one host since a wildcard record can resolve any number of them to one IP,
+/// and IPv6 addresses share one host per /64 since a single machine can own the whole prefix.
 #[derive(PartialEq, Eq)]
 enum Host {
     Ip(IpAddr),
@@ -516,7 +517,10 @@ impl From<&Multiaddr> for Host {
     fn from(address: &Multiaddr) -> Self {
         match address.iter().next() {
             Some(Protocol::Ip4(ip)) => Host::Ip(ip.into()),
-            Some(Protocol::Ip6(ip)) => Host::Ip(ip.to_ipv4_mapped().map_or(ip.into(), Into::into)),
+            Some(Protocol::Ip6(ip)) => match ip.to_ipv4_mapped() {
+                Some(ip) => Host::Ip(ip.into()),
+                None => Host::Ip(Ipv6Addr::from(u128::from(ip) & !(u128::MAX >> 64)).into()),
+            },
             _ => Host::Dns,
         }
     }

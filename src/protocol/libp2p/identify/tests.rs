@@ -212,6 +212,18 @@ fn listen_addresses_are_limited_per_host() {
 }
 
 #[test]
+fn ipv6_listen_addresses_are_limited_per_prefix() {
+    let addresses: Vec<String> = (1..=10)
+        .map(|host| format!("/ip6/2001:db8:0:1::{host:x}/tcp/30333"))
+        .chain(["/ip6/2001:db8:0:2::1/tcp/30333".to_string()])
+        .collect();
+    let addresses: Vec<&str> = addresses.iter().map(String::as_str).collect();
+
+    let parsed = parse_listen_addresses(PeerId::random(), raw(&addresses));
+    assert_eq!(parsed.len(), MAX_ADDRESSES_PER_HOST + 1);
+}
+
+#[test]
 fn listen_addresses_are_limited() {
     let addresses: Vec<String> =
         (1..=100).map(|host| format!("/ip4/10.0.0.{host}/tcp/30333")).collect();
