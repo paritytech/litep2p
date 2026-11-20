@@ -470,8 +470,13 @@ impl Kademlia {
     ) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, query = ?query_id, "handle message from peer");
 
-        let mut message = KademliaMessage::from_bytes(message, self.replication_factor)
-            .ok_or(Error::InvalidData)?;
+        let Some(mut message) = KademliaMessage::from_bytes(message, self.replication_factor)
+        else {
+            if let Some(query_id) = query_id {
+                self.engine.register_response_failure(query_id, peer);
+            }
+            return Err(Error::InvalidData);
+        };
         if self.remote_address_mode == RemoteAddressMode::GlobalOnly {
             message.retain_global_addresses();
         }
