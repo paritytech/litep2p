@@ -355,24 +355,9 @@ impl Identify {
 
             let listen_addresses = parse_listen_addresses(peer, info.listen_addrs);
 
-            let observed_address =
-                info.observed_addr.and_then(|address| {
-                    let address = Multiaddr::try_from(address).ok()?;
-
-                    if address.is_empty() {
-                        tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided empty observed address");
-                        return None;
-                    }
-
-                    if let Some(multiaddr::Protocol::P2p(peer_id)) = address.iter().last() {
-                        if peer_id != local_peer_id.into() {
-                            tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided observed address with peer ID not matching our peer ID; discarding address");
-                            return None;
-                        }
-                    }
-
-                    Some(address)
-                });
+            let observed_address = info
+                .observed_addr
+                .and_then(|address| parse_observed_address(peer, local_peer_id, address));
 
             let protocol_version = info.protocol_version;
             let user_agent = info.agent_version;
@@ -501,6 +486,38 @@ fn parse_listen_addresses(peer: PeerId, addresses: Vec<Vec<u8>>) -> Vec<Multiadd
     }
 
     listen_addresses
+}
+
+fn parse_observed_address(
+    peer: PeerId,
+    local_peer_id: PeerId,
+    address: Vec<u8>,
+) -> Option<Multiaddr> {
+    let address = Multiaddr::try_from(address).ok()?;
+
+    if !is_dialable(&address) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            ?address,
+            "peer identified provided undialable observed address",
+        );
+        return None;
+    }
+
+    if let Some(Protocol::P2p(peer_id)) = address.iter().last() {
+        if peer_id != local_peer_id.into() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                ?address,
+                "peer identified provided observed address with peer ID not matching our peer ID",
+            );
+            return None;
+        }
+    }
+
+    Some(address)
 }
 
 /// Host of a dialable address.

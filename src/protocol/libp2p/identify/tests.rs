@@ -232,3 +232,40 @@ fn listen_addresses_are_limited() {
     let parsed = parse_listen_addresses(PeerId::random(), raw(&addresses));
     assert_eq!(parsed.len(), MAX_LISTEN_ADDRESSES);
 }
+
+#[test]
+fn undialable_observed_addresses_are_dropped() {
+    let peer = PeerId::random();
+    let local_peer_id = PeerId::random();
+    let parse = |address: &str| {
+        let address = address.parse::<Multiaddr>().unwrap().to_vec();
+        parse_observed_address(peer, local_peer_id, address)
+    };
+
+    for address in [
+        "/ip4/0.0.0.0/tcp/30333",
+        "/ip4/224.0.0.1/tcp/30333",
+        "/ip4/1.1.1.1/tcp/0",
+        "/ip4/1.1.1.1",
+        "/dnsaddr/example.com",
+        &format!("/p2p/{local_peer_id}"),
+        &format!("/ip4/1.1.1.1/tcp/30333/p2p/{peer}"),
+    ] {
+        assert_eq!(parse(address), None, "{address}");
+    }
+
+    for address in [
+        "/ip4/1.1.1.1/tcp/30333",
+        &format!("/ip4/1.1.1.1/tcp/30333/ws/p2p/{local_peer_id}"),
+        "/dns/example.com/tcp/443/wss",
+        "/ip6/2001:db8::1/udp/30333/quic-v1",
+        "/ip4/1.1.1.1/udp/30333/webrtc-direct/certhash/uEiDDq4_xNyDorZBH3TlGazyJdOWSwvo4PUo5YHFMrvDE8g",
+    ] {
+        assert_eq!(parse(address), Some(address.parse().unwrap()), "{address}");
+    }
+
+    assert_eq!(
+        parse_observed_address(peer, local_peer_id, vec![0xff, 0xff]),
+        None
+    );
+}
