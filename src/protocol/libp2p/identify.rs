@@ -33,7 +33,7 @@ use crate::{
 };
 
 use futures::{future::BoxFuture, Stream, StreamExt};
-use multiaddr::Multiaddr;
+use multiaddr::{Multiaddr, Protocol};
 use prost::Message;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio_stream::wrappers::ReceiverStream;
@@ -438,16 +438,16 @@ fn parse_listen_addresses(peer: PeerId, addresses: Vec<Vec<u8>>) -> Vec<Multiadd
         .filter_map(|address| {
             let address = Multiaddr::try_from(address).ok()?;
 
-            if address.is_empty() {
+            if !is_dialable(&address) {
                 tracing::debug!(
                     target: LOG_TARGET,
                     ?peer,
                     ?address,
-                    "peer identified provided empty listen address",
+                    "peer identified provided undialable listen address",
                 );
                 return None;
             }
-            if let Some(multiaddr::Protocol::P2p(peer_id)) = address.iter().last() {
+            if let Some(Protocol::P2p(peer_id)) = address.iter().last() {
                 if peer_id != peer.into() {
                     tracing::debug!(
                         target: LOG_TARGET,
@@ -462,4 +462,17 @@ fn parse_listen_addresses(peer: PeerId, addresses: Vec<Vec<u8>>) -> Vec<Multiadd
             Some(address)
         })
         .collect()
+}
+
+fn is_dialable(address: &Multiaddr) -> bool {
+    let mut iter = address.iter();
+    let valid_host = match iter.next() {
+        Some(Protocol::Ip4(ip)) => !ip.is_unspecified() && !ip.is_multicast() && !ip.is_broadcast(),
+        Some(Protocol::Ip6(ip)) => !ip.is_unspecified() && !ip.is_multicast(),
+        Some(Protocol::Dns(_) | Protocol::Dns4(_) | Protocol::Dns6(_)) => true,
+        _ => false,
+    };
+
+    valid_host
+        && std::matches!(iter.next(), Some(Protocol::Tcp(port) | Protocol::Udp(port)) if port != 0)
 }

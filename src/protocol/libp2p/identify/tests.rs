@@ -144,3 +144,39 @@ async fn listen_addresses_direct_dials_at_third_party() {
 
     assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 40);
 }
+
+fn raw(addresses: &[&str]) -> Vec<Vec<u8>> {
+    addresses
+        .iter()
+        .map(|address| address.parse::<Multiaddr>().unwrap().to_vec())
+        .collect()
+}
+
+#[test]
+fn undialable_listen_addresses_are_dropped() {
+    let dialable = [
+        "/ip4/1.1.1.1/tcp/30333",
+        "/dns/example.com/tcp/443/wss",
+        "/ip6/2001:db8::1/udp/30333/quic-v1",
+    ];
+    let mut addresses = raw(&[
+        "/ip4/0.0.0.0/tcp/30333",
+        "/ip6/::/tcp/30333",
+        "/ip4/224.0.0.1/tcp/30333",
+        "/ip4/255.255.255.255/tcp/30333",
+        "/ip6/ff02::1/tcp/30333",
+        "/ip4/1.1.1.1/tcp/0",
+        "/ip4/1.1.1.1",
+        "/tcp/30333",
+        "/dnsaddr/example.com",
+    ]);
+    addresses.extend(raw(&dialable));
+    addresses.push(vec![0xff, 0xff]);
+
+    let expected: Vec<Multiaddr> =
+        dialable.iter().map(|address| address.parse().unwrap()).collect();
+    assert_eq!(
+        parse_listen_addresses(PeerId::random(), addresses),
+        expected
+    );
+}
