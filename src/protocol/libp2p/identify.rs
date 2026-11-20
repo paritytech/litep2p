@@ -346,27 +346,7 @@ impl Identify {
 
             tracing::trace!(target: LOG_TARGET, ?peer, ?info, "peer identified");
 
-            let listen_addresses = info
-                .listen_addrs
-                .iter()
-                .filter_map(|address| {
-                    let address = Multiaddr::try_from(address.clone()).ok()?;
-
-                    // Ensure the address ends with the provided peer ID and is not empty.
-                    if address.is_empty() {
-                        tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided empty listen address");
-                        return None;
-                    }
-                    if let Some(multiaddr::Protocol::P2p(peer_id)) = address.iter().last() {
-                        if peer_id != peer.into() {
-                            tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided listen address with incorrect peer ID; discarding the address");
-                            return None;
-                        }
-                    }
-
-                    Some(address)
-                })
-                .collect();
+            let listen_addresses = parse_listen_addresses(peer, info.listen_addrs);
 
             let observed_address =
                 info.observed_addr.and_then(|address| {
@@ -450,4 +430,36 @@ impl Identify {
             }
         }
     }
+}
+
+fn parse_listen_addresses(peer: PeerId, addresses: Vec<Vec<u8>>) -> Vec<Multiaddr> {
+    addresses
+        .into_iter()
+        .filter_map(|address| {
+            let address = Multiaddr::try_from(address).ok()?;
+
+            if address.is_empty() {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?address,
+                    "peer identified provided empty listen address",
+                );
+                return None;
+            }
+            if let Some(multiaddr::Protocol::P2p(peer_id)) = address.iter().last() {
+                if peer_id != peer.into() {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        ?peer,
+                        ?address,
+                        "peer identified provided listen address with incorrect peer ID",
+                    );
+                    return None;
+                }
+            }
+
+            Some(address)
+        })
+        .collect()
 }
