@@ -87,7 +87,7 @@ impl FuzzConnection {
         });
         let dtls_cert: str0m::config::DtlsCert =
             DtlsCertificate::load(certificate.clone(), private_key.clone())?.into();
-        let mut rtc = Rtc::builder()
+        let mut rtc = str0m::Rtc::builder()
             .set_ice_lite(true)
             .set_dtls_cert(dtls_cert)
             .set_fingerprint_verification(false)
@@ -149,7 +149,7 @@ impl FuzzConnection {
         };
 
         let connection = WebRtcConnection::new(
-            rtc,
+            Rtc::new(rtc),
             PeerId::random(),
             addrs,
             socket,
@@ -174,13 +174,18 @@ impl FuzzConnection {
         self.drain_events();
 
         let label = format!("fuzz-{}", self.channels.len());
-        let channel_id = self.connection.rtc.direct_api().create_data_channel(ChannelConfig {
-            label: label.clone(),
-            ordered: true,
-            reliability: Reliability::Reliable,
-            negotiated: None,
-            protocol: String::new(),
-        });
+        let channel_id = self
+            .connection
+            .rtc
+            .direct_api()
+            .create_data_channel(ChannelConfig {
+                label: label.clone(),
+                ordered: true,
+                reliability: Reliability::Reliable,
+                negotiated: None,
+                protocol: String::new(),
+            })
+            .ok_or(Error::ConnectionClosed)?;
 
         self.connection.on_channel_opened(channel_id, label).await?;
         self.channels.push((channel_id, true));
@@ -228,13 +233,18 @@ impl FuzzConnection {
         self.drain_events();
 
         let label = format!("fuzz-open-{}", self.channels.len());
-        let channel_id = self.connection.rtc.direct_api().create_data_channel(ChannelConfig {
-            label,
-            ordered: true,
-            reliability: Reliability::Reliable,
-            negotiated: None,
-            protocol: String::new(),
-        });
+        let channel_id = self
+            .connection
+            .rtc
+            .direct_api()
+            .create_data_channel(ChannelConfig {
+                label,
+                ordered: true,
+                reliability: Reliability::Reliable,
+                negotiated: None,
+                protocol: String::new(),
+            })
+            .ok_or(Error::ConnectionClosed)?;
 
         let substream_id = self.connection.protocol_set.next_substream_id();
         let codec = self.connection.protocol_set.protocol_codec(&protocol);
@@ -425,6 +435,27 @@ mod tests {
             Some(ChannelState::Closing)
         ));
         assert_eq!(connection.buffer_count(), 0);
+    }
+
+    /// A `str0m` panic must close the connection through the regular path.
+    #[tokio::test]
+    async fn panicked_rtc_closes_connection() {
+        use crate::transport::manager::TransportManagerEvent;
+
+        let mut connection = FuzzConnection::new(protocols()).await.expect("scaffold to build");
+        connection.connection.rtc.poison();
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            connection.connection.run_event_loop(),
+        )
+        .await
+        .expect("event loop to exit");
+
+        assert!(matches!(
+            connection.mgr_rx.try_recv(),
+            Ok(TransportManagerEvent::ConnectionClosed { .. })
+        ));
     }
 
     /// Polling the handle set must survive the `swap_remove` reordering a close triggers, without

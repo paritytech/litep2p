@@ -26,8 +26,12 @@ use crate::{
         common::{opening_deadline, InboundOpening},
         manager::TransportHandle,
         webrtc::{
-            config::Config, connection::WebRtcConnection, listener::WebRtcListener,
-            opening::OpeningWebRtcConnection, socket::WebRtcSocket,
+            config::Config,
+            connection::WebRtcConnection,
+            listener::WebRtcListener,
+            opening::OpeningWebRtcConnection,
+            rtc::{guard, Rtc},
+            socket::WebRtcSocket,
         },
         Endpoint, Transport, TransportBuilder, TransportEvent,
     },
@@ -44,7 +48,7 @@ use str0m::{
     config::DtlsCert,
     ice::IceCreds,
     net::{DatagramRecv, Protocol as Str0mProtocol},
-    Candidate, Rtc, RtcError,
+    Candidate, RtcError,
 };
 
 use tokio::sync::mpsc::{channel, error::TrySendError, Sender};
@@ -64,6 +68,7 @@ mod certificate;
 mod connection;
 mod listener;
 mod opening;
+mod rtc;
 mod socket;
 
 // `substream` and `util` (the substream state machine and wire codec) are the primary fuzz
@@ -207,14 +212,26 @@ pub(crate) struct WebRtcTransport {
 }
 
 impl WebRtcTransport {
-    /// Create [`str0m::Rtc`] object for a new session and open a channel for Noise handshake.
+    /// Create [`Rtc`] object for a new session and open a channel for Noise handshake.
     fn make_rtc(
         &self,
         ufrag: &str,
         pass: &str,
         addrs: &AddressPair,
     ) -> crate::Result<(Rtc, ChannelId)> {
-        let mut rtc = Rtc::builder()
+        let (rtc, noise_channel_id) = guard(|| self.build_rtc(ufrag, pass, addrs))??;
+
+        Ok((Rtc::new(rtc), noise_channel_id))
+    }
+
+    /// Unguarded part of [`Self::make_rtc`].
+    fn build_rtc(
+        &self,
+        ufrag: &str,
+        pass: &str,
+        addrs: &AddressPair,
+    ) -> crate::Result<(str0m::Rtc, ChannelId)> {
+        let mut rtc = str0m::Rtc::builder()
             .set_ice_lite(true)
             .set_dtls_cert(self.dtls_cert.clone())
             .set_fingerprint_verification(false)
@@ -448,8 +465,8 @@ impl WebRtcTransport {
 
         // If an opening connection already exists for this source, route all packets to it
         if let Some(opening_conn) = self.opening.get_mut(&addrs) {
-            let contents: DatagramRecv =
-                buffer.as_slice().try_into().map_err(|_| Error::InvalidData)?;
+            let contents = guard(|| DatagramRecv::try_from(buffer.as_slice()))?
+                .map_err(|_| Error::InvalidData)?;
 
             tracing::trace!(
                 target: LOG_TARGET,
@@ -492,10 +509,10 @@ impl WebRtcTransport {
         };
         let deadline = opening_deadline(Instant::now(), self.connection_open_timeout);
 
-        let contents: DatagramRecv =
-            buffer.as_slice().try_into().map_err(|_| Error::InvalidData)?;
+        let contents =
+            guard(|| DatagramRecv::try_from(buffer.as_slice()))?.map_err(|_| Error::InvalidData)?;
         let stun_message =
-            str0m::ice::StunMessage::parse(&buffer).map_err(|_| Error::InvalidData)?;
+            guard(|| str0m::ice::StunMessage::parse(&buffer))?.map_err(|_| Error::InvalidData)?;
         let Some((ufrag, pass)) = stun_message.split_username() else {
             tracing::warn!(
                 target: LOG_TARGET,
@@ -1097,6 +1114,26 @@ mod tests {
         assert!(Pin::new(&mut transport)
             .poll_next(&mut Context::from_waker(&waker))
             .is_pending());
+        assert_no_openings(&transport);
+    }
+
+    #[tokio::test]
+    async fn panicked_opening_is_removed() {
+        let (mut transport, address) = transport().await;
+        let (addrs, socket, buffer) = receive_stun(&mut transport, address).await;
+        insert_opening(
+            &mut transport,
+            addrs,
+            socket.clone(),
+            Instant::now() + CONNECTION_OPEN_TIMEOUT,
+        );
+        transport.opening.get_mut(&addrs).unwrap().rtc_mut().poison();
+
+        // The datagram is rejected, but the connection must still be polled to be removed.
+        assert!(transport.on_socket_input(addrs, &socket, buffer).unwrap());
+        let waker = noop_waker();
+        transport.process_connection(&addrs, &mut Context::from_waker(&waker));
+
         assert_no_openings(&transport);
     }
 
