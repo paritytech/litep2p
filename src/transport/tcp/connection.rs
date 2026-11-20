@@ -328,31 +328,23 @@ impl TcpConnection {
         yamux_config: crate::yamux::Config,
         max_read_ahead_factor: usize,
         max_write_buffer_size: usize,
-        connection_open_timeout: Duration,
         substream_open_timeout: Duration,
     ) -> Result<NegotiatedConnection, NegotiationError> {
         tracing::debug!(target: LOG_TARGET, ?address, "accept connection");
 
-        match tokio::time::timeout(connection_open_timeout, async move {
-            Self::negotiate_connection(
-                stream,
-                None,
-                connection_id,
-                keypair,
-                Role::Listener,
-                AddressType::Socket(address),
-                yamux_config,
-                max_read_ahead_factor,
-                max_write_buffer_size,
-                substream_open_timeout,
-            )
-            .await
-        })
+        Self::negotiate_connection(
+            stream,
+            None,
+            connection_id,
+            keypair,
+            Role::Listener,
+            AddressType::Socket(address),
+            yamux_config,
+            max_read_ahead_factor,
+            max_write_buffer_size,
+            substream_open_timeout,
+        )
         .await
-        {
-            Err(_) => Err(NegotiationError::Timeout),
-            Ok(result) => result,
-        }
     }
 
     /// Accept substream.
@@ -1025,7 +1017,6 @@ mod tests {
             5,
             2,
             Duration::from_secs(10),
-            Duration::from_secs(10),
         )
         .await
         {
@@ -1130,7 +1121,6 @@ mod tests {
             5,
             2,
             Duration::from_secs(10),
-            Duration::from_secs(10),
         )
         .await
         {
@@ -1176,7 +1166,6 @@ mod tests {
             Default::default(),
             5,
             2,
-            Duration::from_secs(10),
             Duration::from_secs(10),
         )
         .await
@@ -1330,7 +1319,6 @@ mod tests {
             5,
             2,
             Duration::from_secs(10),
-            Duration::from_secs(10),
         )
         .await
         {
@@ -1393,7 +1381,6 @@ mod tests {
             Default::default(),
             5,
             2,
-            Duration::from_secs(10),
             Duration::from_secs(10),
         )
         .await
@@ -1532,7 +1519,6 @@ mod tests {
             Default::default(),
             5,
             2,
-            Duration::from_secs(10),
             Duration::from_secs(10),
         )
         .await

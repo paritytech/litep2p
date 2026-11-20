@@ -22,18 +22,48 @@
 
 use crate::types::ConnectionId;
 
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    time::{Duration, Instant},
+};
+
+/// Default limit of concurrent incoming openings, per transport.
+pub(crate) const DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS: usize = 256;
 
 /// Configuration for the connection limits.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ConnectionLimitsConfig {
+    /// Maximum number of incoming connections being opened concurrently, per transport.
+    max_pending_incoming_connections: Option<usize>,
     /// Maximum number of incoming connections that can be established.
     max_incoming_connections: Option<usize>,
     /// Maximum number of outgoing connections that can be established.
     max_outgoing_connections: Option<usize>,
 }
 
+impl Default for ConnectionLimitsConfig {
+    fn default() -> Self {
+        Self {
+            max_pending_incoming_connections: Some(DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS),
+            max_incoming_connections: None,
+            max_outgoing_connections: None,
+        }
+    }
+}
+
 impl ConnectionLimitsConfig {
+    /// Limit concurrent incoming openings. Defaults to `Some(256)`.
+    ///
+    /// Applies separately to each transport, so one transport can't starve the others. `None`
+    /// removes the limit, `Some(0)` disables incoming connections.
+    ///
+    /// For QUIC, this caps openings after Quinn yields them to litep2p. Quinn can allocate
+    /// connection state and start the handshake before that point.
+    pub fn max_pending_incoming_connections(mut self, limit: Option<usize>) -> Self {
+        self.max_pending_incoming_connections = limit;
+        self
+    }
+
     /// Configures the maximum number of incoming connections that can be established.
     pub fn max_incoming_connections(mut self, limit: Option<usize>) -> Self {
         self.max_incoming_connections = limit;
@@ -44,6 +74,47 @@ impl ConnectionLimitsConfig {
     pub fn max_outgoing_connections(mut self, limit: Option<usize>) -> Self {
         self.max_outgoing_connections = limit;
         self
+    }
+}
+
+/// Minimum interval between reports of dropped inbound openings.
+const DROPPED_OPENINGS_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
+/// Rate-limits reports of inbound openings dropped at capacity.
+#[derive(Debug, Default)]
+pub(crate) struct DroppedOpenings {
+    /// Drops since the last report.
+    count: usize,
+    /// Time of the last report.
+    last_report: Option<Instant>,
+}
+
+impl DroppedOpenings {
+    /// Record a drop.
+    ///
+    /// Returns the number of drops since the last report if a report is due: on the first
+    /// drop, then at most once per interval.
+    pub(crate) fn record(&mut self) -> Option<usize> {
+        self.record_at(Instant::now())
+    }
+
+    /// Whether any drop was recorded.
+    #[cfg(test)]
+    pub(crate) fn has_drops(&self) -> bool {
+        self.last_report.is_some()
+    }
+
+    fn record_at(&mut self, now: Instant) -> Option<usize> {
+        self.count += 1;
+
+        if self.last_report.is_some_and(|last_report| {
+            now.saturating_duration_since(last_report) < DROPPED_OPENINGS_REPORT_INTERVAL
+        }) {
+            return None;
+        }
+
+        self.last_report = Some(now);
+        Some(std::mem::take(&mut self.count))
     }
 }
 
@@ -79,6 +150,11 @@ impl ConnectionLimits {
             incoming_connections: HashSet::with_capacity(max_incoming_connections),
             outgoing_connections: HashSet::with_capacity(max_outgoing_connections),
         }
+    }
+
+    /// Per-transport capacity for incoming openings.
+    pub(super) fn max_pending_incoming_connections(&self) -> Option<usize> {
+        self.config.max_pending_incoming_connections
     }
 
     /// Called when dialing an address.
@@ -166,6 +242,27 @@ impl ConnectionLimits {
 mod tests {
     use super::*;
     use crate::types::ConnectionId;
+
+    #[test]
+    fn dropped_openings_reports_are_rate_limited() {
+        let mut dropped = DroppedOpenings::default();
+        let start = Instant::now();
+
+        assert_eq!(dropped.record_at(start), Some(1));
+        assert_eq!(dropped.record_at(start), None);
+        assert_eq!(
+            dropped.record_at(start + DROPPED_OPENINGS_REPORT_INTERVAL / 2),
+            None
+        );
+        assert_eq!(
+            dropped.record_at(start + DROPPED_OPENINGS_REPORT_INTERVAL),
+            Some(3)
+        );
+        assert_eq!(
+            dropped.record_at(start + DROPPED_OPENINGS_REPORT_INTERVAL),
+            None
+        );
+    }
 
     #[test]
     fn connection_limits() {
