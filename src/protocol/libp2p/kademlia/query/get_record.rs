@@ -612,4 +612,33 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn record_for_other_key_is_ignored() {
+        let config = GetRecordConfig {
+            quorum: Quorum::One,
+            ..default_config()
+        };
+
+        let peer_a = PeerId::random();
+        let peer_b = PeerId::random();
+        let mut context = GetRecordContext::new(config, [peer_to_kad(peer_a)].into(), false);
+
+        match context.next_action() {
+            Some(QueryAction::SendMessage { peer, .. }) => assert_eq!(peer, peer_a),
+            event => panic!("Unexpected event {event:?}"),
+        }
+
+        let record = Record::new(vec![4, 5, 6], vec![1]);
+        assert!(context
+            .register_response(peer_a, Some(record), vec![peer_to_kad(peer_b)])
+            .is_some());
+        assert_eq!(context.found_records, 0);
+        assert!(context.queried.contains(&peer_a));
+
+        match context.next_action() {
+            Some(QueryAction::SendMessage { peer, .. }) => assert_eq!(peer, peer_b),
+            event => panic!("Unexpected event {event:?}"),
+        }
+    }
 }
