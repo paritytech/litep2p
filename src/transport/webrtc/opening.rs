@@ -24,6 +24,7 @@ use crate::{
     config::Role,
     crypto::{ed25519::Keypair, noise::NoiseContext},
     transport::{
+        common::InboundOpening,
         webrtc::{
             socket::WebRtcSocket,
             util::{extract_framed_message, WebRtcMessage},
@@ -99,6 +100,9 @@ pub enum WebRtcEvent {
 /// After the handshake is done, this object is destroyed and a new WebRTC connection object
 /// is created which implements a normal connection event loop dealing with substreams.
 pub struct OpeningWebRtcConnection {
+    /// Inbound opening capacity and absolute deadline.
+    opening: InboundOpening<Instant>,
+
     /// WebRTC object
     rtc: Rtc,
 
@@ -172,6 +176,7 @@ impl OpeningWebRtcConnection {
         id_keypair: Keypair,
         addrs: AddressPair,
         socket: Arc<WebRtcSocket>,
+        opening: InboundOpening<Instant>,
     ) -> OpeningWebRtcConnection {
         tracing::trace!(
             target: LOG_TARGET,
@@ -181,6 +186,7 @@ impl OpeningWebRtcConnection {
         );
 
         Self {
+            opening,
             rtc,
             state: State::Closed,
             connection_id,
@@ -195,6 +201,17 @@ impl OpeningWebRtcConnection {
     /// Returns the [`ConnectionId`] assigned to this opening connection.
     pub fn connection_id(&self) -> &ConnectionId {
         &self.connection_id
+    }
+
+    /// Absolute opening deadline.
+    #[cfg(test)]
+    pub fn deadline(&self) -> Instant {
+        self.opening.deadline
+    }
+
+    /// Whether the opening deadline has elapsed.
+    pub fn is_expired(&self) -> bool {
+        Instant::now() >= self.opening.deadline
     }
 
     /// Socket the session's datagrams are received on and sent from.
@@ -267,6 +284,10 @@ impl OpeningWebRtcConnection {
 
     /// Handle timeout.
     pub fn on_timeout(&mut self) -> crate::Result<()> {
+        if self.is_expired() {
+            return Err(Error::Timeout);
+        }
+
         if let Err(error) = self.rtc.handle_input(Input::Timeout(Instant::now())) {
             tracing::error!(
                 target: LOG_TARGET,
@@ -385,6 +406,10 @@ impl OpeningWebRtcConnection {
     /// Accept connection by sending the final Noise handshake message
     /// and return the `Rtc` object for further use.
     pub fn on_accept(mut self) -> crate::Result<Rtc> {
+        if self.is_expired() {
+            return Err(Error::Timeout);
+        }
+
         tracing::trace!(
             target: LOG_TARGET,
             connection_id = ?self.connection_id,
@@ -420,6 +445,10 @@ impl OpeningWebRtcConnection {
 
     /// Handle input from peer.
     pub fn on_input(&mut self, buffer: DatagramRecv) -> crate::Result<()> {
+        if self.is_expired() {
+            return Err(Error::Timeout);
+        }
+
         tracing::trace!(
             target: LOG_TARGET,
             peer = ?self.addrs.remote,
@@ -463,6 +492,10 @@ impl OpeningWebRtcConnection {
         }
 
         loop {
+            if self.is_expired() {
+                return WebRtcEvent::ConnectionClosed;
+            }
+
             let output = match self.rtc.poll_output() {
                 Ok(output) => output,
                 Err(error) => {
@@ -492,7 +525,11 @@ impl OpeningWebRtcConnection {
                         datagram: transmit.contents,
                     };
                 }
-                Output::Timeout(timeout) => return WebRtcEvent::Timeout { timeout },
+                Output::Timeout(timeout) => {
+                    return WebRtcEvent::Timeout {
+                        timeout: timeout.min(self.opening.deadline),
+                    };
+                }
                 Output::Event(e) => match e {
                     Event::IceConnectionStateChange(v) =>
                         if v == IceConnectionState::Disconnected {

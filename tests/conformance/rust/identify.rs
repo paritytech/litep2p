@@ -40,7 +40,8 @@ use litep2p::{
     Litep2p,
 };
 
-// We create a custom network behaviour that combines gossipsub, ping and identify.
+// The derive wraps ping's Infallible handler input.
+#[allow(unreachable_code)]
 #[derive(NetworkBehaviour)]
 #[behaviour(out_event = "MyBehaviourEvent")]
 struct MyBehaviour {

@@ -35,7 +35,7 @@ use crate::{
 
 use bytes::Bytes;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use self::{find_many_nodes::FindManyNodesContext, target_peers::PutToTargetPeersContext};
 
@@ -352,9 +352,12 @@ impl QueryEngine {
         &mut self,
         query_id: QueryId,
         record: Record,
-        peers_to_report: Vec<KademliaPeer>,
+        mut peers_to_report: Vec<KademliaPeer>,
         quorum: Quorum,
     ) -> QueryId {
+        let mut seen = HashSet::new();
+        peers_to_report.retain(|peer| seen.insert(peer.peer));
+
         tracing::debug!(
             target: LOG_TARGET,
             ?query_id,
@@ -1620,6 +1623,41 @@ mod tests {
                 assert_eq!(record.value, original_record.value);
             }
             event => panic!("invalid event received {:?}", event),
+        }
+    }
+
+    #[test]
+    fn put_record_to_duplicate_peers_succeeds() {
+        let mut engine = QueryEngine::new(PeerId::random(), 20usize, 3usize);
+        let record_key = RecordKey::new(&vec![1, 2, 3, 4]);
+        let record = Record::new(record_key.clone(), vec![1, 3, 3, 7]);
+        let peer = KademliaPeer::new(PeerId::random(), vec![], ConnectionType::NotConnected);
+        let query_id = QueryId(1341);
+
+        engine.start_put_record_to_peers(
+            query_id,
+            record,
+            vec![peer.clone(), peer.clone()],
+            Quorum::All,
+        );
+
+        let peers = match engine.next_action() {
+            Some(QueryAction::PutRecordToFoundNodes { peers, .. }) => peers,
+            _ => panic!("invalid event received"),
+        };
+        assert_eq!(peers.len(), 1);
+
+        engine.start_put_record_to_found_nodes_requests_tracking(
+            query_id,
+            record_key,
+            peers,
+            Quorum::All,
+        );
+        engine.register_send_success(query_id, peer.peer);
+
+        match engine.next_action() {
+            Some(QueryAction::PutRecordQuerySucceeded { query, .. }) => assert_eq!(query, query_id),
+            _ => panic!("invalid event received"),
         }
     }
 
