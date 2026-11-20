@@ -489,6 +489,41 @@ mod tests {
     }
 
     #[test]
+    fn timed_out_peer_counts_once_towards_parallelism() {
+        let config = FindNodeConfig {
+            parallelism_factor: 3,
+            ..default_config()
+        };
+        let in_peers = (0..10).map(|_| peer_to_kad(PeerId::random())).collect();
+        let mut context = FindNodeContext::new(config, in_peers);
+
+        let mut scheduled = Vec::new();
+        while let Some(QueryAction::SendMessage { peer, .. }) = context.next_action() {
+            scheduled.push(peer);
+        }
+        assert_eq!(scheduled.len(), 3);
+
+        let expired = std::time::Instant::now()
+            .checked_sub(context.peer_timeout * 2)
+            .expect("valid instant");
+        let slow = scheduled[0];
+        context.pending.get_mut(&slow).unwrap().1 = expired;
+
+        // The slow peer frees exactly one slot, no matter how often the query is polled.
+        assert!(matches!(
+            context.next_action(),
+            Some(QueryAction::SendMessage { .. })
+        ));
+        assert!(context.next_action().is_none());
+        assert!(context.next_action().is_none());
+
+        // Nor does it free another one once it finally fails.
+        context.register_response_failure(slow);
+        assert!(context.next_action().is_none());
+        assert_eq!(context.pending.len(), 3);
+    }
+
+    #[test]
     fn completes_when_responses() {
         let config = FindNodeConfig {
             parallelism_factor: 3,
