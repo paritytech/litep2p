@@ -39,7 +39,7 @@ use tokio::sync::mpsc::{channel, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{hash_map::Entry, HashMap, HashSet},
     net::{IpAddr, Ipv6Addr},
     time::Duration,
 };
@@ -68,6 +68,9 @@ const MAX_LISTEN_ADDRESSES: usize = 30;
 
 /// Bounds how many of our dials a peer can direct at a single host.
 const MAX_ADDRESSES_PER_HOST: usize = 4;
+
+/// One identify request per connection, and a peer has at most two connections.
+const MAX_INBOUND_PER_PEER: usize = 2;
 
 mod identify_schema {
     include!(concat!(env!("OUT_DIR"), "/identify.rs"));
@@ -191,7 +194,10 @@ pub(crate) struct Identify {
     pending_outbound: FuturesStream<BoxFuture<'static, crate::Result<IdentifyResponse>>>,
 
     /// Pending inbound substreams.
-    pending_inbound: FuturesStream<BoxFuture<'static, ()>>,
+    pending_inbound: FuturesStream<BoxFuture<'static, PeerId>>,
+
+    /// Number of pending inbound substreams per peer.
+    pending_inbound_per_peer: HashMap<PeerId, usize>,
 }
 
 impl Identify {
@@ -211,6 +217,7 @@ impl Identify {
             protocol_version: config.protocol_version,
             user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
             pending_inbound: FuturesStream::new(),
+            pending_inbound_per_peer: HashMap::new(),
             pending_outbound: FuturesStream::new(),
         }
     }
@@ -245,6 +252,17 @@ impl Identify {
             ?protocol,
             "inbound substream opened"
         );
+
+        let pending = self.pending_inbound_per_peer.entry(peer).or_default();
+        if *pending >= MAX_INBOUND_PER_PEER {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                "too many pending inbound identify requests, dropping substream",
+            );
+            return;
+        }
+        *pending += 1;
 
         let observed_addr = match self.peers.get(&peer) {
             Some(endpoint) => Some(endpoint.address().to_vec()),
@@ -320,7 +338,19 @@ impl Identify {
                     substream.close().await;
                 }
             }
+
+            peer
         }))
+    }
+
+    /// Inbound substream finished.
+    fn on_inbound_finished(&mut self, peer: PeerId) {
+        if let Entry::Occupied(mut pending) = self.pending_inbound_per_peer.entry(peer) {
+            *pending.get_mut() -= 1;
+            if *pending.get() == 0 {
+                pending.remove();
+            }
+        }
     }
 
     /// Outbound substream opened.
@@ -410,7 +440,9 @@ impl Identify {
                     },
                     _ => {}
                 },
-                _ = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
+                Some(peer) = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {
+                    self.on_inbound_finished(peer);
+                }
                 event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => match event {
                     Some(Ok(response)) => {
                         let _ = self.tx

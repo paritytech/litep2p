@@ -19,8 +19,17 @@
 // DEALINGS IN THE SOFTWARE.
 
 use super::*;
-use crate::{config::ConfigBuilder, transport::tcp::config::Config as TcpConfig, Litep2p};
+use crate::{
+    config::ConfigBuilder,
+    mock::substream::MockSubstream,
+    protocol::SubstreamKeepAlive,
+    transport::{
+        manager::TransportManagerBuilder, tcp::config::Config as TcpConfig, KEEP_ALIVE_TIMEOUT,
+    },
+    Litep2p,
+};
 use multiaddr::{Multiaddr, Protocol};
+use std::task::Poll;
 
 fn create_litep2p() -> (
     Litep2p,
@@ -347,4 +356,50 @@ fn undialable_observed_addresses_are_dropped() {
         parse_observed_address(peer, local_peer_id, vec![0xff, 0xff]),
         None
     );
+}
+
+#[tokio::test]
+async fn pending_inbound_requests_are_limited_per_peer() {
+    let manager = TransportManagerBuilder::new().build();
+    let keypair = crate::crypto::ed25519::Keypair::generate();
+    let (service, _tx) = TransportService::new(
+        PeerId::random(),
+        ProtocolName::from(PROTOCOL_NAME),
+        Vec::new(),
+        Default::default(),
+        manager.transport_manager_handle(),
+        KEEP_ALIVE_TIMEOUT,
+        SubstreamKeepAlive::No,
+    );
+    let (mut config, _events) = Config::new("1.0.0".to_string(), None);
+    config.public = Some(PublicKey::Ed25519(keypair.public()));
+    let mut identify = Identify::new(service, config);
+
+    fn open(identify: &mut Identify, peer: PeerId) {
+        let mut substream = MockSubstream::new();
+        substream.expect_poll_ready().returning(|_| Poll::Ready(Ok(())));
+        substream.expect_start_send().returning(|_| Ok(()));
+        substream.expect_poll_flush().returning(|_| Poll::Ready(Ok(())));
+        substream.expect_poll_close().returning(|_| Poll::Ready(Ok(())));
+        let substream = Substream::new_mock(peer, SubstreamId::from(0usize), Box::new(substream));
+        identify.on_inbound_substream(peer, ProtocolName::from(PROTOCOL_NAME), substream);
+    }
+
+    let peer = PeerId::random();
+    for _ in 0..=MAX_INBOUND_PER_PEER {
+        open(&mut identify, peer);
+    }
+    assert_eq!(identify.pending_inbound.len(), MAX_INBOUND_PER_PEER);
+
+    open(&mut identify, PeerId::random());
+    assert_eq!(identify.pending_inbound.len(), MAX_INBOUND_PER_PEER + 1);
+
+    for _ in 0..=MAX_INBOUND_PER_PEER {
+        let peer = identify.pending_inbound.next().await.unwrap();
+        identify.on_inbound_finished(peer);
+    }
+    assert!(identify.pending_inbound_per_peer.is_empty());
+
+    open(&mut identify, peer);
+    assert_eq!(identify.pending_inbound.len(), 1);
 }
