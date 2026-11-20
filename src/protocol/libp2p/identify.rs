@@ -464,8 +464,8 @@ impl Identify {
     }
 }
 
-/// Public addresses first, then global and other listen addresses, each once and ending with the
-/// local peer ID.
+/// Public addresses first, then global and other listen addresses, each once, ending with the
+/// local peer ID and at most `MAX_ADDRESSES_PER_HOST` per host since receivers keep no more.
 fn local_addresses(public: Vec<Multiaddr>, listen: HashSet<Multiaddr>) -> Vec<Multiaddr> {
     let mut listen: Vec<_> = listen
         .into_iter()
@@ -478,6 +478,14 @@ fn local_addresses(public: Vec<Multiaddr>, listen: HashSet<Multiaddr>) -> Vec<Mu
 
     let mut addresses = public;
     addresses.extend(listen);
+
+    let mut hosts = Vec::new();
+    addresses.retain(|address| {
+        let host = Host::from(address);
+        let keep = hosts.iter().filter(|known| **known == host).count() < MAX_ADDRESSES_PER_HOST;
+        hosts.push(host);
+        keep
+    });
     addresses
 }
 

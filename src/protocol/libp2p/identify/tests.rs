@@ -299,6 +299,30 @@ fn local_addresses_are_sent_once_public_first() {
 }
 
 #[test]
+fn local_addresses_are_limited_per_host() {
+    let peer = PeerId::random();
+    let public = (1..=20)
+        .map(|port| format!("/ip4/1.1.1.1/tcp/{port}/p2p/{peer}").parse().unwrap())
+        .collect();
+    let listen: HashSet<Multiaddr> = (1..=20)
+        .map(|host| format!("/ip4/2.2.2.{host}/tcp/30333/p2p/{peer}").parse().unwrap())
+        .collect();
+
+    let addresses = local_addresses(public, listen.clone())
+        .iter()
+        .take(MAX_LISTEN_ADDRESSES)
+        .map(Multiaddr::to_vec)
+        .collect();
+    let parsed = parse_listen_addresses(peer, addresses);
+
+    assert_eq!(parsed.len(), MAX_ADDRESSES_PER_HOST + listen.len());
+    assert!(parsed[..MAX_ADDRESSES_PER_HOST]
+        .iter()
+        .all(|address| Host::from(address) == Host::Ip("1.1.1.1".parse().unwrap())));
+    assert!(listen.iter().all(|address| parsed.contains(address)));
+}
+
+#[test]
 fn global_listen_addresses_are_sent_first() {
     let peer = PeerId::random();
     let global: Multiaddr = format!("/ip4/1.1.1.1/tcp/30333/p2p/{peer}").parse().unwrap();
