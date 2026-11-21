@@ -706,4 +706,59 @@ mod tests {
         assert!(store.addresses.contains_key(public.address()));
         assert!(store.addresses.contains_key(new_public.address()));
     }
+
+    #[test]
+    fn is_global_multiaddr_ipv4() {
+        // Public addresses are global.
+        assert!(is_global_multiaddr(&"/ip4/8.8.8.8/tcp/30333".parse().unwrap()));
+
+        // Private, loopback, link-local and shared (CGNAT) addresses are not.
+        for address in [
+            "/ip4/10.0.0.1/tcp/30333",
+            "/ip4/172.16.0.1/tcp/30333",
+            "/ip4/192.168.1.1/tcp/30333",
+            "/ip4/127.0.0.1/tcp/30333",
+            "/ip4/169.254.1.1/tcp/30333",
+            "/ip4/100.64.0.1/tcp/30333",
+        ] {
+            assert!(!is_global_multiaddr(&address.parse().unwrap()), "{address}");
+        }
+    }
+
+    #[test]
+    fn is_global_multiaddr_ipv6() {
+        // Public addresses are global.
+        assert!(is_global_multiaddr(
+            &"/ip6/2606:4700:4700::1111/tcp/30333".parse().unwrap()
+        ));
+
+        // Loopback and link-local addresses are not.
+        for address in ["/ip6/::1/tcp/30333", "/ip6/fe80::1/tcp/30333"] {
+            assert!(!is_global_multiaddr(&address.parse().unwrap()), "{address}");
+        }
+    }
+
+    #[test]
+    fn is_global_multiaddr_dns_and_no_ip() {
+        // DNS addresses are treated as potentially public.
+        assert!(is_global_multiaddr(&"/dns/example.com/tcp/30333".parse().unwrap()));
+        assert!(is_global_multiaddr(&"/dns4/example.com/tcp/30333".parse().unwrap()));
+        assert!(is_global_multiaddr(&"/dns6/example.com/tcp/30333".parse().unwrap()));
+
+        // Without an IP or DNS component the address is not global.
+        assert!(!is_global_multiaddr(&"/memory/63".parse().unwrap()));
+        assert!(!is_global_multiaddr(&Multiaddr::empty()));
+
+        // Non-IP protocols are skipped, the first IP or DNS component decides.
+        let peer = PeerId::random();
+        let public = Multiaddr::empty()
+            .with(Protocol::P2p(peer.into()))
+            .with(Protocol::Ip4(std::net::Ipv4Addr::new(8, 8, 8, 8)));
+        assert!(is_global_multiaddr(&public));
+
+        let private = Multiaddr::empty()
+            .with(Protocol::P2p(peer.into()))
+            .with(Protocol::Ip4(std::net::Ipv4Addr::new(10, 0, 0, 1)));
+        assert!(!is_global_multiaddr(&private));
+    }
 }
