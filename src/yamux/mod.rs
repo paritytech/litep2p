@@ -36,7 +36,8 @@ pub use crate::yamux::control::{Control, ControlledConnection};
 
 pub const DEFAULT_CREDIT: u32 = 256 * 1024; // as per yamux specification
 
-/// The maximum number of streams we will open without an acknowledgement from the other peer.
+/// Mirrors yamux's private limit on streams opened without an acknowledgement from the other peer.
 ///
-/// This enables a very basic form of backpressure on the creation of streams.
-const MAX_ACK_BACKLOG: usize = 256;
+/// Changing it does not change the limit; keep it equal to the upstream value.
+/// Also sizes the [`Control`] queue of opens waiting behind a pending open.
+pub(crate) const MAX_ACK_BACKLOG: usize = 256;
