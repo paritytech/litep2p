@@ -470,8 +470,13 @@ impl Kademlia {
     ) -> crate::Result<()> {
         tracing::trace!(target: LOG_TARGET, ?peer, query = ?query_id, "handle message from peer");
 
-        let mut message = KademliaMessage::from_bytes(message, self.replication_factor)
-            .ok_or(Error::InvalidData)?;
+        let Some(mut message) = KademliaMessage::from_bytes(message, self.replication_factor)
+        else {
+            if let Some(query_id) = query_id {
+                self.engine.register_response_failure(query_id, peer);
+            }
+            return Err(Error::InvalidData);
+        };
         if self.remote_address_mode == RemoteAddressMode::GlobalOnly {
             message.retain_global_addresses();
         }
@@ -2224,5 +2229,50 @@ mod tests {
             }
         }
         assert_eq!(routing_table_updates, vec![vec![responder_peer]]);
+    }
+
+    #[tokio::test]
+    async fn undecodable_response_fails_query() {
+        let (mut kademlia, _context, _manager) =
+            make_kademlia_with(KademliaMode::Client, RemoteAddressMode::All);
+
+        let peer = PeerId::random();
+        let query = QueryId(0);
+        kademlia.engine.start_find_node(
+            query,
+            PeerId::random(),
+            VecDeque::from([KademliaPeer::new(
+                peer,
+                vec![],
+                ConnectionType::NotConnected,
+            )]),
+        );
+        match kademlia.engine.next_action() {
+            Some(QueryAction::SendMessage { peer: queried, .. }) => assert_eq!(queried, peer),
+            action => panic!("unexpected action: {action:?}"),
+        }
+
+        let ping = schema::kademlia::Message {
+            r#type: 5,
+            ..Default::default()
+        };
+        assert!(kademlia
+            .on_message_received(
+                peer,
+                Some(query),
+                BytesMut::from(&prost::Message::encode_to_vec(&ping)[..]),
+                Substream::new_mock(
+                    peer,
+                    SubstreamId::from(0usize),
+                    Box::new(MockSubstream::new()),
+                ),
+            )
+            .await
+            .is_err());
+
+        match kademlia.engine.next_action() {
+            Some(QueryAction::QueryFailed { query: failed }) => assert_eq!(failed, query),
+            action => panic!("unexpected action: {action:?}"),
+        }
     }
 }
