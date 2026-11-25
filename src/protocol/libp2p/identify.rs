@@ -26,22 +26,26 @@ use crate::{
     error::{Error, SubstreamError},
     protocol::{Direction, TransportEvent, TransportService},
     substream::Substream,
-    transport::Endpoint,
+    transport::{manager::address::is_global_multiaddr, Endpoint},
     types::{protocol::ProtocolName, SubstreamId},
     utils::futures_stream::FuturesStream,
     PeerId, DEFAULT_CHANNEL_SIZE,
 };
 
 use futures::{future::BoxFuture, Stream, StreamExt};
-use multiaddr::Multiaddr;
+use multiaddr::{Multiaddr, Protocol};
 use prost::Message;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{hash_map::Entry, HashMap, HashSet},
+    net::{IpAddr, Ipv6Addr},
     time::Duration,
 };
+
+#[cfg(test)]
+mod tests;
 
 /// Log target for the file.
 const LOG_TARGET: &str = "litep2p::ipfs::identify";
@@ -58,6 +62,15 @@ const DEFAULT_AGENT: &str = "litep2p/1.0.0";
 /// Size for `/ipfs/ping/1.0.0` payloads.
 // TODO: https://github.com/paritytech/litep2p/issues/334 what is the max size?
 const IDENTIFY_PAYLOAD_SIZE: usize = 4096;
+
+/// Maximum number of listen addresses accepted from a peer.
+const MAX_LISTEN_ADDRESSES: usize = 30;
+
+/// Bounds how many of our dials a peer can direct at a single host.
+const MAX_ADDRESSES_PER_HOST: usize = 4;
+
+/// One identify request per connection, and a peer has at most two connections.
+const MAX_INBOUND_PER_PEER: usize = 2;
 
 mod identify_schema {
     include!(concat!(env!("OUT_DIR"), "/identify.rs"));
@@ -181,7 +194,10 @@ pub(crate) struct Identify {
     pending_outbound: FuturesStream<BoxFuture<'static, crate::Result<IdentifyResponse>>>,
 
     /// Pending inbound substreams.
-    pending_inbound: FuturesStream<BoxFuture<'static, ()>>,
+    pending_inbound: FuturesStream<BoxFuture<'static, PeerId>>,
+
+    /// Number of pending inbound substreams per peer.
+    pending_inbound_per_peer: HashMap<PeerId, usize>,
 }
 
 impl Identify {
@@ -201,6 +217,7 @@ impl Identify {
             protocol_version: config.protocol_version,
             user_agent: config.user_agent.unwrap_or(DEFAULT_AGENT.to_string()),
             pending_inbound: FuturesStream::new(),
+            pending_inbound_per_peer: HashMap::new(),
             pending_outbound: FuturesStream::new(),
         }
     }
@@ -236,6 +253,17 @@ impl Identify {
             "inbound substream opened"
         );
 
+        let pending = self.pending_inbound_per_peer.entry(peer).or_default();
+        if *pending >= MAX_INBOUND_PER_PEER {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                "too many pending inbound identify requests, dropping substream",
+            );
+            return;
+        }
+        *pending += 1;
+
         let observed_addr = match self.peers.get(&peer) {
             Some(endpoint) => Some(endpoint.address().to_vec()),
             None => {
@@ -249,16 +277,20 @@ impl Identify {
             }
         };
 
-        let mut listen_addr: HashSet<_> =
-            self.service.listen_addresses().into_iter().map(|addr| addr.to_vec()).collect();
-        listen_addr
-            .extend(self.service.public_addresses().inner.read().iter().map(|addr| addr.to_vec()));
+        let listen_addrs = local_addresses(
+            self.service.public_addresses().get_addresses(),
+            self.service.listen_addresses(),
+        );
 
-        let identify = identify_schema::Identify {
+        let mut identify = identify_schema::Identify {
             protocol_version: Some(self.protocol_version.clone()),
             agent_version: Some(self.user_agent.clone()),
             public_key: Some(self.public.to_protobuf_encoding()),
-            listen_addrs: listen_addr.into_iter().collect(),
+            listen_addrs: listen_addrs
+                .iter()
+                .take(MAX_LISTEN_ADDRESSES)
+                .map(Multiaddr::to_vec)
+                .collect(),
             observed_addr,
             protocols: self
                 .service
@@ -267,6 +299,10 @@ impl Identify {
                 .map(|protocol| protocol.to_string())
                 .collect(),
         };
+
+        while identify.encoded_len() > IDENTIFY_PAYLOAD_SIZE
+            && identify.listen_addrs.pop().is_some()
+        {}
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -302,7 +338,19 @@ impl Identify {
                     substream.close().await;
                 }
             }
+
+            peer
         }))
+    }
+
+    /// Inbound substream finished.
+    fn on_inbound_finished(&mut self, peer: PeerId) {
+        if let Entry::Occupied(mut pending) = self.pending_inbound_per_peer.entry(peer) {
+            *pending.get_mut() -= 1;
+            if *pending.get() == 0 {
+                pending.remove();
+            }
+        }
     }
 
     /// Outbound substream opened.
@@ -343,46 +391,11 @@ impl Identify {
 
             tracing::trace!(target: LOG_TARGET, ?peer, ?info, "peer identified");
 
-            let listen_addresses = info
-                .listen_addrs
-                .iter()
-                .filter_map(|address| {
-                    let address = Multiaddr::try_from(address.clone()).ok()?;
+            let listen_addresses = parse_listen_addresses(peer, info.listen_addrs);
 
-                    // Ensure the address ends with the provided peer ID and is not empty.
-                    if address.is_empty() {
-                        tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided empty listen address");
-                        return None;
-                    }
-                    if let Some(multiaddr::Protocol::P2p(peer_id)) = address.iter().last() {
-                        if peer_id != peer.into() {
-                            tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided listen address with incorrect peer ID; discarding the address");
-                            return None;
-                        }
-                    }
-
-                    Some(address)
-                })
-                .collect();
-
-            let observed_address =
-                info.observed_addr.and_then(|address| {
-                    let address = Multiaddr::try_from(address).ok()?;
-
-                    if address.is_empty() {
-                        tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided empty observed address");
-                        return None;
-                    }
-
-                    if let Some(multiaddr::Protocol::P2p(peer_id)) = address.iter().last() {
-                        if peer_id != local_peer_id.into() {
-                            tracing::debug!(target: LOG_TARGET, ?peer, ?address, "peer identified provided observed address with peer ID not matching our peer ID; discarding address");
-                            return None;
-                        }
-                    }
-
-                    Some(address)
-                });
+            let observed_address = info
+                .observed_addr
+                .and_then(|address| parse_observed_address(peer, local_peer_id, address));
 
             let protocol_version = info.protocol_version;
             let user_agent = info.agent_version;
@@ -427,7 +440,9 @@ impl Identify {
                     },
                     _ => {}
                 },
-                _ = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {}
+                Some(peer) = self.pending_inbound.next(), if !self.pending_inbound.is_empty() => {
+                    self.on_inbound_finished(peer);
+                }
                 event = self.pending_outbound.next(), if !self.pending_outbound.is_empty() => match event {
                     Some(Ok(response)) => {
                         let _ = self.tx
@@ -449,73 +464,151 @@ impl Identify {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{config::ConfigBuilder, transport::tcp::config::Config as TcpConfig, Litep2p};
-    use multiaddr::{Multiaddr, Protocol};
+/// Public addresses first, then global and other listen addresses, each once, ending with the
+/// local peer ID and at most `MAX_ADDRESSES_PER_HOST` per host since receivers keep no more.
+fn local_addresses(public: Vec<Multiaddr>, listen: HashSet<Multiaddr>) -> Vec<Multiaddr> {
+    let mut listen: Vec<_> = listen
+        .into_iter()
+        .filter(|address| {
+            std::matches!(address.iter().last(), Some(Protocol::P2p(_)))
+                && !public.contains(address)
+        })
+        .collect();
+    listen.sort_by_key(|address| !is_global_multiaddr(address));
 
-    fn create_litep2p() -> (
-        Litep2p,
-        Box<dyn Stream<Item = IdentifyEvent> + Send + Unpin>,
-        PeerId,
-    ) {
-        let (identify_config, identify) =
-            Config::new("1.0.0".to_string(), Some("litep2p/1.0.0".to_string()));
+    let mut addresses = public;
+    addresses.extend(listen);
 
-        let keypair = crate::crypto::ed25519::Keypair::generate();
-        let peer = PeerId::from_public_key(&crate::crypto::PublicKey::Ed25519(keypair.public()));
-        let config = ConfigBuilder::new()
-            .with_keypair(keypair)
-            .with_tcp(TcpConfig {
-                listen_addresses: vec!["/ip6/::1/tcp/0".parse().unwrap()],
-                ..Default::default()
-            })
-            .with_libp2p_identify(identify_config)
-            .build();
+    let mut hosts = Vec::new();
+    addresses.retain(|address| {
+        let host = Host::from(address);
+        let keep = hosts.iter().filter(|known| **known == host).count() < MAX_ADDRESSES_PER_HOST;
+        hosts.push(host);
+        keep
+    });
+    addresses
+}
 
-        (Litep2p::new(config).unwrap(), identify, peer)
+fn parse_listen_addresses(peer: PeerId, addresses: Vec<Vec<u8>>) -> Vec<Multiaddr> {
+    let mut seen = HashSet::new();
+    let mut per_host = HashMap::<Host, usize>::new();
+
+    addresses
+        .into_iter()
+        .filter_map(|address| parse_listen_address(peer, address))
+        .filter(|address| seen.insert(address.clone()))
+        .filter(|address| {
+            let count = per_host.entry(Host::from(address)).or_default();
+            *count += 1;
+            if *count > MAX_ADDRESSES_PER_HOST {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?peer,
+                    ?address,
+                    "peer identified provided too many listen addresses for one host",
+                );
+                return false;
+            }
+            true
+        })
+        .take(MAX_LISTEN_ADDRESSES)
+        .collect()
+}
+
+fn parse_listen_address(peer: PeerId, address: Vec<u8>) -> Option<Multiaddr> {
+    let mut address = Multiaddr::try_from(address).ok()?;
+
+    if let Some(Protocol::P2p(peer_id)) = address.iter().last() {
+        if peer_id != peer.into() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                ?address,
+                "peer identified provided listen address with incorrect peer ID",
+            );
+            return None;
+        }
+        address.pop();
     }
 
-    #[tokio::test]
-    async fn update_identify_addresses() {
-        // Create two instances of litep2p
-        let (mut litep2p1, mut event_stream1, peer1) = create_litep2p();
-        let (mut litep2p2, mut event_stream2, _peer2) = create_litep2p();
-        let litep2p1_address = litep2p1.listen_addresses().next().unwrap();
+    let nested_peer_id = address.iter().any(|protocol| std::matches!(protocol, Protocol::P2p(_)));
+    if nested_peer_id || !is_dialable(&address) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            ?address,
+            "peer identified provided undialable listen address",
+        );
+        return None;
+    }
 
-        let multiaddr: Multiaddr = "/ip6/::9/tcp/111".parse().unwrap();
-        // Litep2p1 is now reporting the new address.
-        assert!(litep2p1.public_addresses().add_address(multiaddr.clone()).unwrap());
+    Some(address.with(Protocol::P2p(peer.into())))
+}
 
-        // Dial `litep2p1`
-        litep2p2.dial_address(litep2p1_address.clone()).await.unwrap();
+fn parse_observed_address(
+    peer: PeerId,
+    local_peer_id: PeerId,
+    address: Vec<u8>,
+) -> Option<Multiaddr> {
+    let address = Multiaddr::try_from(address).ok()?;
 
-        let expected_multiaddr = multiaddr.with(Protocol::P2p(peer1.into()));
+    if !is_dialable(&address) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?peer,
+            ?address,
+            "peer identified provided undialable observed address",
+        );
+        return None;
+    }
 
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = litep2p1.next_event() => {}
-                    _event = event_stream1.next() => {}
-                }
-            }
-        });
-
-        loop {
-            tokio::select! {
-                _ = litep2p2.next_event() => {}
-                event = event_stream2.next() => match event {
-                    Some(IdentifyEvent::PeerIdentified {
-                        listen_addresses,
-                        ..
-                    }) => {
-                        assert!(listen_addresses.iter().any(|address| address == &expected_multiaddr));
-                        break;
-                    }
-                    _ => {}
-                }
-            }
+    if let Some(Protocol::P2p(peer_id)) = address.iter().last() {
+        if peer_id != local_peer_id.into() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?peer,
+                ?address,
+                "peer identified provided observed address with peer ID not matching our peer ID",
+            );
+            return None;
         }
     }
+
+    Some(address)
+}
+
+/// Host of a dialable address.
+///
+/// DNS names share one host since a wildcard record can resolve any number of them to one IP,
+/// and IPv6 addresses share one host per /64 since a single machine can own the whole prefix.
+#[derive(PartialEq, Eq, Hash)]
+enum Host {
+    Ip(IpAddr),
+    Dns,
+}
+
+impl From<&Multiaddr> for Host {
+    fn from(address: &Multiaddr) -> Self {
+        match address.iter().next() {
+            Some(Protocol::Ip4(ip)) => Host::Ip(ip.into()),
+            Some(Protocol::Ip6(ip)) => match ip.to_ipv4_mapped() {
+                Some(ip) => Host::Ip(ip.into()),
+                None => Host::Ip(Ipv6Addr::from(u128::from(ip) & !(u128::MAX >> 64)).into()),
+            },
+            _ => Host::Dns,
+        }
+    }
+}
+
+fn is_dialable(address: &Multiaddr) -> bool {
+    let mut iter = address.iter();
+    let valid_host = match iter.next() {
+        Some(Protocol::Ip4(ip)) => !ip.is_unspecified() && !ip.is_multicast() && !ip.is_broadcast(),
+        Some(Protocol::Ip6(ip)) => !ip.is_unspecified() && !ip.is_multicast(),
+        Some(Protocol::Dns(_) | Protocol::Dns4(_) | Protocol::Dns6(_)) => true,
+        _ => false,
+    };
+
+    valid_host
+        && std::matches!(iter.next(), Some(Protocol::Tcp(port) | Protocol::Udp(port)) if port != 0)
 }
