@@ -43,7 +43,7 @@ use std::{
 };
 
 /// Maximum number of addresses to store for a peer.
-const MAX_ADDRESSES: usize = 32;
+pub(super) const MAX_ADDRESSES: usize = 32;
 
 construct_uint! {
     /// 256-bit unsigned integer.
