@@ -18,12 +18,30 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use litep2p::{config::ConfigBuilder, transport::tcp::config::Config as TcpConfig};
+use std::sync::Arc;
+
+use hickory_resolver::TokioResolver;
+use libp2p::Multiaddr;
+use litep2p::{
+    config::ConfigBuilder,
+    transport::{tcp::config::Config as TcpConfig, TransportEvent, TransportHandle},
+};
 
 #[cfg(feature = "quic")]
 use litep2p::transport::quic::config::Config as QuicConfig;
 #[cfg(feature = "websocket")]
 use litep2p::transport::websocket::config::Config as WebSocketConfig;
+
+type CustomTransportEntry = (
+    &'static str,
+    fn(
+        TransportHandle,
+        Arc<TokioResolver>,
+    ) -> litep2p::Result<(
+        Box<dyn litep2p::transport::Transport<Item = TransportEvent>>,
+        Vec<Multiaddr>,
+    )>,
+);
 
 pub(crate) enum Transport {
     Tcp(TcpConfig),
@@ -31,6 +49,7 @@ pub(crate) enum Transport {
     Quic(QuicConfig),
     #[cfg(feature = "websocket")]
     WebSocket(WebSocketConfig),
+    Custom(CustomTransportEntry),
 }
 
 pub(crate) fn add_transport(config: ConfigBuilder, transport: Transport) -> ConfigBuilder {
@@ -40,5 +59,6 @@ pub(crate) fn add_transport(config: ConfigBuilder, transport: Transport) -> Conf
         Transport::Quic(transport) => config.with_quic(transport),
         #[cfg(feature = "websocket")]
         Transport::WebSocket(transport) => config.with_websocket(transport),
+        Transport::Custom((name, transport)) => config.with_custom_transport(name, transport),
     }
 }

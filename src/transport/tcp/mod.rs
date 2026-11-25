@@ -97,7 +97,7 @@ enum RawConnectionResult {
 }
 
 /// TCP transport.
-pub(crate) struct TcpTransport {
+pub struct TcpTransport {
     /// Transport context.
     context: TransportHandle,
 
