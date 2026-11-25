@@ -321,4 +321,72 @@ mod tests {
         assert_eq!(limits.incoming_connections.len(), 2);
         assert_eq!(limits.outgoing_connections.len(), 1);
     }
+
+    #[test]
+    fn on_dial_address_reports_remaining_outgoing_slots() {
+        let config = ConnectionLimitsConfig::default().max_outgoing_connections(Some(2));
+        let mut limits = ConnectionLimits::new(config);
+
+        let connection_id_1 = ConnectionId::random();
+        let connection_id_2 = ConnectionId::random();
+
+        // The number of permitted parallel dials follows the remaining capacity.
+        assert_eq!(limits.on_dial_address().unwrap(), 2);
+        limits.accept_established_connection(connection_id_1, false);
+        assert_eq!(limits.on_dial_address().unwrap(), 1);
+        limits.accept_established_connection(connection_id_2, false);
+
+        // At capacity no further dial is permitted.
+        assert_eq!(
+            limits.on_dial_address().unwrap_err(),
+            ConnectionLimitsError::MaxOutgoingConnectionsExceeded
+        );
+
+        // Closing a connection frees its slot.
+        limits.on_connection_closed(connection_id_1);
+        assert_eq!(limits.on_dial_address().unwrap(), 1);
+    }
+
+    #[test]
+    fn on_dial_address_unlimited_when_no_outgoing_limit() {
+        let mut limits = ConnectionLimits::new(ConnectionLimitsConfig::default());
+        assert_eq!(limits.on_dial_address().unwrap(), usize::MAX);
+    }
+
+    #[test]
+    fn on_incoming_enforces_incoming_limit() {
+        let config = ConnectionLimitsConfig::default().max_incoming_connections(Some(1));
+        let mut limits = ConnectionLimits::new(config);
+
+        assert!(limits.on_incoming().is_ok());
+        limits.accept_established_connection(ConnectionId::random(), true);
+        assert_eq!(
+            limits.on_incoming().unwrap_err(),
+            ConnectionLimitsError::MaxIncomingConnectionsExceeded
+        );
+    }
+
+    #[test]
+    fn connections_without_limits_are_not_tracked() {
+        // Incoming connections are unlimited, outgoing are limited to one.
+        let config = ConnectionLimitsConfig::default()
+            .max_incoming_connections(None)
+            .max_outgoing_connections(Some(1));
+        let mut limits = ConnectionLimits::new(config);
+
+        // Unlimited incoming connections are accepted but not tracked.
+        for _ in 0..10 {
+            assert!(limits.on_incoming().is_ok());
+            limits.accept_established_connection(ConnectionId::random(), true);
+        }
+        assert!(limits.incoming_connections.is_empty());
+
+        // Closing an untracked connection is a no-op.
+        limits.on_connection_closed(ConnectionId::random());
+        assert!(limits.incoming_connections.is_empty());
+        assert!(limits.outgoing_connections.is_empty());
+
+        // The outgoing limit is unaffected by the untracked incoming connections.
+        assert_eq!(limits.on_dial_address().unwrap(), 1);
+    }
 }
