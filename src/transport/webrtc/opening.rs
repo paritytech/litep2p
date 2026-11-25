@@ -26,6 +26,7 @@ use crate::{
     transport::{
         common::InboundOpening,
         webrtc::{
+            rtc::Rtc,
             socket::WebRtcSocket,
             util::{extract_framed_message, WebRtcMessage},
             AddressPair,
@@ -43,7 +44,7 @@ use str0m::{
     channel::ChannelId,
     config::Fingerprint,
     net::{DatagramRecv, DatagramSend, Protocol as Str0mProtocol, Receive},
-    Event, IceConnectionState, Input, Output, Rtc,
+    Event, IceConnectionState, Input, Output,
 };
 
 use std::{net::SocketAddr, sync::Arc, time::Instant};
@@ -209,6 +210,12 @@ impl OpeningWebRtcConnection {
         self.opening.deadline
     }
 
+    /// Access the `Rtc` object.
+    #[cfg(test)]
+    pub fn rtc_mut(&mut self) -> &mut Rtc {
+        &mut self.rtc
+    }
+
     /// Whether the opening deadline has elapsed.
     pub fn is_expired(&self) -> bool {
         Instant::now() >= self.opening.deadline
@@ -225,14 +232,18 @@ impl OpeningWebRtcConnection {
             .rtc
             .direct_api()
             .remote_dtls_fingerprint()
-            .ok_or(Error::Other("fingerprint expected to exist".to_string()))?
-            .clone();
+            .ok_or(Error::Other("fingerprint expected to exist".to_string()))?;
         Self::fingerprint_to_bytes(&fingerprint)
     }
 
     /// Get local fingerprint as bytes.
     fn local_fingerprint(&mut self) -> crate::Result<Vec<u8>> {
-        Self::fingerprint_to_bytes(self.rtc.direct_api().local_dtls_fingerprint())
+        let fingerprint = self
+            .rtc
+            .direct_api()
+            .local_dtls_fingerprint()
+            .ok_or(Error::Other("fingerprint expected to exist".to_string()))?;
+        Self::fingerprint_to_bytes(&fingerprint)
     }
 
     /// Convert `Fingerprint` to bytes.
@@ -383,7 +394,6 @@ impl OpeningWebRtcConnection {
             .direct_api()
             .remote_dtls_fingerprint()
             .ok_or(Error::InvalidState)?
-            .clone()
             .bytes;
 
         let certificate =
@@ -440,6 +450,12 @@ impl OpeningWebRtcConnection {
         }
 
         self.rtc.direct_api().close_data_channel(self.noise_channel_id);
+
+        // Closing the channel may have discarded the `Rtc`.
+        if !self.rtc.is_alive() {
+            return Err(Error::Disconnected);
+        }
+
         Ok(self.rtc)
     }
 
