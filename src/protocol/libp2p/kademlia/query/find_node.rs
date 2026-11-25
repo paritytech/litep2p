@@ -91,6 +91,10 @@ pub struct FindNodeContext<T: Clone + Into<Vec<u8>>> {
     /// These represent the number of peers added to the `Self::pending` minus the number of peers
     /// that have failed to respond within the `Self::peer_timeout`
     pending_responses: usize,
+
+    /// Pending peers that exceeded `Self::peer_timeout` and no longer count towards
+    /// `Self::pending_responses`.
+    timed_out: HashSet<PeerId>,
 }
 
 impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
@@ -116,6 +120,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
 
             peer_timeout: DEFAULT_PEER_TIMEOUT,
             pending_responses: 0,
+            timed_out: HashSet::new(),
         }
     }
 
@@ -125,7 +130,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             tracing::debug!(target: LOG_TARGET, query = ?self.config.query, ?peer, "pending peer doesn't exist during response failure");
             return;
         };
-        self.pending_responses = self.pending_responses.saturating_sub(1);
+        self.release_pending_slot(&peer.peer);
 
         tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, elapsed = ?instant.elapsed(), "peer failed to respond");
 
@@ -145,7 +150,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
             return None;
         };
         let proven_responder = peer.clone();
-        self.pending_responses = self.pending_responses.saturating_sub(1);
+        self.release_pending_slot(&peer.peer);
 
         tracing::trace!(target: LOG_TARGET, query = ?self.config.query, ?peer, elapsed = ?instant.elapsed(), "received response from peer");
 
@@ -201,6 +206,12 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         }
 
         Some(proven_responder)
+    }
+
+    fn release_pending_slot(&mut self, peer: &PeerId) {
+        if !self.timed_out.remove(peer) {
+            self.pending_responses = self.pending_responses.saturating_sub(1);
+        }
     }
 
     /// Register a failure of sending `FIN_NODE` request to `peer`.
@@ -274,7 +285,7 @@ impl<T: Clone + Into<Vec<u8>>> FindNodeContext<T> {
         }
 
         for (peer, instant) in self.pending.values() {
-            if instant.elapsed() > self.peer_timeout {
+            if instant.elapsed() > self.peer_timeout && self.timed_out.insert(peer.peer) {
                 tracing::trace!(
                     target: LOG_TARGET,
                     query = ?self.config.query,
@@ -486,6 +497,41 @@ mod tests {
 
         assert_eq!(context.pending_responses, 1);
         assert_eq!(context.pending.len(), 4);
+    }
+
+    #[test]
+    fn timed_out_peer_counts_once_towards_parallelism() {
+        let config = FindNodeConfig {
+            parallelism_factor: 3,
+            ..default_config()
+        };
+        let in_peers = (0..10).map(|_| peer_to_kad(PeerId::random())).collect();
+        let mut context = FindNodeContext::new(config, in_peers);
+
+        let mut scheduled = Vec::new();
+        while let Some(QueryAction::SendMessage { peer, .. }) = context.next_action() {
+            scheduled.push(peer);
+        }
+        assert_eq!(scheduled.len(), 3);
+
+        let expired = std::time::Instant::now()
+            .checked_sub(context.peer_timeout * 2)
+            .expect("valid instant");
+        let slow = scheduled[0];
+        context.pending.get_mut(&slow).unwrap().1 = expired;
+
+        // The slow peer frees exactly one slot, no matter how often the query is polled.
+        assert!(matches!(
+            context.next_action(),
+            Some(QueryAction::SendMessage { .. })
+        ));
+        assert!(context.next_action().is_none());
+        assert!(context.next_action().is_none());
+
+        // Nor does it free another one once it finally fails.
+        context.register_response_failure(slow);
+        assert!(context.next_action().is_none());
+        assert_eq!(context.pending.len(), 3);
     }
 
     #[test]
